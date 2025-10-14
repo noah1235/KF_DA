@@ -4,22 +4,48 @@ from create_results_dir import create_results_dir
 import os
 import numpy as np
 
-def complex_to_real_concat(z: jnp.ndarray) -> jnp.ndarray:
-    """Flatten z and return [Re(z), Im(z)] as a real 1D vector."""
-    z = jnp.asarray(z)
-    return jnp.concatenate([jnp.real(z).ravel(), jnp.imag(z).ravel()], axis=0)
 
-def real_concat_to_complex(x: jnp.ndarray) -> jnp.ndarray:
-    """
-    Inverse of complex_to_real_concat without needing the original shape.
-    x is [Re(z), Im(z)] flattened; returns a FLAT complex vector z.
-    (You can reshape z outside JIT.)
-    """
-    x = jnp.asarray(x)
-    n = x.shape[0] // 2              # uses static shape metadata; JAX-safe
-    re = x[:n]
-    im = x[n:2*n]
-    return re + 1j * im              # dtype promotes appropriately
+def build_div_free_proj(stepper):
+    NDOF = stepper.step.rhs.KF_RHS.N
+    KX = stepper.step.rhs.KF_RHS.KX
+    KY = stepper.step.rhs.KF_RHS.KY
+    K2 = stepper.step.rhs.KF_RHS.K2
+    M = stepper.step.rhs.KF_RHS.M
+    
+
+    def transform_fn(X):
+        X_reshaped = X.reshape((2, NDOF, NDOF))
+        X_proj = project_divfree_rfft2(X_reshaped, KX, KY, K2, M)
+        X = X_proj.reshape(-1)
+        return X
+    
+    return transform_fn
+
+
+def project_divfree_rfft2(U, KX, KY, K2, M, zero_dc=True):
+    # rFFT of components
+    Ux = jnp.fft.rfft2(U[0]) * M
+    Uy = jnp.fft.rfft2(U[1]) * M
+
+    # Longitudinal scale = (k·U)/|k|^2  (zero at DC)
+    invK2 = jnp.where(K2 > 0.0, 1.0 / K2, 0.0)
+    k_dot_U = KX * Ux + KY * Uy
+    scale = k_dot_U * invK2
+
+    # Helmholtz projection in k-space
+    Ux_proj = Ux - KX * scale
+    Uy_proj = Uy - KY * scale
+
+    if zero_dc:
+        Ux_proj = Ux_proj.at[0, 0].set(0.0)
+        Uy_proj = Uy_proj.at[0, 0].set(0.0)
+
+    u = jnp.fft.irfft2(Ux_proj)
+    v = jnp.fft.irfft2(Uy_proj)
+
+    return jnp.stack([u, v], axis=0)
+
+
 
 def bilinear_sample_periodic(F, x, y, Lx, Ly):
     """

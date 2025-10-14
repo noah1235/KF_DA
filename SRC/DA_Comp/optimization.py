@@ -2,7 +2,6 @@ import jax.numpy as jnp
 import jax
 import optax
 import numpy as np
-from SRC.utils import real_concat_to_complex
 
 class Optimizer:
     name = ""
@@ -142,30 +141,32 @@ def Hessian_Opt(U_0_real_guess, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt):
         U_0_real, loss, grad, Hess = step(U_0_real)
         print(loss)
 
-def optax_opt(U_0_real, loss_fn, loss_grad_fn, optimizer_config, div_check, div_free_proj):
+def optax_opt(U_0, loss_fn, loss_grad_fn, optimizer_config, div_check, div_free_proj):
     optimizer = optimizer_config.alg
-    opt_state = optimizer.init(U_0_real)
+    opt_state = optimizer.init(U_0)
     opt_data = Opt_Data(optimizer_config.its)
 
     @jax.jit
-    def inner_loop(U_0_real, opt_state):
-        loss, grad = loss_grad_fn(U_0_real)
+    def inner_loop(U_0, opt_state):
+        loss, grad = loss_grad_fn(U_0)
+
         updates, opt_state = optimizer.update(
-            grad, opt_state, U_0_real, value=loss, grad=grad, value_fn=loss_fn
+            grad, opt_state, U_0, value=loss, grad=grad, value_fn=loss_fn
         )
+
         div_updates = div_check(updates)
-        U_0_real_next = optax.apply_updates(U_0_real, updates)
-        U_0_real_next = div_free_proj(U_0_real_next)
-        return U_0_real_next, opt_state, loss, grad, updates, div_updates
+        U_0_next = optax.apply_updates(U_0, updates)
+        U_0_next = div_free_proj(U_0_next)
+        return U_0_next, opt_state, loss, grad, updates, div_updates
 
     for i in range(optimizer_config.its):
-        U_0_real, opt_state, loss, grad, alpha_p, div_updates = inner_loop(U_0_real, opt_state)
+        U_0, opt_state, loss, grad, alpha_p, div_updates = inner_loop(U_0, opt_state)
         opt_data(i, loss, grad, alpha_p)
-        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0_real)} | {div_updates} | {jnp.linalg.norm(alpha_p)}")
+        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | div updates: {div_updates} | {jnp.linalg.norm(alpha_p)}")
 
     
     
     del optimizer
 
-    return U_0_real, opt_data
+    return U_0, opt_data
 

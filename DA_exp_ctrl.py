@@ -3,10 +3,10 @@ from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
 from SRC.DA_Comp.optimization import NCN, LBFGS, ADAM
-from SRC.utils import load_data, complex_to_real_concat
+from SRC.utils import load_data
 import numpy as np
 from SRC.Solver.IC_gen import init_particles_vector
-from SRC.DA_Comp.loss_funcs import create_loss_fn, build_transform_fn
+from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.DA_Comp.adjoint import build_adjoint_grad_fn, build_adjoint_Hess_fn
 import jax
 from SRC.function_perf_bench import bench
@@ -16,16 +16,16 @@ config.update("jax_enable_x64", True)
 
 def main():
     kf_opts = KF_Opts(
-        Re = 40,
+        Re = 10,
         n = 4,
-        NDOF = 16,
+        NDOF = 64,
         dt = 1e-2,
         T = 1e3,
         min_samp_T=500
     )
     DA_opts = DA_Opts(
         n_particles_list=[200],
-        part_opts=Particle_Opts(St=1e-1, beta=0),
+        part_opts=Particle_Opts(St=1e-3, beta=10**(-3)),
         num_particle_inits=1,
         num_opt_inits=1,
         num_seeds=1,
@@ -38,7 +38,7 @@ def main():
 
         ],
         crit_list=[
-            MSE()
+            MSE(jnp.ones(int(1/1e-2)))
         ]
     )
 
@@ -137,4 +137,4 @@ def adjoint_test():
 
 
 if __name__ == "__main__":
-    adjoint_test()
+    main()

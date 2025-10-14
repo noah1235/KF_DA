@@ -1,6 +1,6 @@
 # --- Project imports ---
 from SRC.DA_Comp.configs import *  # provides KF_Opts, DA_Opts, etc.
-from SRC.utils import load_data, real_concat_to_complex, complex_to_real_concat
+from SRC.utils import load_data
 from SRC.Solver.KF_intergrators import (
     KF_PS_RHS,
     KF_LPT_PS_RHS,
@@ -11,7 +11,7 @@ from SRC.Solver.KF_intergrators import (
 from SRC.DA_Comp.case_post_proc import post_proc_case_main
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
-from SRC.DA_Comp.loss_funcs import create_loss_fn, project_divfree_rfft2_safe
+from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
 from SRC.DA_Comp.optimization import Hessian_Opt, NCN, optax_opt, LBFGS, ADAM
 from create_results_dir import create_results_dir
 
@@ -169,7 +169,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                     np.save(os.path.join(PI_root, "pIC.npy"), pIC)
 
                     # Quick visualization of particle ICs
-                    fig, ax = plot_particles(pIC, RHS.KF_RHS.Lx, ax=None, s=20)
+                    fig, ax = plot_particles(pIC, RHS.KF_RHS.L, ax=None, s=20)
                     fig.savefig(os.path.join(PI_root, "particle_IC.png"))
                     plt.close()
 
@@ -214,27 +214,24 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
 
                                 # Build the loss function from criterion and stepper
                                 loss_fn = create_loss_fn(
-                                    loss_crit, stepper, target_part, pIC
+                                    loss_crit, stepper, target_part, pIC, transform=True
                                 )
 
                                 def omega_fn(U):
                                     U = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF//2+1))
                                     return RHS.KF_RHS.vorticity_real(U[0], U[1])
                                 
-                                def div_check(U_hat):
-                                    U_hat = real_concat_to_complex(U_hat).reshape((2, RHS.KF_RHS.N, RHS.KF_RHS.N//2+1))
-                                    div = RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1]
-                                    return jnp.mean(jnp.abs(div))
+                                def div_check(U):
+                                    U_reshaped = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF))
+                                    u_hat = jnp.fft.rfft2(U_reshaped[0])
+                                    v_hat = jnp.fft.rfft2(U_reshaped[1])
+                                    div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * u_hat + RHS.KF_RHS.dyop * v_hat)
+                                    return jnp.mean(jnp.abs(div_field))
                                 
-                                def div_free_proj(U_real):
-                                    U = real_concat_to_complex(U_real)
-                                    U = U.reshape((2, RHS.KF_RHS.N, RHS.KF_RHS.N//2+1))
-                                    U_proj = project_divfree_rfft2_safe(U, RHS.KF_RHS.KX, RHS.KF_RHS.KY, RHS.KF_RHS.K2)
-                                    return (complex_to_real_concat(U_proj)).reshape(-1)
 
                                 # Run the DA optimization for this setup
                                 _run_DA_case(target_trj, U_0_guess, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
-                                             omega_fn, div_check, div_free_proj)
+                                             omega_fn, div_check, build_div_free_proj(stepper))
 
 
 def _run_DA_case(
@@ -265,20 +262,22 @@ def _run_DA_case(
         Optimizer configuration object (used to dispatch the optimization routine).
     """
     # Pack complex IC into real vector: [Re, Im]
-    U_0_guess_real = complex_to_real_concat(U_0_guess)
+    #U_0_guess_real = complex_to_real_concat(U_0_guess)
+    U_0_guess_real = U_0_guess
+
 
     # Dispatch by optimizer type
     if isinstance(optimizer, NCN):
         grad_fn = jax.jit(jax.grad(loss_fn))
         Hess_fn = jax.jit(jax.hessian(loss_fn))
         Hessian_Opt(U_0_guess_real, loss_fn, grad_fn, Hess_fn, optimizer)
+
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
-        U_0_real, opt_data = optax_opt(
+        U_0_DA, opt_data = optax_opt(
             U_0_guess_real, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
         )
 
     
-    U_0_DA = real_concat_to_complex(U_0_real)
     DA_trj = trj_gen_fn(pIC, U_0_DA)
 
     @jax.jit
@@ -287,7 +286,7 @@ def _run_DA_case(
         lam = jnp.linalg.eigvalsh(H)
         return lam
     
-    lam = H_eig_decomp(U_0_real)
+    lam = H_eig_decomp(U_0_DA)
     
     print(lam)
 

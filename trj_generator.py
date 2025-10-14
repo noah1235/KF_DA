@@ -17,14 +17,14 @@ config.update("jax_enable_x64", True)
 
 def generate_KF_flow():
     NDOF = 64
-    Re = 40
+    Re = 10
     n  = 4
     dt = 1e-2
-    T = 1e3
+    T = 1e2
 
     nsteps = int(T/dt)
     rhs = KF_PS_RHS(NDOF, Re, n, dealias=True)
-    L = rhs.Lx
+    L = rhs.L
     U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=5e-1).reshape(-1)
     integrator = Time_Stepper(rhs, dt, method="RK4")
 
@@ -148,19 +148,19 @@ def generate_KF_energy_plots():
     print(f"Saved: {outpath}")
 
 def generate_sample_case_ani():
-    NDOF = 16
-    Re = 30
+    NDOF = 64
+    Re = 10
     beta = 1e-3
-    St = 1
+    St = 1e-2
     n  = 4
     dt = 1e-2
-    T = 200
+    T = 20
     vort=False
 
-    n_particles = 100
+    n_particles = 20
     nsteps = int(T/dt)
     rhs = KF_LPT_PS_RHS(NDOF, Re, n, n_particles, beta=beta, St=St)
-    L = rhs.KF_RHS.Lx
+    L = rhs.KF_RHS.L
     particles = init_particles_vector(n_particles, (0, L), (0, L), rng=None)
     U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=2).reshape(-1)
     X0 = jnp.concat([particles, U_0])
@@ -168,14 +168,13 @@ def generate_sample_case_ani():
     integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=n_particles)
 
     trj = integrator.integrate_scan(X0, nsteps)
-
     root = os.path.join(create_results_dir(), "Trjs", "Animations", f"Re={Re}_St={St:.1e}_beta={beta:.1e}")
     os.makedirs(root, exist_ok=True)
     fig, anim = animate_particles_and_flow(
                     trj, L, n_particles, NDOF,
-                    interval=1, s=20, qskip=1,  # qskip=2 shows every 2nd vector in each dir
+                    interval=1, s=10, qskip=2,
                     repeat=True, blit=True, dpi=120, ax=None,
-                    title="Particles + Velocity Field", skip=5
+                    title="Particles + Velocity Field", skip=1
                 )
     anim.save(os.path.join(root, "particles.mp4"), writer="ffmpeg", fps=60, dpi=150)
 
@@ -185,7 +184,7 @@ def generate_sample_case_ani():
                         cmap="icefire", interval=1, repeat=True, blit=False,
                         dpi=120, skip=1, cbar=True, sym=True, clim=None, ax=None,
                         title=r"Vorticity $\omega_z$")
-        anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=60, dpi=300)
+        anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=30, dpi=300)
 
 if __name__ == "__main__":
-    generate_KF_flow()
+    generate_sample_case_ani()

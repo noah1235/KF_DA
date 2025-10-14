@@ -59,7 +59,6 @@ class Particle_Stepper:
         X_next = X_next.at[1:n4:4].set(yp)  # set y entries
         return X_next
 
-    
 # ---------- RK4 Integrator ----------
 class Time_Stepper:
     def __init__(self, rhs, dt, method="RK4", n_particles=None):
@@ -137,35 +136,34 @@ class Time_Stepper:
 
         return traj, sens_trj
 
-
 class KF_PS_RHS:
     """
     Kolmogorov flow spectral RHS using rfft2/irfft2 (half-spectrum in x).
     Internal spectral arrays are shaped (Ny, Nx_r).
     Externally, we accept/return a flat vector of length 2 * Ny * Nx_r (u_hat_r, v_hat_r).
     """
-    def __init__(self, NDOF, Re, n, dealias=True, calc_mat_deriv=False):
+    def __init__(self, NDOF, Re, n, calc_mat_deriv=False):
+        dealias=True
         self.N = NDOF
-        Ny = Nx = NDOF
-        self.Ny, self.Nx = Ny, Nx
         self.Re = Re
         self.n = int(n)
-        self.Lx = self.Ly = 2 * jnp.pi
-        dx, dy = self.Lx / Nx, self.Ly / Ny
+        self.L = 2 * jnp.pi
+
+        ord = "xy"
 
         # rfft wavenumbers & operators
-        kx = 2 * jnp.pi * jnp.fft.rfftfreq(Nx, d=dx)   # length Nx_r
-        ky = 2 * jnp.pi * jnp.fft.fftfreq(Ny, d=dy)    # length Ny
-        self.KX, self.KY = jnp.meshgrid(kx, ky, indexing="xy")
+        kx = jnp.fft.rfftfreq(self.N, d=self.L / (self.N * 2 * jnp.pi))
+        ky = jnp.fft.fftfreq(self.N, d=self.L / (self.N * 2 * jnp.pi))
+        self.KX, self.KY = jnp.meshgrid(kx, ky, indexing=ord)
 
         self.K2   = self.KX**2 + self.KY**2
         self.dxop = 1j * self.KX
         self.dyop = 1j * self.KY
 
         # forcing f = (sin(n y), 0)
-        y = jnp.linspace(0.0, self.Ly, Ny, endpoint=False)
-        x = jnp.linspace(0.0, self.Lx, Nx, endpoint=False)
-        X, Y = jnp.meshgrid(x, y, indexing="xy")
+        y = jnp.linspace(0.0, self.L, self.N, endpoint=False)
+        x = jnp.linspace(0.0, self.L, self.N, endpoint=False)
+        X, Y = jnp.meshgrid(x, y, indexing=ord)
         fx = jnp.sin(self.n * Y)
         fy = jnp.zeros_like(fx)
         self.f_hat_x = jnp.fft.rfft2(fx)               # (Ny, Nx_r)
@@ -174,21 +172,20 @@ class KF_PS_RHS:
 
         # 2/3 dealias mask in rfft layout
         if dealias:
-            mx_full = jnp.fft.fftfreq(Nx) * Nx
-            my_full = jnp.fft.fftfreq(Ny) * Ny
-            MX, MY = jnp.meshgrid(mx_full, my_full, indexing="xy")
-            M_full = (jnp.abs(MX) <= Nx/3) & (jnp.abs(MY) <= Ny/3)
-            self.M = M_full[:, :Nx//2 + 1].astype(jnp.complex128)  # (Ny, Nx_r)
+            mx_full = jnp.fft.fftfreq(self.N) * self.N
+            my_full = jnp.fft.fftfreq(self.N) * self.N
+            MX, MY = jnp.meshgrid(mx_full, my_full, indexing=ord)
+            M_full = (jnp.abs(MX) <= self.N/3) & (jnp.abs(MY) <= self.N/3)
+            self.M = M_full[:, :self.N//2 + 1].astype(jnp.complex128)  # (Ny, Nx_r)
         else:
-            self.M = jnp.ones((Ny, Nx//2 + 1), dtype=jnp.complex128)
+            self.M = jnp.ones((self.N, self.N//2 + 1), dtype=jnp.complex128)
 
         self.calc_mat_deriv = calc_mat_deriv
 
     # optional: vorticity in real space from rfft spectra
     def vorticity_real(self, u_hat_r, v_hat_r):
-        Ny, Nx = self.Ny, self.Nx
         vort_hat = self.dxop * v_hat_r - self.dyop * u_hat_r
-        return jnp.fft.irfft2(vort_hat, s=(Ny, Nx)).real
+        return jnp.fft.irfft2(vort_hat, s=(self.N, self.N)).real
 
     def get_pressure_hat(self, conv_x_hat, conv_y_hat):
         num = self.dxop * (conv_x_hat - self.f_hat_x) + self.dyop * (conv_y_hat - self.f_hat_y)
@@ -198,18 +195,17 @@ class KF_PS_RHS:
         return p_hat
 
     def __call__(self, U_flat):
-        Ny, Nx = self.Ny, self.Nx
-        U = U_flat.reshape((2, Ny, Nx))
+        U = U_flat.reshape((2, self.N, self.N))
         u_hat = jnp.fft.rfft2(U[0])
         u = U[0]
         v_hat = jnp.fft.rfft2(U[1])
         v = U[1]
         
         # gradients in spectral → real
-        ux = jnp.fft.irfft2(self.dxop * u_hat, s=(Ny, Nx))
-        uy = jnp.fft.irfft2(self.dyop * u_hat, s=(Ny, Nx))
-        vx = jnp.fft.irfft2(self.dxop * v_hat, s=(Ny, Nx))
-        vy = jnp.fft.irfft2(self.dyop * v_hat, s=(Ny, Nx))
+        ux = jnp.fft.irfft2(self.dxop * u_hat, s=(self.N, self.N))
+        uy = jnp.fft.irfft2(self.dyop * u_hat, s=(self.N, self.N))
+        vx = jnp.fft.irfft2(self.dxop * v_hat, s=(self.N, self.N))
+        vy = jnp.fft.irfft2(self.dyop * v_hat, s=(self.N, self.N))
 
         # convective terms in real
         conv_x = u*ux + v*uy
@@ -223,39 +219,60 @@ class KF_PS_RHS:
         p_hat = self.get_pressure_hat(conv_x_hat, conv_y_hat)
         visc  = (1.0 / self.Re) * self.K2
 
-        RHS_u = jnp.fft.irfft2((-conv_x_hat - self.dxop * p_hat - visc * u_hat + self.f_hat_x) * self.M, s=(Ny, Nx))
-        RHS_v = jnp.fft.irfft2((-conv_y_hat - self.dyop * p_hat - visc * v_hat + self.f_hat_y) * self.M, s=(Ny, Nx))
+        RHS_u = jnp.fft.irfft2((-conv_x_hat - self.dxop * p_hat - visc * u_hat + self.f_hat_x) * self.M, s=(self.N, self.N))
+        RHS_v = jnp.fft.irfft2((-conv_y_hat - self.dyop * p_hat - visc * v_hat + self.f_hat_y) * self.M, s=(self.N, self.N))
 
         RHS = jnp.stack([RHS_u, RHS_v], axis=0).reshape(-1)
 
         if self.calc_mat_deriv:
-            u_mat = jnp.fft.irfft2((- self.dxop * p_hat - visc * u_hat + self.f_hat_x)*self.M, s=(Ny, Nx))
-            v_mat = jnp.fft.irfft2((- self.dyop * p_hat - visc * v_hat + self.f_hat_y)*self.M, s=(Ny, Nx))
+            u_mat = jnp.fft.irfft2((- self.dxop * p_hat - visc * u_hat + self.f_hat_x)*self.M, s=(self.N, self.N))
+            v_mat = jnp.fft.irfft2((- self.dyop * p_hat - visc * v_hat + self.f_hat_y)*self.M, s=(self.N, self.N))
             return RHS, u_mat, v_mat
         else:
             return RHS
 
 class KF_LPT_PS_RHS:
-    def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=256):
-        self.KF_RHS = KF_PS_RHS(NDOF, Re, n, dealias=True, calc_mat_deriv=True)
-        self.a = 1.0 / (1.0 + beta/2.0)
-        self.alpha = -self.a / St
-        self.St_inv = 1.0 / St
-        self.beta = beta
-        self.n_particles = n_particles
-        self.N = NDOF
+    def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=1024):
+        self.KF_RHS = KF_PS_RHS(NDOF, Re, n, calc_mat_deriv=True)
+        if beta == 0 and St == 0:
+            self.tracer_eq = self.tracer_eq_tracer
+        else:
+            self.a = 1.0 / (1.0 + beta/2.0)
+            self.alpha = -self.a / St
+            self.St_inv = 1.0 / St
+            self.beta = beta
+            self.tracer_eq = self.tracer_eq_inertial
 
+        self.N = NDOF
+        self.n_particles = n_particles
         self.r = int(round(vel_fine_NDOF / NDOF))
 
+    def tracer_eq_inertial(self, u, v, xp, yp, up, vp, u_t_field, v_t_field):
+        u_mat = bilinear_sample_periodic(u_t_field, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
+        v_mat = bilinear_sample_periodic(v_t_field, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
+
+        hx = self.a * (self.St_inv * u + 1.5 * self.beta * u_mat)
+        hy = self.a * (self.St_inv * v + 1.5 * self.beta * v_mat)
+
+        up_dot_rhs = self.alpha * up + hx
+        vp_dot_rhs = self.alpha * vp + hy
+
+        return up_dot_rhs, vp_dot_rhs
+    
+    def tracer_eq_tracer(self, u, v, xp, yp, up, vp, u_t_field, v_t_field):
+        up_dot_rhs = u
+        vp_dot_rhs = v
+
+        return up_dot_rhs, vp_dot_rhs
+
     def __call__(self, X):
-        Ny = Nx = self.N
         # unpack
         part = X[:self.n_particles * 4]
         U_flat = X[self.n_particles * 4:]
-        U = U_flat.reshape(2, Ny, Nx)
+        U = U_flat.reshape(2, self.N, self.N)
 
-        xp = jnp.mod(part[0::4].real, self.KF_RHS.Lx)
-        yp = jnp.mod(part[1::4].real, self.KF_RHS.Ly)
+        xp = jnp.mod(part[0::4].real, self.KF_RHS.L)
+        yp = jnp.mod(part[1::4].real, self.KF_RHS.L)
         up = part[2::4].real
         vp = part[3::4].real
 
@@ -267,18 +284,10 @@ class KF_LPT_PS_RHS:
         v_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(U[1]), self.r)
 
         # bilinear samples (periodic) at particle positions
-        u = bilinear_sample_periodic(u_fine, xp, yp, self.KF_RHS.Lx, self.KF_RHS.Ly)
-        v = bilinear_sample_periodic(v_fine, xp, yp, self.KF_RHS.Lx, self.KF_RHS.Ly)
+        u = bilinear_sample_periodic(u_fine, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
+        v = bilinear_sample_periodic(v_fine, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
 
-        # sample material derivs on the base grid (already real fields)
-        u_mat = bilinear_sample_periodic(u_t_field, xp, yp, self.KF_RHS.Lx, self.KF_RHS.Ly)
-        v_mat = bilinear_sample_periodic(v_t_field, xp, yp, self.KF_RHS.Lx, self.KF_RHS.Ly)
-
-        hx = self.a * (self.St_inv * u + 1.5 * self.beta * u_mat)
-        hy = self.a * (self.St_inv * v + 1.5 * self.beta * v_mat)
-
-        up_dot_rhs = self.alpha * up + hx
-        vp_dot_rhs = self.alpha * vp + hy
+        up_dot_rhs, vp_dot_rhs = self.tracer_eq(u, v, xp, yp, up, vp, u_t_field, v_t_field)
 
         # particle RHS: [dx/dt, dy/dt, du_p/dt, dv_p/dt]
         px = up
