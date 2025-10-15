@@ -50,7 +50,7 @@ def generate_KF_flow():
     np.save(os.path.join(root, "trj.npy"), trj)
 
 def generate_KF_energy_plots():
-    NDOF   = 16
+    NDOF   = 128
     Re_list = [8, 22, 40, 100]
     n      = 4
     dt     = 1e-2
@@ -65,8 +65,8 @@ def generate_KF_energy_plots():
         KE_lam = Re**2 / (4 * n**4)
         D_lam  = Re / (2 * n**2)
 
-        rhs = KF_PS_RHS(NDOF, Re, n, dealias=False)
-        L = rhs.Lx
+        rhs = KF_PS_RHS(NDOF, Re, n)
+        L = rhs.L
 
         # Initial condition
         U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=1e-1).reshape(-1)
@@ -148,8 +148,8 @@ def generate_KF_energy_plots():
     print(f"Saved: {outpath}")
 
 def generate_sample_case_ani():
-    NDOF = 64
-    Re = 10
+    NDOF = 128
+    Re = 40
     beta = 1e-3
     St = 1e-2
     n  = 4
@@ -172,7 +172,7 @@ def generate_sample_case_ani():
     os.makedirs(root, exist_ok=True)
     fig, anim = animate_particles_and_flow(
                     trj, L, n_particles, NDOF,
-                    interval=1, s=10, qskip=2,
+                    interval=1, s=15, qskip=5,
                     repeat=True, blit=True, dpi=120, ax=None,
                     title="Particles + Velocity Field", skip=1
                 )
@@ -187,4 +187,4 @@ def generate_sample_case_ani():
         anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=30, dpi=300)
 
 if __name__ == "__main__":
-    generate_sample_case_ani()
+    generate_KF_energy_plots()

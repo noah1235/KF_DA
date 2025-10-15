@@ -232,7 +232,7 @@ class KF_PS_RHS:
             return RHS
 
 class KF_LPT_PS_RHS:
-    def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=1024):
+    def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=512):
         self.KF_RHS = KF_PS_RHS(NDOF, Re, n, calc_mat_deriv=True)
         if beta == 0 and St == 0:
             self.tracer_eq = self.tracer_eq_tracer
