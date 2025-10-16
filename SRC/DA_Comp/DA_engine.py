@@ -12,7 +12,7 @@ from SRC.DA_Comp.case_post_proc import post_proc_case_main
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
-from SRC.DA_Comp.optimization import Hessian_Opt, NCN, optax_opt, LBFGS, ADAM
+from SRC.DA_Comp.optimization import Hessian_Opt, NCN, optax_opt, LBFGS, ADAM, BFGS, BFGS_opt
 from create_results_dir import create_results_dir
 
 # --- Stdlib / third-party imports ---
@@ -113,7 +113,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
     root = os.path.join(
         create_results_dir(),
         (
-            f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}"
+            f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}_NDOF={kf_opts.NDOF}"
             f"-St={DA_opts.part_opts.St}_beta={DA_opts.part_opts.beta}"
         ),
     )
@@ -261,20 +261,21 @@ def _run_DA_case(
     optimizer : Hessian_Optimizer | LBFGS
         Optimizer configuration object (used to dispatch the optimization routine).
     """
-    # Pack complex IC into real vector: [Re, Im]
-    #U_0_guess_real = complex_to_real_concat(U_0_guess)
-    U_0_guess_real = U_0_guess
 
 
     # Dispatch by optimizer type
     if isinstance(optimizer, NCN):
         grad_fn = jax.jit(jax.grad(loss_fn))
         Hess_fn = jax.jit(jax.hessian(loss_fn))
-        Hessian_Opt(U_0_guess_real, loss_fn, grad_fn, Hess_fn, optimizer)
+        Hessian_Opt(U_0_guess, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
+
+    elif isinstance(optimizer, BFGS):
+        BFGS_opt(U_0_guess, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
+
 
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
         U_0_DA, opt_data = optax_opt(
-            U_0_guess_real, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
+            U_0_guess, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
         )
 
     

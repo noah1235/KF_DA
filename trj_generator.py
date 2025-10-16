@@ -16,19 +16,20 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 def generate_KF_flow():
-    NDOF = 64
+    NDOF = 16
     Re = 10
     n  = 4
     dt = 1e-2
     T = 1e2
 
     nsteps = int(T/dt)
-    rhs = KF_PS_RHS(NDOF, Re, n, dealias=True)
+    rhs = KF_PS_RHS(NDOF, Re, n)
     L = rhs.L
     U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=5e-1).reshape(-1)
     integrator = Time_Stepper(rhs, dt, method="RK4")
 
     trj = integrator.integrate_scan(U_0, nsteps)
+
     root = os.path.join(create_results_dir(), "Trjs", "KF_trjs", f"Re={Re}_NDOF={NDOF}_dt={dt}_T={T}_n={n}")
     os.makedirs(root, exist_ok=True)
     trj = np.asarray(trj)
@@ -50,12 +51,12 @@ def generate_KF_flow():
     np.save(os.path.join(root, "trj.npy"), trj)
 
 def generate_KF_energy_plots():
-    NDOF   = 128
+    NDOF   = 16
     Re_list = [8, 22, 40, 100]
     n      = 4
     dt     = 1e-2
-    T      = 1000.0
-    T_trans = 200.0
+    T      = 500.0
+    T_trans = 100.0
     nsteps_trans = int(T_trans / dt)
     nsteps = int(T / dt)
     r      = 2  # upsample factor for gradient evaluation
@@ -187,4 +188,4 @@ def generate_sample_case_ani():
         anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=30, dpi=300)
 
 if __name__ == "__main__":
-    generate_KF_energy_plots()
+    generate_KF_flow()

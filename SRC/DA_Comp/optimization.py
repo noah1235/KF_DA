@@ -40,13 +40,10 @@ class ADAM(Optimizer):
         return f"{self.name}-{self.its}"
 
 class LS_Opt(Optimizer):
-
     def set_ls(self):
         if self.ls_method == "BT":
             self.ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=20)
 
-
-    
     def step(
         self,
         x: jnp.ndarray,      # current x, shape (m,)
@@ -55,7 +52,19 @@ class LS_Opt(Optimizer):
     ) -> jnp.ndarray:
         return x + alpha * p
     
+class BFGS(LS_Opt):
+    name = "BFGS"
+    def __init__(self, ls_method, its, fallback_opt):
+        self.ls_method = ls_method
+        self.set_ls()
+        self.its = its
 
+        if fallback_opt == "eye":
+            self.fallback = self.eye_fallback
+    @staticmethod
+    def eye_fallback(N):
+        return jnp.eye(N)
+        
 
 def jit_eigen_decomp(H):
     return jnp.linalg.eigh(H)
@@ -120,26 +129,63 @@ class ArmijoLineSearch:
             α *= self.rho
         return α
 
-def Hessian_Opt(U_0_real_guess, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt):
+def Hessian_Opt(U_0, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt, div_check):
     grad_fn = jax.jit(grad_fn)
     Hess_fn = jax.jit(Hess_fn)
 
-    def step(U_0_real):
-        loss = loss_fn(U_0_real)
-        grad = grad_fn(U_0_real)
-        Hess = Hess_fn(U_0_real)
-        print(grad.shape, Hess.shape)
+    def step(U_0):
+        loss = loss_fn(U_0)
+        grad = grad_fn(U_0)
+        Hess = Hess_fn(U_0)
 
         p = optimizer.direction(grad, Hess)
-        alpha = optimizer.ls(loss_fn, U_0_real, p, grad)
-        U_0_real = optimizer.step(U_0_real, alpha, p)
+        alpha = optimizer.ls(loss_fn, U_0, p, grad)
+        U_0 = optimizer.step(U_0, alpha, p)
 
-        return U_0_real, loss, grad, Hess
-    U_0_real = U_0_real_guess
+        return U_0, loss, grad, Hess
+
     for it in range(optimizer.its):
-        print(it)
-        U_0_real, loss, grad, Hess = step(U_0_real)
-        print(loss)
+        print("start")
+        U_0, loss, grad, Hess = step(U_0)
+        print(f"i:{it} | loss: {loss} | Div: {div_check(U_0)}")
+
+def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_proj):
+    N = U_0.shape[0]
+    
+    @jax.jit
+    def jit_block(U_0, alpha, pk):
+        U_0_next = optimizer.step(U_0, alpha, pk)
+
+        loss_next, grad_next = loss_grad_fn(U_0_next)
+
+        sk = U_0_next - U_0
+        yk = grad_next - grad
+
+        rho_k = 1/(jnp.dot(yk, sk))
+
+        Bk_inv_next = (I - rho_k * jnp.outer(sk, yk)) @ Bk_inv @ (I - rho_k * jnp.outer(yk, sk)) + rho_k * jnp.outer(sk, sk)
+
+        return U_0_next, loss_next, grad_next, Bk_inv_next
+
+    def inner_loop(U_0, grad, Bk_inv):
+        pk = -Bk_inv @ grad
+        alpha = optimizer.ls(loss_fn, U_0, pk, grad)
+        return jit_block(U_0, alpha, pk)
+
+    
+    Bk_inv = optimizer.fallback(N)
+    I = jnp.eye(N)
+
+
+    for i in range(optimizer.its):
+        if i == 0:
+            loss, grad = loss_grad_fn(U_0)
+        U_0, loss, grad, Bk_inv = inner_loop(U_0, grad, Bk_inv)
+        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)}")
+
+
+
+
 
 def optax_opt(U_0, loss_fn, loss_grad_fn, optimizer_config, div_check, div_free_proj):
     optimizer = optimizer_config.alg
