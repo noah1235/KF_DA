@@ -12,17 +12,7 @@ def create_loss_fn(crit, stepper, target_parts, pIC, transform=True):
     def loss_fn(U0):
         if transform:
             U0 = transform_fn(U0)
-            if True:
-                U0_re = U0.reshape((2, stepper.step.rhs.KF_RHS.N, stepper.step.rhs.KF_RHS.N))
-                u_hat = jnp.fft.rfft2(U0_re[0])
-                v_hat = jnp.fft.rfft2(U0_re[1])
 
-                dxop = stepper.step.rhs.KF_RHS.KX * 1j
-                dyop = stepper.step.rhs.KF_RHS.KY * 1j
-                div = jnp.fft.irfft2(dxop * u_hat + dyop * v_hat)
-                #print(jnp.max(div))
-                #print("---------")
-        
         X0 = jnp.concatenate([pIC, U0])
 
         def body(X, data):

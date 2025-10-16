@@ -16,11 +16,11 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 def generate_KF_flow():
-    NDOF = 16
-    Re = 10
+    NDOF = 32
+    Re = 40
     n  = 4
     dt = 1e-2
-    T = 1e2
+    T = 1e3
 
     nsteps = int(T/dt)
     rhs = KF_PS_RHS(NDOF, Re, n)
@@ -149,7 +149,7 @@ def generate_KF_energy_plots():
     print(f"Saved: {outpath}")
 
 def generate_sample_case_ani():
-    NDOF = 128
+    NDOF = 16
     Re = 40
     beta = 1e-3
     St = 1e-2

@@ -2,6 +2,7 @@ import jax.numpy as jnp
 import jax
 import optax
 import numpy as np
+from jax import lax
 
 class Optimizer:
     name = ""
@@ -28,7 +29,6 @@ class LBFGS(Optimizer):
         self.its = its
         self.ls_method = "BT"
         self.alg = optax.lbfgs(linesearch=optax.scale_by_backtracking_linesearch(max_backtracking_steps=20))
-    
     
 class ADAM(Optimizer):
     name = "ADAM"
@@ -106,14 +106,14 @@ class ArmijoLineSearch:
         alpha_init: float = 1.0,
         rho: float        = 0.5,
         c: float          = 1e-4,
-        max_iters: int    = 20
+        max_iters: int    = 10
     ):
         self.alpha_init = alpha_init
         self.rho        = rho
         self.c          = c
         self.max_iters  = max_iters
 
-    def __call__(
+    def __call___dec(
         self,
         f,
         x: jnp.ndarray,
@@ -128,18 +128,49 @@ class ArmijoLineSearch:
                 break
             α *= self.rho
         return α
+    
+
+    def __call__(self, f, x: jnp.ndarray, p: jnp.ndarray, grad: jnp.ndarray) -> jnp.ndarray:
+        # f(x) must return a scalar shape ().
+        f0 = f(x)                             # ()
+        g0 = jnp.vdot(grad, p)                # scalar (inner product)
+
+        # If not a descent direction, return alpha = 0 without branching in Python.
+        def do_search(_):
+            alpha0 = jnp.asarray(self.alpha_init, dtype=f0.dtype)
+            f_alpha0 = f(x + alpha0 * p)
+
+            def cond_fun(state):
+                alpha, f_alpha, k = state
+                armijo = f0 + self.c * alpha * g0
+                need_more = jnp.logical_and(f_alpha > armijo, k < self.max_iters)
+                return need_more
+
+            def body_fun(state):
+                alpha, _, k = state
+                alpha = alpha * self.rho
+                f_alpha = f(x + alpha * p)
+                return (alpha, f_alpha, k + 1)
+
+            alpha_fin, _, _ = lax.while_loop(cond_fun, body_fun, (alpha0, f_alpha0, 0))
+            return alpha_fin
+
+        alpha = lax.cond(g0 < 0.0, do_search, lambda _: jnp.asarray(0.0, dtype=f0.dtype), operand=None)
+        return alpha
 
 def Hessian_Opt(U_0, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt, div_check):
-    grad_fn = jax.jit(grad_fn)
-    Hess_fn = jax.jit(Hess_fn)
+    #grad_fn = jax.jit(grad_fn)
+    #Hess_fn = jax.jit(Hess_fn)
 
+    jax.jit
     def step(U_0):
         loss = loss_fn(U_0)
         grad = grad_fn(U_0)
         Hess = Hess_fn(U_0)
 
         p = optimizer.direction(grad, Hess)
-        alpha = optimizer.ls(loss_fn, U_0, p, grad)
+        #alpha = optimizer.ls(loss_fn, U_0, p, grad)
+        alpha = .5
         U_0 = optimizer.step(U_0, alpha, p)
 
         return U_0, loss, grad, Hess
@@ -147,13 +178,17 @@ def Hessian_Opt(U_0, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt, div_check):
     for it in range(optimizer.its):
         print("start")
         U_0, loss, grad, Hess = step(U_0)
-        print(f"i:{it} | loss: {loss} | Div: {div_check(U_0)}")
+        print(grad.shape, Hess.shape, U_0.shape)
+        print(f"i:{it} | loss: {loss}")
 
 def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_proj):
     N = U_0.shape[0]
-    
+
     @jax.jit
-    def jit_block(U_0, alpha, pk):
+    def inner_loop(U_0, grad, Bk_inv):
+        pk = -Bk_inv @ grad
+        alpha = optimizer.ls(loss_fn, U_0, pk, grad)
+
         U_0_next = optimizer.step(U_0, alpha, pk)
 
         loss_next, grad_next = loss_grad_fn(U_0_next)
@@ -165,26 +200,25 @@ def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_pr
 
         Bk_inv_next = (I - rho_k * jnp.outer(sk, yk)) @ Bk_inv @ (I - rho_k * jnp.outer(yk, sk)) + rho_k * jnp.outer(sk, sk)
 
-        return U_0_next, loss_next, grad_next, Bk_inv_next
-
-    def inner_loop(U_0, grad, Bk_inv):
-        pk = -Bk_inv @ grad
-        alpha = optimizer.ls(loss_fn, U_0, pk, grad)
-        return jit_block(U_0, alpha, pk)
+        return U_0_next, loss_next, grad_next, Bk_inv_next, alpha, pk * alpha
 
     
     Bk_inv = optimizer.fallback(N)
     I = jnp.eye(N)
 
-
+    opt_data = Opt_Data(optimizer.its)
     for i in range(optimizer.its):
         if i == 0:
             loss, grad = loss_grad_fn(U_0)
-        U_0, loss, grad, Bk_inv = inner_loop(U_0, grad, Bk_inv)
-        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)}")
+        loss_prev = loss
+        grad_prev = grad
+        U_0, loss, grad, Bk_inv, alpha, alpha_pk = inner_loop(U_0, grad, Bk_inv)
+        opt_data(i, loss_prev, grad_prev, alpha_pk)
+        
+        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha}")
 
 
-
+    return U_0, opt_data
 
 
 def optax_opt(U_0, loss_fn, loss_grad_fn, optimizer_config, div_check, div_free_proj):

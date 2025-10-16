@@ -218,8 +218,10 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                                 )
 
                                 def omega_fn(U):
-                                    U = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF//2+1))
-                                    return RHS.KF_RHS.vorticity_real(U[0], U[1])
+                                    U_reshape = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF))
+                                    u_hat = jnp.fft.rfft2(U_reshape[0])
+                                    v_hat = jnp.fft.rfft2(U_reshape[1])
+                                    return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
                                 
                                 def div_check(U):
                                     U_reshaped = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF))
@@ -265,12 +267,12 @@ def _run_DA_case(
 
     # Dispatch by optimizer type
     if isinstance(optimizer, NCN):
-        grad_fn = jax.jit(jax.grad(loss_fn))
-        Hess_fn = jax.jit(jax.hessian(loss_fn))
+        grad_fn = jax.grad(loss_fn)
+        Hess_fn = jax.hessian(loss_fn)
         Hessian_Opt(U_0_guess, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
 
     elif isinstance(optimizer, BFGS):
-        BFGS_opt(U_0_guess, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
+        U_0_DA, opt_data = BFGS_opt(U_0_guess, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
 
 
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
@@ -280,16 +282,16 @@ def _run_DA_case(
 
     
     DA_trj = trj_gen_fn(pIC, U_0_DA)
-
-    @jax.jit
+    Hess_fn = jax.hessian(loss_fn)
+    #@jax.jit
     def H_eig_decomp(x):
-        H = jax.hessian(loss_fn)(x)
+        H = Hess_fn(x)
         lam = jnp.linalg.eigvalsh(H)
         return lam
+
+    #lam = H_eig_decomp(U_0_DA)
     
-    lam = H_eig_decomp(U_0_DA)
-    
-    print(lam)
+    #print(lam)
 
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn)

@@ -24,7 +24,6 @@ def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt,
 
     vel_cos_sim = compute_cosine_vs_time(target_vel, DA_vel)
     part_cos_sim = compute_cosine_vs_time(target_part, DA_part)
-    print(vel_cos_sim.shape)
     plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir)
 
     #Vorticity plot
@@ -135,7 +134,6 @@ def plot_convergence(opt_data, save_dir, y_min=1e-18):
         dtype=float
     )
     alpha_gTp = np.asarray(opt_data.alpha_gTp_record, dtype=float)
-    print(alpha_gTp)
 
     iters = np.arange(loss.size)
 

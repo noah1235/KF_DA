@@ -10,15 +10,16 @@ from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.DA_Comp.adjoint import build_adjoint_grad_fn, build_adjoint_Hess_fn
 import jax
 from SRC.function_perf_bench import bench
+from SRC.utils import build_div_free_proj
 
 from jax import config
 config.update("jax_enable_x64", True)
 
 def main():
     kf_opts = KF_Opts(
-        Re = 10,
+        Re = 40,
         n = 4,
-        NDOF = 16,
+        NDOF = 32,
         dt = 1e-2,
         T = 1e3,
         min_samp_T=500
@@ -32,9 +33,9 @@ def main():
         int_pert_range=(.9, 1),
         T_list=[1],
         optimizer_list=[
-            NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
+            #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #LBFGS(its=20),
-            #BFGS(ls_method="BT", its=10, fallback_opt="eye")
+            BFGS(ls_method="BT", its=40, fallback_opt="eye")
             #ADAM(1e-4, its=100)
 
         ],
@@ -48,16 +49,16 @@ def main():
 
 def adjoint_test():
     kf_opts = KF_Opts(
-        Re = 40,
+        Re = 10,
         n = 4,
-        NDOF = 64,
+        NDOF = 16,
         dt = 1e-2,
         T = 1e3,
         min_samp_T=500
     )
     transform = True
-    grad_comp = False
-    Hess_comp = True
+    grad_comp = True
+    Hess_comp = False
     npart = 100
     T = .1
 
@@ -91,12 +92,7 @@ def adjoint_test():
     if transform is None:
         adj_transform = lambda x: x
     else:
-        adj_transform = build_transform_fn(
-                    NDOF = stepper.step.rhs.KF_RHS.N,
-                    KX = stepper.step.rhs.KF_RHS.KX,
-                    KY = stepper.step.rhs.KF_RHS.KY,
-                    K2 = stepper.step.rhs.KF_RHS.K2,
-        )
+        adj_transform = build_div_free_proj(stepper)
 
     if grad_comp:
         loss_grad_fn_adj = build_adjoint_grad_fn(pIC, crit, target_part, trj_gen_fn, stepper, adj_transform)
