@@ -42,7 +42,7 @@ class ADAM(Optimizer):
 class LS_Opt(Optimizer):
     def set_ls(self):
         if self.ls_method == "BT":
-            self.ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=20)
+            self.ls = ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=5)
 
     def step(
         self,
@@ -54,10 +54,11 @@ class LS_Opt(Optimizer):
     
 class BFGS(LS_Opt):
     name = "BFGS"
-    def __init__(self, ls_method, its, fallback_opt):
+    def __init__(self, ls_method, its, fallback_opt, print_loss=False):
         self.ls_method = ls_method
         self.set_ls()
         self.its = its
+        self.print_loss = print_loss
 
         if fallback_opt == "eye":
             self.fallback = self.eye_fallback
@@ -112,6 +113,7 @@ class ArmijoLineSearch:
         self.rho        = rho
         self.c          = c
         self.max_iters  = max_iters
+        self.min_alpha = rho**max_iters
 
     def __call___dec(
         self,
@@ -233,8 +235,13 @@ def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_pr
         grad_prev = grad
         U_0, loss, grad, Bk_inv, alpha, alpha_pk, Bk_inv_update = inner_loop(U_0, grad, Bk_inv)
         opt_data(i, loss_prev, grad_prev, alpha_pk)
-        
-        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha} | Bk_inv_update: {Bk_inv_update}")
+        if optimizer.print_loss:
+            print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha} | Bk_inv_update: {Bk_inv_update}")
+
+        if alpha <= optimizer.ls.min_alpha:
+            if optimizer.print_loss:
+                print(f"optimizer stalled | alpha={alpha}")
+            break
 
 
     return U_0, opt_data
