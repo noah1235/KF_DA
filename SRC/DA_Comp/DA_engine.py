@@ -25,6 +25,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import pandas as pd
 
 
 
@@ -74,6 +75,29 @@ def calc_attractor_size(attractor_snapshots: jnp.ndarray) -> jnp.ndarray:
     dist = jnp.linalg.norm(attractor_snapshots - mean.reshape((1, -1)), axis=1)
     return jnp.mean(dist)
 
+def append_to_parquet(df, parquet_path):
+    """
+    Append a DataFrame to a Parquet file, or create it if it doesn't exist.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The new data to save.
+    parquet_path : str
+        Path to the Parquet file.
+    """
+    # If parquet doesn't exist, just write a new one
+    if not os.path.exists(parquet_path):
+        df.to_parquet(parquet_path, index=False)
+        print(f"Created new Parquet file: {parquet_path}")
+        return
+
+    # Otherwise, load existing, concatenate, and overwrite
+    existing_df = pd.read_parquet(parquet_path)
+    combined = pd.concat([existing_df, df], ignore_index=True)
+    combined.to_parquet(parquet_path, index=False)
+    print(f"Appended data and updated {parquet_path}")
+
 
 def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
     """
@@ -119,6 +143,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
         ),
     )
     os.makedirs(root, exist_ok=True)
+    parquet_path = os.path.join(root, "results.parquet")
 
     # Continue seed indexing from the max existing seed, if present
     max_seed_idx = get_max_seed_index(root)
@@ -167,7 +192,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                 
                 for samp_period in DA_opts.sampling_period_list:
                     period_idx = int(samp_period/kf_opts.dt)
-                    idx = jnp.arange(int(T/kf_opts.dt))
+                    idx = jnp.arange(int(T/kf_opts.dt)+1)
                     t_mask = (idx % period_idx == 0).astype(jnp.float32)
 
                     samp_p_root = os.path.join(npart_root, f"SP={samp_period}")
@@ -242,12 +267,25 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                                         div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
                                         return jnp.mean(jnp.abs(div_field))
                                     
+                                    results_df = pd.DataFrame({
+                                                                "seed": [seed_idx],
+                                                                "T": [T],
+                                                                "n_part": [npart],
+                                                                "samp_period": [samp_period],
+                                                                "init_IC_distance": [opt_init_dist],
+                                                                "optimizer": [f"{optimizer}"],
+                                                                "loss_crit": [f"{loss_crit}"]
+
+                                                            })
+                                                                                                
 
                                     # Run the DA optimization for this setup
                                     _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
-                                                omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans)
+                                                omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans, t_mask, results_df,
+                                                parquet_path)
 
 
+    return root
 def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
     U_0_guess_fourier: np.ndarray | jnp.ndarray,
@@ -260,7 +298,11 @@ def _run_DA_case(
     omega_fn,
     div_check,
     div_free_proj,
-    vel_part_trans: Vel_Part_Transformations
+    vel_part_trans: Vel_Part_Transformations,
+    t_mask,
+    results_df,
+    parquet_path
+    
 ) -> None:
     """
     Run a single DA case for a given optimizer and loss function.
@@ -287,7 +329,6 @@ def _run_DA_case(
     elif isinstance(optimizer, BFGS):
         U_0_DA_fourier, opt_data = BFGS_opt(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
 
-
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
         U_0_DA_fourier, opt_data = optax_opt(
             U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
@@ -298,26 +339,21 @@ def _run_DA_case(
     v = jnp.fft.irfft2(U_0_DA_hat[1])
     U_0_DA = jnp.stack([u, v], axis=0).reshape(-1)
 
-    DA_trj = trj_gen_fn(pIC, U_0_DA)
-    Hess_fn = jax.hessian(loss_fn)
 
-
-    def H_eig_decomp(x):
-        H = Hess_fn(x)
-        lam = jnp.linalg.eigvalsh(H)
-        return lam
     hvp = jax.jit(build_hvp(loss_fn, U_0_DA_fourier))
-    lams, v = max_eig_power_iterations(hvp, U_0_DA_fourier.shape[0])
-    print(lams)
-    result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
-    print(result["lambda_max"], result["lambda_min"])
-    result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=20)
-    print(result["lambda_max"], result["lambda_min"])
-    result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=30)
-    print(result["lambda_max"], result["lambda_min"])
+    lanczo_result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
 
-    return
-    #lam = H_eig_decomp(U_0_DA_fourier)
+    with open(os.path.join(save_dir, "extreme_H_eigs.txt"), "w") as f:
+        f.write(f"lambda_max={lanczo_result["lambda_max"]:.4e} \n lambda_min={lanczo_result["lambda_min"]:.4e}")
+
+    DA_trj = trj_gen_fn(pIC, U_0_DA)
+    results_df["max_H_eig"] = [float(lanczo_result["lambda_max"])]
+    results_df["min_H_eig"] = [float(lanczo_result["lambda_min"])]
+
+
     n_particles = pIC.shape[0]//4
-    post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, lam=None)
+    post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)
+    append_to_parquet(results_df, parquet_path)
+
+    
     

@@ -11,9 +11,41 @@ from SRC.DA_Comp.adjoint import build_adjoint_grad_fn, build_adjoint_Hess_fn
 import jax
 from SRC.function_perf_bench import bench
 from SRC.utils import build_div_free_proj
-
+import os
+import pandas as pd
 from jax import config
 config.update("jax_enable_x64", True)
+
+def parquet_to_excel(parquet_path, excel_path=None):
+    """
+    Copy the contents of a Parquet file to an Excel (.xlsx) file.
+
+    Parameters
+    ----------
+    parquet_path : str
+        Path to the source Parquet file.
+    excel_path : str, optional
+        Path to the output Excel file. If None, uses same base name.
+
+    Returns
+    -------
+    str
+        Path to the saved Excel file.
+    """
+    if not os.path.exists(parquet_path):
+        raise FileNotFoundError(f"Parquet file not found: {parquet_path}")
+
+    # Default Excel filename if not provided
+    if excel_path is None:
+        base = os.path.splitext(parquet_path)[0]
+        excel_path = base + ".xlsx"
+
+    # Read parquet and write to Excel
+    df = pd.read_parquet(parquet_path)
+    df.to_excel(excel_path, index=False)
+
+    print(f"Saved Excel file: {excel_path} (rows={len(df)}, cols={len(df.columns)})")
+    return excel_path
 
 def main():
     kf_opts = KF_Opts(
@@ -36,7 +68,7 @@ def main():
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #LBFGS(its=20),
-            BFGS(ls_method="BT", its=100, fallback_opt="eye")
+            BFGS(ls_method="BT", its=1, fallback_opt="eye", print_loss=True)
             #ADAM(1e-4, its=100)
 
         ],
@@ -45,7 +77,9 @@ def main():
         ]
     )
 
-    DA_exp_main(kf_opts, DA_opts)
+    root = DA_exp_main(kf_opts, DA_opts)
+    parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
+
 
 
 def adjoint_test():

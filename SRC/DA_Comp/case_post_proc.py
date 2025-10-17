@@ -5,7 +5,7 @@ import numpy as np
 
 from SRC.Solver.ploting import plot_vorticity
 
-def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, lam=None):
+def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df):
     """
     Post-process a DA case:
       - compute per-timestep errors for velocity and particles
@@ -18,27 +18,20 @@ def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt,
     DA_part = DA_trj[:, : n_particles * 4]
     DA_vel  = DA_trj[:, n_particles * 4 :]
 
+    trj_cos_sim = jnp.vdot(target_vel.reshape(-1), DA_vel.reshape(-1)) / (jnp.linalg.norm(target_vel) * jnp.linalg.norm(DA_vel))
+    results_df["trj_cos_sim"] = [float(trj_cos_sim)]
+
     # Time axis length should match the number of timesteps
     nsteps = target_trj.shape[0]
     time_axis = jnp.arange(nsteps) * dt
 
     vel_cos_sim = compute_cosine_vs_time(target_vel, DA_vel)
     part_cos_sim = compute_cosine_vs_time(target_part, DA_part)
-    plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir)
-
-    if lam is not None:
-        plot_Hess_eigs(lam, save_dir)
+    plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, save_dir)
 
     #Vorticity plot
     plot_final_vort(DA_vel, target_vel, omega_fn, save_dir)
     plot_convergence(opt_data, save_dir)
-
-
-def plot_Hess_eigs(lam, save_dir):
-    plt.plot(lam)
-    plt.savefig(os.path.join(save_dir, "Hess_eigs.png"))
-    plt.close()
-
 
 def plot_final_vort(DA_vel, target_vel, omega_fn, save_dir):
     """
@@ -101,7 +94,7 @@ def compute_cosine_vs_time(A, B, eps=1e-12):
     nb  = jnp.linalg.norm(B, axis=1)
     return dot / (na * nb + eps)
 
-def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir):
+def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, save_dir):
     """
     Plot velocity and particle errors vs. time and save the figure.
     """
@@ -110,6 +103,10 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir):
 
     ax.plot(time_axis, vel_cos_sim, label="Velocity error")
     ax.plot(time_axis, part_cos_sim, label="Particle error")
+
+    print(time_axis.shape, t_mask.shape)
+    for t in time_axis[t_mask == 1]:
+        ax.axvline(x=t, color="k", linestyle="--", alpha=0.3, linewidth=1.0)
 
     ax.set_xlabel("Time")
     ax.set_ylabel("Cosine Similarity")
