@@ -184,23 +184,42 @@ def Hessian_Opt(U_0, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt, div_check):
 def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_proj):
     N = U_0.shape[0]
 
+
     @jax.jit
-    def inner_loop(U_0, grad, Bk_inv):
+    def inner_loop(U_0, grad, Bk_inv, eps=0):
+        # Search direction and line search
         pk = -Bk_inv @ grad
         alpha = optimizer.ls(loss_fn, U_0, pk, grad)
 
+        # Step and new loss/grad
         U_0_next = optimizer.step(U_0, alpha, pk)
-
         loss_next, grad_next = loss_grad_fn(U_0_next)
 
+        # Quasi-Newton pair
         sk = U_0_next - U_0
         yk = grad_next - grad
 
-        rho_k = 1/(jnp.dot(yk, sk))
+        # Curvature
+        ys = jnp.vdot(yk, sk).real
+        do_update = ys > jnp.asarray(eps, dtype=ys.dtype)
 
-        Bk_inv_next = (I - rho_k * jnp.outer(sk, yk)) @ Bk_inv @ (I - rho_k * jnp.outer(yk, sk)) + rho_k * jnp.outer(sk, sk)
+        alpha_pk = pk * alpha  # return value
 
-        return U_0_next, loss_next, grad_next, Bk_inv_next, alpha, pk * alpha
+        n = Bk_inv.shape[0]
+        I = jnp.eye(n, dtype=Bk_inv.dtype)
+
+        def _update(_):
+            rho = 1.0 / ys
+            Sy = jnp.outer(sk, yk)
+            Ys = jnp.outer(yk, sk)
+            Ss = jnp.outer(sk, sk)
+            Bk_inv_next = (I - rho * Sy) @ Bk_inv @ (I - rho * Ys) + rho * Ss
+            return U_0_next, loss_next, grad_next, Bk_inv_next, alpha, alpha_pk, True
+
+        def _skip(_):
+            return U_0_next, loss_next, grad_next, Bk_inv, alpha, alpha_pk, False
+
+        return jax.lax.cond(do_update, _update, _skip, operand=None)
 
     
     Bk_inv = optimizer.fallback(N)
@@ -212,10 +231,10 @@ def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_pr
             loss, grad = loss_grad_fn(U_0)
         loss_prev = loss
         grad_prev = grad
-        U_0, loss, grad, Bk_inv, alpha, alpha_pk = inner_loop(U_0, grad, Bk_inv)
+        U_0, loss, grad, Bk_inv, alpha, alpha_pk, Bk_inv_update = inner_loop(U_0, grad, Bk_inv)
         opt_data(i, loss_prev, grad_prev, alpha_pk)
         
-        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha}")
+        print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha} | Bk_inv_update: {Bk_inv_update}")
 
 
     return U_0, opt_data
