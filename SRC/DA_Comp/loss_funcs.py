@@ -37,7 +37,8 @@ def create_loss_fn(crit, stepper, target_parts, pIC, vel_part_trans: Vel_Part_Tr
     return loss_fn
 
 class MSE:
-    def __init__(self, t_mask):
+
+    def set_t_mask(self, t_mask):
         self.t_mask = t_mask
         self.num_frames = jnp.sum(t_mask)
 

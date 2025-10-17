@@ -15,8 +15,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from jax import config
 config.update("jax_enable_x64", True)
 
+jax.config.update("jax_default_device", jax.devices("cpu")[0])
+# or for GPU:
+# jax.config.update("jax_default_device", jax.devices("gpu")[0])
+
 def generate_KF_flow():
-    NDOF = 8
+    NDOF = 16
     Re = 40
     n  = 4
     dt = 1e-2

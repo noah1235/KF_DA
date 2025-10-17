@@ -5,7 +5,7 @@ import numpy as np
 
 from SRC.Solver.ploting import plot_vorticity
 
-def post_proc_case_main(target_trj, DA_trj, opt_data, lam, n_particles, save_dir, dt, omega_fn):
+def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, lam=None):
     """
     Post-process a DA case:
       - compute per-timestep errors for velocity and particles
@@ -26,7 +26,8 @@ def post_proc_case_main(target_trj, DA_trj, opt_data, lam, n_particles, save_dir
     part_cos_sim = compute_cosine_vs_time(target_part, DA_part)
     plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir)
 
-    plot_Hess_eigs(lam, save_dir)
+    if lam is not None:
+        plot_Hess_eigs(lam, save_dir)
 
     #Vorticity plot
     plot_final_vort(DA_vel, target_vel, omega_fn, save_dir)

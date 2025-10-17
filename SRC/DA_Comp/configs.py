@@ -17,6 +17,7 @@ class Particle_Opts:
 @dataclass
 class DA_Opts:
     n_particles_list: any
+    sampling_period_list: any
     part_opts: Particle_Opts
     num_particle_inits: int
     num_opt_inits: int

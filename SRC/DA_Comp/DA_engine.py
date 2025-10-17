@@ -164,79 +164,87 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                 vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
                 #U_0_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0)
                 
+                for samp_period in DA_opts.sampling_period_list:
+                    period_idx = int(samp_period/kf_opts.dt)
+                    idx = jnp.arange(int(T/kf_opts.dt))
+                    t_mask = (idx % period_idx == 0).astype(jnp.float32)
 
-                # Loop over particle initializations
-                for _ in range(DA_opts.num_particle_inits):
-                    PI_root = os.path.join(npart_root, "PI")
-                    os.makedirs(PI_root, exist_ok=True)
+                    samp_p_root = os.path.join(npart_root, f"SP={samp_period}")
+                    # Loop over particle initializations
+                    for _ in range(DA_opts.num_particle_inits):
+                        PI_root = os.path.join(samp_p_root, "PI")
+                        os.makedirs(PI_root, exist_ok=True)
 
-                    # Random particle ICs in the periodic domain
-                    pIC = init_particles_vector(npart, (0, 2 * np.pi), (0, 2 * np.pi))
-                    np.save(os.path.join(PI_root, "pIC.npy"), pIC)
+                        # Random particle ICs in the periodic domain
+                        pIC = init_particles_vector(npart, (0, 2 * np.pi), (0, 2 * np.pi))
+                        np.save(os.path.join(PI_root, "pIC.npy"), pIC)
 
-                    # Quick visualization of particle ICs
-                    fig, ax = plot_particles(pIC, RHS.KF_RHS.L, ax=None, s=20)
-                    fig.savefig(os.path.join(PI_root, "particle_IC.png"))
-                    plt.close()
+                        # Quick visualization of particle ICs
+                        fig, ax = plot_particles(pIC, RHS.KF_RHS.L, ax=None, s=20)
+                        fig.savefig(os.path.join(PI_root, "particle_IC.png"))
+                        plt.close()
 
-                    # Generate target trajectory by advecting particles with the true U_0
-                    trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T)
-                    target_trj = trj_gen_fn(pIC, U_0)
+                        # Generate target trajectory by advecting particles with the true U_0
+                        trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T)
+                        target_trj = trj_gen_fn(pIC, U_0)
 
-                    # Split particle and velocity parts of the trajectory
-                    target_part = target_trj[:, : RHS.n_particles * 4]
-                    target_vel = target_trj[:, RHS.n_particles * 4 :]
+                        # Split particle and velocity parts of the trajectory
+                        target_part = target_trj[:, : RHS.n_particles * 4]
+                        target_vel = target_trj[:, RHS.n_particles * 4 :]
 
-                    # Loop over initial-guess distances (relative to AS)
-                    for opt_init_dist in opt_init_dists:
-                        opt_init_dir = os.path.join(PI_root, "cases", f"{opt_init_dist}")
+                        # Loop over initial-guess distances (relative to AS)
+                        for opt_init_dist in opt_init_dists:
+                            opt_init_dir = os.path.join(PI_root, "cases", f"{opt_init_dist}")
 
-                        # Skip if this case directory already exists
-                        if os.path.isdir(opt_init_dir):
-                            print("skipping")
-                            continue
+                            # Skip if this case directory already exists
+                            if os.path.isdir(opt_init_dir):
+                                print("skipping")
+                                continue
 
-                        os.makedirs(opt_init_dir)
+                            os.makedirs(opt_init_dir)
 
-                        # Choose a guess U_0 at the requested distance from the true IC
-                        state_dist = AS * opt_init_dist
-                        True_IC_dist = jnp.linalg.norm(
-                            attractor_snapshots - U_0.reshape((1, -1)), axis=1
-                        )
-                        U_0_guess = attractor_snapshots[
-                            jnp.argmin(jnp.abs(True_IC_dist - state_dist)), :
-                        ]
-                        np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
-                        U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
-
-                        # For each optimizer and loss criterion, run a DA case
-                        for optimizer in DA_opts.optimizer_list:
-                            opt_method_dir = os.path.join(
-                                opt_init_dir, f"{optimizer}"
+                            # Choose a guess U_0 at the requested distance from the true IC
+                            state_dist = AS * opt_init_dist
+                            True_IC_dist = jnp.linalg.norm(
+                                attractor_snapshots - U_0.reshape((1, -1)), axis=1
                             )
+                            U_0_guess = attractor_snapshots[
+                                jnp.argmin(jnp.abs(True_IC_dist - state_dist)), :
+                            ]
+                            np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
+                            U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
 
-                            for loss_crit in DA_opts.crit_list:
-                                crit_dir = os.path.join(opt_method_dir, f"{loss_crit}")
-                                os.makedirs(crit_dir, exist_ok=True)
-
-                                # Build the loss function from criterion and stepper
-                                loss_fn = create_loss_fn(
-                                    loss_crit, stepper, target_part, pIC, vel_part_trans
+                            # For each optimizer and loss criterion, run a DA case
+                            for optimizer in DA_opts.optimizer_list:
+                                opt_method_dir = os.path.join(
+                                    opt_init_dir, f"{optimizer}"
                                 )
 
-                                def omega_fn(U_fourier):
-                                    U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
-                                    return RHS.KF_RHS.vorticity_real(U_hat[0], U_hat[1])
-                                
-                                def div_check(U_fourier):
-                                    U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
-                                    div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
-                                    return jnp.mean(jnp.abs(div_field))
-                                
+                                for loss_crit in DA_opts.crit_list:
+                                    loss_crit.set_t_mask(t_mask)
+                                    crit_dir = os.path.join(opt_method_dir, f"{loss_crit}")
+                                    os.makedirs(crit_dir, exist_ok=True)
 
-                                # Run the DA optimization for this setup
-                                _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
-                                             omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans)
+                                    # Build the loss function from criterion and stepper
+                                    loss_fn = create_loss_fn(
+                                        loss_crit, stepper, target_part, pIC, vel_part_trans
+                                    )
+
+                                    def omega_fn(U):
+                                        U = vel_part_trans.reshape_flattened_vel(U)
+                                        u_hat = jnp.fft.rfft2(U[0])
+                                        v_hat = jnp.fft.rfft2(U[1])
+                                        return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
+                                    
+                                    def div_check(U_fourier):
+                                        U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
+                                        div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
+                                        return jnp.mean(jnp.abs(div_field))
+                                    
+
+                                    # Run the DA optimization for this setup
+                                    _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
+                                                omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans)
 
 
 def _run_DA_case(
@@ -298,7 +306,7 @@ def _run_DA_case(
         lam = jnp.linalg.eigvalsh(H)
         return lam
 
-    lam = H_eig_decomp(U_0_DA_fourier)
+    #lam = H_eig_decomp(U_0_DA_fourier)
     n_particles = pIC.shape[0]//4
-    post_proc_case_main(target_trj, DA_trj, opt_data, lam, n_particles, save_dir, dt, omega_fn)
+    post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, lam=None)
     
