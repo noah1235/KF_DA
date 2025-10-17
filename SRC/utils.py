@@ -3,6 +3,7 @@ from SRC.DA_Comp.configs import KF_Opts
 from create_results_dir import create_results_dir
 import os
 import numpy as np
+import jax
 
 class Vel_Reshaper:
     def __init__(self, NDOF):
@@ -67,6 +68,12 @@ class Vel_Part_Transformations(Vel_Reshaper):
 
         return xp, yp, up, vp
 
+def build_hvp(f, x):
+
+    def hvp(v):
+        return jax.jvp(jax.grad(f), (x,), (v,))[1]
+    
+    return hvp
 
 def build_div_free_proj(stepper):
     NDOF = stepper.step.rhs.KF_RHS.N

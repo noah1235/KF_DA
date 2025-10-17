@@ -1,6 +1,6 @@
 # --- Project imports ---
 from SRC.DA_Comp.configs import *  # provides KF_Opts, DA_Opts, etc.
-from SRC.utils import load_data, Vel_Part_Transformations
+from SRC.utils import load_data, Vel_Part_Transformations, build_hvp
 from SRC.Solver.KF_intergrators import (
     KF_PS_RHS,
     KF_LPT_PS_RHS,
@@ -14,6 +14,7 @@ from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
 from SRC.DA_Comp.optimization import Hessian_Opt, NCN, optax_opt, LBFGS, ADAM, BFGS, BFGS_opt
 from create_results_dir import create_results_dir
+from SRC.iterative_methods import max_eig_power_iterations, lanczos_extremal
 
 # --- Stdlib / third-party imports ---
 import os
@@ -305,7 +306,17 @@ def _run_DA_case(
         H = Hess_fn(x)
         lam = jnp.linalg.eigvalsh(H)
         return lam
+    hvp = jax.jit(build_hvp(loss_fn, U_0_DA_fourier))
+    lams, v = max_eig_power_iterations(hvp, U_0_DA_fourier.shape[0])
+    print(lams)
+    result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
+    print(result["lambda_max"], result["lambda_min"])
+    result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=20)
+    print(result["lambda_max"], result["lambda_min"])
+    result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=30)
+    print(result["lambda_max"], result["lambda_min"])
 
+    return
     #lam = H_eig_decomp(U_0_DA_fourier)
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, lam=None)
