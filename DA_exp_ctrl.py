@@ -19,28 +19,29 @@ def main():
     kf_opts = KF_Opts(
         Re = 40,
         n = 4,
-        NDOF = 32,
+        NDOF = 16,
         dt = 1e-2,
         T = 1e3,
         min_samp_T=500
     )
     DA_opts = DA_Opts(
-        n_particles_list=[4],
+        n_particles_list=[10],
+        sampling_period_list=[.5],
         part_opts=Particle_Opts(St=1e-2, beta=1e-3),
         num_particle_inits=1,
         num_opt_inits=1,
         num_seeds=1,
-        int_pert_range=(.9, 1),
+        int_pert_range=(.01, .1),
         T_list=[1],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #LBFGS(its=20),
-            BFGS(ls_method="BT", its=40, fallback_opt="eye")
+            BFGS(ls_method="BT", its=100, fallback_opt="eye")
             #ADAM(1e-4, its=100)
 
         ],
         crit_list=[
-            MSE(jnp.ones(int(1/1e-2)))
+            MSE()
         ]
     )
 
