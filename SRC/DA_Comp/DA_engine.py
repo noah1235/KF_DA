@@ -340,7 +340,7 @@ def _run_DA_case(
     U_0_DA = jnp.stack([u, v], axis=0).reshape(-1)
 
 
-    hvp = jax.jit(build_hvp(loss_fn, U_0_DA_fourier))
+    hvp = build_hvp(loss_fn, U_0_DA_fourier)
     lanczo_result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
     max_H_eig = float(lanczo_result["lambda_max"])
     min_H_eig = float(lanczo_result["lambda_min"])
@@ -351,6 +351,7 @@ def _run_DA_case(
     DA_trj = trj_gen_fn(pIC, U_0_DA)
     results_df["max_H_eig"] = [max_H_eig]
     results_df["min_H_eig"] = [min_H_eig]
+    results_df["final_loss"] = [opt_data.loss_record[-1]]
 
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)

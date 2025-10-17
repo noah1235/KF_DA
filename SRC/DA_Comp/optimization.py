@@ -23,6 +23,11 @@ class Opt_Data:
         self.grad_norm_record[n] = jnp.linalg.norm(grad)
         self.alpha_gTp_record[n] = jnp.dot(alpha_p, grad)
 
+    def early_stop_update(self, iters):
+        self.loss_record = self.loss_record[:iters]
+        self.grad_norm_record = self.grad_norm_record[:iters]
+        self.alpha_gTp_record = self.alpha_gTp_record[:iters]
+
 class LBFGS(Optimizer):
     name = "L-BFGS"
     def __init__(self, its):
@@ -42,7 +47,7 @@ class ADAM(Optimizer):
 class LS_Opt(Optimizer):
     def set_ls(self):
         if self.ls_method == "BT":
-            self.ls = ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=5)
+            self.ls = ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10)
 
     def step(
         self,
@@ -241,6 +246,8 @@ def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_pr
         if alpha <= optimizer.ls.min_alpha:
             if optimizer.print_loss:
                 print(f"optimizer stalled | alpha={alpha}")
+
+            opt_data.early_stop_update(i)
             break
 
 

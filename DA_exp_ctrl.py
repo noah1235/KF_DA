@@ -68,7 +68,7 @@ def main():
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #LBFGS(its=20),
-            BFGS(ls_method="BT", its=1, fallback_opt="eye", print_loss=True)
+            BFGS(ls_method="BT", its=50, fallback_opt="eye", print_loss=True)
             #ADAM(1e-4, its=100)
 
         ],
