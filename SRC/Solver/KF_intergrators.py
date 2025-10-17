@@ -2,7 +2,7 @@
 import jax
 import jax.numpy as jnp
 from jax import lax
-from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling
+from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling, Vel_Part_Transformations, Vel_Reshaper
 
 def run_particle_advection(U_hat_0, part_IC, rhs, dt, T):
     nsteps = int(T/dt)
@@ -27,7 +27,6 @@ def create_trj_generator(rhs, dt, T):
     def trj_gen(pIC, U_hat_0):
         return run_particle_advection(U_hat_0, pIC, rhs, dt, T)
     return trj_gen
-
 
 class RK4_Step:
     def __init__(self, rhs, dt):
@@ -149,6 +148,8 @@ class KF_PS_RHS:
         self.n = int(n)
         self.L = 2 * jnp.pi
 
+        self.vel_reshaper = Vel_Reshaper(NDOF)
+
         ord = "xy"
 
         # rfft wavenumbers & operators
@@ -195,10 +196,10 @@ class KF_PS_RHS:
         return p_hat
 
     def __call__(self, U_flat):
-        U = U_flat.reshape((2, self.N, self.N))
-        u_hat = jnp.fft.rfft2(U[0])
+        U_hat, U = self.vel_reshaper.get_vel_hat_from_flat(U_flat)
+        u_hat = U_hat[0]
         u = U[0]
-        v_hat = jnp.fft.rfft2(U[1])
+        v_hat = U_hat[1]
         v = U[1]
         
         # gradients in spectral → real
@@ -222,7 +223,7 @@ class KF_PS_RHS:
         RHS_u = jnp.fft.irfft2((-conv_x_hat - self.dxop * p_hat - visc * u_hat + self.f_hat_x) * self.M, s=(self.N, self.N))
         RHS_v = jnp.fft.irfft2((-conv_y_hat - self.dyop * p_hat - visc * v_hat + self.f_hat_y) * self.M, s=(self.N, self.N))
 
-        RHS = jnp.stack([RHS_u, RHS_v], axis=0).reshape(-1)
+        RHS = self.vel_reshaper.flatten_from_comps(RHS_u, RHS_v)
 
         if self.calc_mat_deriv:
             u_mat = jnp.fft.irfft2((- self.dxop * p_hat - visc * u_hat + self.f_hat_x)*self.M, s=(self.N, self.N))
@@ -234,6 +235,7 @@ class KF_PS_RHS:
 class KF_LPT_PS_RHS:
     def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=512):
         self.KF_RHS = KF_PS_RHS(NDOF, Re, n, calc_mat_deriv=True)
+        self.vel_part_trans = Vel_Part_Transformations(NDOF, n_particles)
         if beta == 0 and St == 0:
             self.tracer_eq = self.tracer_eq_tracer
         else:
@@ -267,14 +269,12 @@ class KF_LPT_PS_RHS:
 
     def __call__(self, X):
         # unpack
-        part = X[:self.n_particles * 4]
-        U_flat = X[self.n_particles * 4:]
-        U = U_flat.reshape(2, self.N, self.N)
+        part, U_flat = self.vel_part_trans.split_part_and_vel(X)
+        U = self.vel_part_trans.reshape_flattened_vel(U_flat)
+        xp, yp, up, vp = self.vel_part_trans.get_part_pos_and_vel(part)
 
-        xp = jnp.mod(part[0::4].real, self.KF_RHS.L)
-        yp = jnp.mod(part[1::4].real, self.KF_RHS.L)
-        up = part[2::4].real
-        vp = part[3::4].real
+        xp = jnp.mod(xp, self.KF_RHS.L)
+        yp = jnp.mod(yp, self.KF_RHS.L)
 
         # flow RHS & material derivative fields (real)
         KF_rhs, u_t_field, v_t_field = self.KF_RHS(U_flat)

@@ -1,17 +1,17 @@
 import jax.numpy as jnp
 from SRC.Solver.KF_intergrators import RK4_Step, Particle_Stepper
-from SRC.utils import build_div_free_proj
+from SRC.utils import build_div_free_proj, Vel_Part_Transformations
 from jax import lax
 
 
-def create_loss_fn(crit, stepper, target_parts, pIC, transform=True):
+def create_loss_fn(crit, stepper, target_parts, pIC, vel_part_trans: Vel_Part_Transformations):
     transform_fn = build_div_free_proj(
                     stepper
     )
 
-    def loss_fn(U0):
-        if transform:
-            U0 = transform_fn(U0)
+    def loss_fn(U0_fourier):
+        U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U0_fourier)
+        U0 = transform_fn(U_hat)
 
         X0 = jnp.concatenate([pIC, U0])
 
@@ -35,8 +35,6 @@ def create_loss_fn(crit, stepper, target_parts, pIC, transform=True):
         return jnp.sum(losses)
 
     return loss_fn
-
-
 
 class MSE:
     def __init__(self, t_mask):

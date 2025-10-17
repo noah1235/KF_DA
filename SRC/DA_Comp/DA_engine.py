@@ -1,6 +1,6 @@
 # --- Project imports ---
 from SRC.DA_Comp.configs import *  # provides KF_Opts, DA_Opts, etc.
-from SRC.utils import load_data
+from SRC.utils import load_data, Vel_Part_Transformations
 from SRC.Solver.KF_intergrators import (
     KF_PS_RHS,
     KF_LPT_PS_RHS,
@@ -140,6 +140,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
             ]
             np.save(U_0_path, U_0)
 
+        
+
         # Loop over time horizons
         for T in DA_opts.T_list:
             T_dir = os.path.join(seed_root, f"T={T}")
@@ -158,6 +160,10 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                     St=DA_opts.part_opts.St,
                 )
                 stepper = Particle_Stepper(RK4_Step(RHS, kf_opts.dt), npart)
+                
+                vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
+                #U_0_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0)
+                
 
                 # Loop over particle initializations
                 for _ in range(DA_opts.num_particle_inits):
@@ -201,6 +207,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                             jnp.argmin(jnp.abs(True_IC_dist - state_dist)), :
                         ]
                         np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
+                        U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
 
                         # For each optimizer and loss criterion, run a DA case
                         for optimizer in DA_opts.optimizer_list:
@@ -214,31 +221,27 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
 
                                 # Build the loss function from criterion and stepper
                                 loss_fn = create_loss_fn(
-                                    loss_crit, stepper, target_part, pIC, transform=True
+                                    loss_crit, stepper, target_part, pIC, vel_part_trans
                                 )
 
-                                def omega_fn(U):
-                                    U_reshape = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF))
-                                    u_hat = jnp.fft.rfft2(U_reshape[0])
-                                    v_hat = jnp.fft.rfft2(U_reshape[1])
-                                    return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
+                                def omega_fn(U_fourier):
+                                    U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
+                                    return RHS.KF_RHS.vorticity_real(U_hat[0], U_hat[1])
                                 
-                                def div_check(U):
-                                    U_reshaped = U.reshape((2, kf_opts.NDOF, kf_opts.NDOF))
-                                    u_hat = jnp.fft.rfft2(U_reshaped[0])
-                                    v_hat = jnp.fft.rfft2(U_reshaped[1])
-                                    div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * u_hat + RHS.KF_RHS.dyop * v_hat)
+                                def div_check(U_fourier):
+                                    U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
+                                    div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
                                     return jnp.mean(jnp.abs(div_field))
                                 
 
                                 # Run the DA optimization for this setup
-                                _run_DA_case(target_trj, U_0_guess, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
-                                             omega_fn, div_check, build_div_free_proj(stepper))
+                                _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
+                                             omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans)
 
 
 def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
-    U_0_guess: np.ndarray | jnp.ndarray,
+    U_0_guess_fourier: np.ndarray | jnp.ndarray,
     loss_fn,
     optimizer,
     trj_gen_fn,
@@ -247,7 +250,8 @@ def _run_DA_case(
     dt,
     omega_fn,
     div_check,
-    div_free_proj
+    div_free_proj,
+    vel_part_trans: Vel_Part_Transformations
 ) -> None:
     """
     Run a single DA case for a given optimizer and loss function.
@@ -269,30 +273,32 @@ def _run_DA_case(
     if isinstance(optimizer, NCN):
         grad_fn = jax.grad(loss_fn)
         Hess_fn = jax.hessian(loss_fn)
-        Hessian_Opt(U_0_guess, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
+        Hessian_Opt(U_0_guess_fourier, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
 
     elif isinstance(optimizer, BFGS):
-        U_0_DA, opt_data = BFGS_opt(U_0_guess, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data = BFGS_opt(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
 
 
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
-        U_0_DA, opt_data = optax_opt(
-            U_0_guess, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
+        U_0_DA_fourier, opt_data = optax_opt(
+            U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
         )
 
-    
+    U_0_DA_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_0_DA_fourier)
+    u = jnp.fft.irfft2(U_0_DA_hat[0])
+    v = jnp.fft.irfft2(U_0_DA_hat[1])
+    U_0_DA = jnp.stack([u, v], axis=0).reshape(-1)
+
     DA_trj = trj_gen_fn(pIC, U_0_DA)
     Hess_fn = jax.hessian(loss_fn)
-    #@jax.jit
+
+
     def H_eig_decomp(x):
         H = Hess_fn(x)
         lam = jnp.linalg.eigvalsh(H)
         return lam
 
-    #lam = H_eig_decomp(U_0_DA)
-    
-    #print(lam)
-
+    lam = H_eig_decomp(U_0_DA_fourier)
     n_particles = pIC.shape[0]//4
-    post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn)
+    post_proc_case_main(target_trj, DA_trj, opt_data, lam, n_particles, save_dir, dt, omega_fn)
     

@@ -4,6 +4,69 @@ from create_results_dir import create_results_dir
 import os
 import numpy as np
 
+class Vel_Reshaper:
+    def __init__(self, NDOF):
+        self.NDOF = NDOF
+    
+    def reshape_flattened_vel(self, U_flat):
+        return U_flat.reshape((2, self.NDOF, self.NDOF))
+    
+    def get_vel_hat_from_flat(self, U_flat):
+        U = self.reshape_flattened_vel(U_flat)
+        u_hat = jnp.fft.rfft2(U[0])
+        v_hat = jnp.fft.rfft2(U[1])
+
+        U_hat = jnp.stack([u_hat, v_hat], axis=0)
+
+        return U_hat, U
+    
+    def vel_flat_2_vel_Fourier(self, U_flat):
+        U_hat, _ = self.get_vel_hat_from_flat(U_flat)
+        U_hat_flat = U_hat.reshape(-1)
+        
+        U_fourier = np.concatenate([U_hat_flat.real, U_hat_flat.imag])
+        return U_fourier
+    
+    
+    def vel_Fourier_2_vel_hat(self, U_fourier):
+        """
+        Inverse of vel_flat_2_vel_Fourier:
+        Convert concatenated real vector back to complex Fourier representation.
+        """
+        n_half = U_fourier.size // 2
+        real_part = U_fourier[:n_half]
+        imag_part = U_fourier[n_half:]
+
+        # Recombine into complex vector
+        U_hat_flat = real_part + 1j * imag_part
+        U_hat = U_hat_flat.reshape((2, self.NDOF, self.NDOF//2 + 1))
+        return U_hat
+
+    
+    @staticmethod
+    def flatten_from_comps(u, v):
+        return jnp.stack([u, v], axis=0).reshape(-1)
+    
+
+class Vel_Part_Transformations(Vel_Reshaper):
+    def __init__(self, NDOF, n_particles):
+        super().__init__(NDOF)
+        self.n_particles = n_particles
+
+    def split_part_and_vel(self, X):
+        part = X[:self.n_particles * 4]
+        U_flat = X[self.n_particles * 4:]
+        return part, U_flat
+    
+    @staticmethod
+    def get_part_pos_and_vel(part):
+        xp = part[0::4]
+        yp = part[1::4]
+        up = part[2::4]
+        vp = part[3::4]
+
+        return xp, yp, up, vp
+
 
 def build_div_free_proj(stepper):
     NDOF = stepper.step.rhs.KF_RHS.N
@@ -13,19 +76,19 @@ def build_div_free_proj(stepper):
     M = stepper.step.rhs.KF_RHS.M
     
 
-    def transform_fn(X):
-        X_reshaped = X.reshape((2, NDOF, NDOF))
-        X_proj = project_divfree_rfft2(X_reshaped, KX, KY, K2, M)
+    def transform_fn(U_hat):
+        X_proj = project_divfree_rfft2(U_hat, KX, KY, K2, M)
         X = X_proj.reshape(-1)
         return X
     
     return transform_fn
 
-
-def project_divfree_rfft2(U, KX, KY, K2, M, zero_dc=True):
+def project_divfree_rfft2(U_hat, KX, KY, K2, M, zero_dc=True):
     # rFFT of components
-    Ux = jnp.fft.rfft2(U[0]) * M
-    Uy = jnp.fft.rfft2(U[1]) * M
+    #Ux = jnp.fft.rfft2(U[0]) * M
+    #Uy = jnp.fft.rfft2(U[1]) * M
+    Ux = U_hat[0]
+    Uy = U_hat[1]
 
     # Longitudinal scale = (k·U)/|k|^2  (zero at DC)
     invK2 = jnp.where(K2 > 0.0, 1.0 / K2, 0.0)
@@ -44,8 +107,6 @@ def project_divfree_rfft2(U, KX, KY, K2, M, zero_dc=True):
     v = jnp.fft.irfft2(Uy_proj)
 
     return jnp.stack([u, v], axis=0)
-
-
 
 def bilinear_sample_periodic(F, x, y, Lx, Ly):
     """

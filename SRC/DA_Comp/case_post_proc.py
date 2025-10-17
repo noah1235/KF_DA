@@ -5,7 +5,7 @@ import numpy as np
 
 from SRC.Solver.ploting import plot_vorticity
 
-def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn):
+def post_proc_case_main(target_trj, DA_trj, opt_data, lam, n_particles, save_dir, dt, omega_fn):
     """
     Post-process a DA case:
       - compute per-timestep errors for velocity and particles
@@ -26,10 +26,18 @@ def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt,
     part_cos_sim = compute_cosine_vs_time(target_part, DA_part)
     plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir)
 
+    plot_Hess_eigs(lam, save_dir)
+
     #Vorticity plot
     plot_final_vort(DA_vel, target_vel, omega_fn, save_dir)
-
     plot_convergence(opt_data, save_dir)
+
+
+def plot_Hess_eigs(lam, save_dir):
+    plt.plot(lam)
+    plt.savefig(os.path.join(save_dir, "Hess_eigs.png"))
+    plt.close()
+
 
 def plot_final_vort(DA_vel, target_vel, omega_fn, save_dir):
     """
@@ -113,11 +121,6 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, save_dir):
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
     return out_path
-
-
-import os
-import numpy as np
-import matplotlib.pyplot as plt
 
 def plot_convergence(opt_data, save_dir, y_min=1e-18):
     """

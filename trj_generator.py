@@ -16,7 +16,7 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 def generate_KF_flow():
-    NDOF = 32
+    NDOF = 8
     Re = 40
     n  = 4
     dt = 1e-2
