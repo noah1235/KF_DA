@@ -8,6 +8,7 @@ class KF_Opts:
     dt: float
     T: float
     min_samp_T: float
+    t_skip: float
 
 @dataclass
 class Particle_Opts:

@@ -87,7 +87,6 @@ class Time_Stepper:
                 callback(n, U)
         return U
 
-    
     def integrate_scan(self, U0, nsteps):
         """
         Returns (U_final, traj) where
