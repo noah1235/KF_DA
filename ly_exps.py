@@ -105,7 +105,8 @@ def ly_exp_main():
         NDOF = 16,
         dt = 1e-2,
         T = 1e3,
-        min_samp_T=500
+        min_samp_T=500,
+        t_skip=1e-1
     )
     r = 20
     T = 1e2

@@ -20,7 +20,7 @@ jax.config.update("jax_default_device", jax.devices("cpu")[0])
 # jax.config.update("jax_default_device", jax.devices("gpu")[0])
 
 def generate_KF_flow():
-    NDOF = 16
+    NDOF = 32
     Re = 40
     n  = 4
     dt = 1e-2

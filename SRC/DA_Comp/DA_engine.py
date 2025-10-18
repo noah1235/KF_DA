@@ -99,7 +99,7 @@ def append_to_parquet(df, parquet_path):
     print(f"Appended data and updated {parquet_path}")
 
 
-def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
+def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
     Main entry point for running data assimilation (DA) experiments.
 
@@ -134,14 +134,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
         size=DA_opts.num_opt_inits,
     )
 
-    # Create root results directory for this configuration
-    root = os.path.join(
-        create_results_dir(),
-        (
-            f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}_NDOF={kf_opts.NDOF}"
-            f"-St={DA_opts.part_opts.St}_beta={DA_opts.part_opts.beta}"
-        ),
-    )
     os.makedirs(root, exist_ok=True)
     parquet_path = os.path.join(root, "results.parquet")
 

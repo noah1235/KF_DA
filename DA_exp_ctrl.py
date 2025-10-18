@@ -12,6 +12,7 @@ import jax
 from SRC.function_perf_bench import bench
 from SRC.utils import build_div_free_proj
 import os
+from create_results_dir import create_results_dir
 import pandas as pd
 from jax import config
 config.update("jax_enable_x64", True)
@@ -54,14 +55,15 @@ def main():
         NDOF = 16,
         dt = 1e-2,
         T = 1e3,
-        min_samp_T=500
+        min_samp_T=500,
+        t_skip=1e-1
     )
     DA_opts = DA_Opts(
         n_particles_list=[10],
         sampling_period_list=[.5],
         part_opts=Particle_Opts(St=1e-2, beta=1e-3),
         num_particle_inits=1,
-        num_opt_inits=1,
+        num_opt_inits=5,
         num_seeds=1,
         int_pert_range=(.01, .1),
         T_list=[1],
@@ -77,7 +79,15 @@ def main():
         ]
     )
 
-    root = DA_exp_main(kf_opts, DA_opts)
+    root = os.path.join(
+        create_results_dir(),
+        (
+            f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}_NDOF={kf_opts.NDOF}"
+            f"-St={DA_opts.part_opts.St}_beta={DA_opts.part_opts.beta}"
+        ),
+    )
+
+    DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
 
 
