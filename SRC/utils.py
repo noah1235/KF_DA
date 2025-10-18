@@ -69,7 +69,8 @@ class Vel_Part_Transformations(Vel_Reshaper):
         return xp, yp, up, vp
 
 def build_hvp(f, x):
-
+    
+    @jax.jit
     def hvp(v):
         return jax.jvp(jax.grad(f), (x,), (v,))[1]
     
