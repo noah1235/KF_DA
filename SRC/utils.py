@@ -94,8 +94,8 @@ def project_divfree_rfft2(U_hat, KX, KY, K2, M, zero_dc=True):
     # rFFT of components
     #Ux = jnp.fft.rfft2(U[0]) * M
     #Uy = jnp.fft.rfft2(U[1]) * M
-    Ux = U_hat[0]
-    Uy = U_hat[1]
+    Ux = U_hat[0] * M
+    Uy = U_hat[1] * M
 
     # Longitudinal scale = (k·U)/|k|^2  (zero at DC)
     invK2 = jnp.where(K2 > 0.0, 1.0 / K2, 0.0)
