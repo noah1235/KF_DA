@@ -193,7 +193,7 @@ def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_pr
 
 
     @jax.jit
-    def inner_loop(U_0, grad, Bk_inv, eps=0):
+    def inner_loop(U_0, grad, Bk_inv, eps=1e-16):
         # Search direction and line search
         pk = -Bk_inv @ grad
         alpha = optimizer.ls(loss_fn, U_0, pk, grad)
@@ -251,7 +251,7 @@ def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_pr
             break
 
 
-    return U_0, opt_data
+    return U_0, opt_data, i
 
 
 def optax_opt(U_0, loss_fn, loss_grad_fn, optimizer_config, div_check, div_free_proj):

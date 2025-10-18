@@ -150,6 +150,17 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
     if max_seed_idx is None:
         max_seed_idx = 0
 
+    total_cases = (
+        DA_opts.num_seeds
+        * len(DA_opts.T_list)
+        * len(DA_opts.n_particles_list)
+        * len(DA_opts.sampling_period_list)
+        * DA_opts.num_particle_inits
+        * len(opt_init_dists)
+        * len(DA_opts.optimizer_list)
+        * len(DA_opts.crit_list)
+    )
+    count = 0
     # Loop over experiment seeds
     for i in range(DA_opts.num_seeds):
         seed_idx = i + max_seed_idx
@@ -283,6 +294,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts) -> None:
                                     _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
                                                 omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans, t_mask, results_df,
                                                 parquet_path)
+                                    count += 1
+                                    print(f"case: {count}/{total_cases}")
 
 
     return root
@@ -327,7 +340,7 @@ def _run_DA_case(
         Hessian_Opt(U_0_guess_fourier, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
 
     elif isinstance(optimizer, BFGS):
-        U_0_DA_fourier, opt_data = BFGS_opt(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data, its = BFGS_opt(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
 
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
         U_0_DA_fourier, opt_data = optax_opt(
@@ -352,6 +365,7 @@ def _run_DA_case(
     results_df["max_H_eig"] = [max_H_eig]
     results_df["min_H_eig"] = [min_H_eig]
     results_df["final_loss"] = [opt_data.loss_record[-1]]
+    results_df["iterations"] = its
 
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)

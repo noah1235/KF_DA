@@ -103,8 +103,7 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, sa
 
     ax.plot(time_axis, vel_cos_sim, label="Velocity error")
     ax.plot(time_axis, part_cos_sim, label="Particle error")
-
-    print(time_axis.shape, t_mask.shape)
+    
     for t in time_axis[t_mask == 1]:
         ax.axvline(x=t, color="k", linestyle="--", alpha=0.3, linewidth=1.0)
 
