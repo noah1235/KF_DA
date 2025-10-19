@@ -289,6 +289,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
 
     return root
+
 def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
     U_0_guess_fourier: np.ndarray | jnp.ndarray,
@@ -340,7 +341,6 @@ def _run_DA_case(
             U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
         )
 
-    return
     U_0_DA_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_0_DA_fourier)
     u = jnp.fft.irfft2(U_0_DA_hat[0])
     v = jnp.fft.irfft2(U_0_DA_hat[1])
@@ -348,9 +348,14 @@ def _run_DA_case(
 
 
     hvp = build_hvp(loss_fn, U_0_DA_fourier)
-    lanczo_result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
-    max_H_eig = float(lanczo_result["lambda_max"])
-    min_H_eig = float(lanczo_result["lambda_min"])
+    #lanczo_result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
+    print("eig decomp")
+    A_op = LinearOperator((U_0_DA_fourier.shape[0], U_0_DA_fourier.shape[0]), matvec=hvp, dtype=np.float64)
+    w, Q = eigsh(A_op, k=2, which='BE', tol=1e-6)
+    print("done")
+
+    max_H_eig = float(jnp.max(w))
+    min_H_eig = float(jnp.min(w))
 
     with open(os.path.join(save_dir, "extreme_H_eigs.txt"), "w") as f:
         f.write(f"lambda_max={max_H_eig} \n lambda_min={min_H_eig}")

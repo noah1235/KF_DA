@@ -7,6 +7,7 @@ from SRC.iterative_methods import lanczos_tridiagonal, lanczos_2_eig_decomp, lan
 from scipy.sparse.linalg import cg, LinearOperator
 from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import eigsh
+import random
 
 class Optimizer:
     name = ""
@@ -145,7 +146,7 @@ class DA_SR1(LS_Opt):
     name = "DA_SR1"
     def __init__(self, its, fallback_opt, eps_g, eps_H, 
                  max_memory, NCN_kappa,
-                 eta_0=1e-2,
+                 eta_0=1e4,
                  print_loss=False):
         self.its = its
         self.print_loss = print_loss
@@ -154,9 +155,11 @@ class DA_SR1(LS_Opt):
         self.max_memory = max_memory
         self.eta = eta_0
         self.eta_0 = eta_0
-        self.rho = 10
-        self.eta_min = 1e-6
+        self.rho = 5
+        self.eta_min = 1e-3
         self.NCN_kappa = NCN_kappa
+
+        self.BT_ls = ArmijoLineSearch()
 
         self.no_grad_next = False
 
@@ -183,7 +186,7 @@ class DA_SR1(LS_Opt):
             result += jnp.outer(x, x) * Bk_scalars[i]
         return result
 
-    def SR1_update(self, Bk_vecs, Bk_scalars, U_0_next, U_0, grad_next, grad, N, eps=1e-6):
+    def SR1_update(self, Bk_vecs, Bk_scalars, U_0_next, U_0, grad_next, grad, N, eps=1e-8):
         s = U_0_next - U_0
         y = grad_next - grad
 
@@ -281,32 +284,49 @@ class DA_SR1(LS_Opt):
         return Bk_vecs, Bk_scalars
 
     def TR_opt(self, pk, g, pTHp, loss_fn, x0, loss):
+        """
+        Cubic regularized trust-region step solver.
+        Solves for step length α in m(α) = loss + αc + ½α²b + (a/3)α³
+        where a = (η/2)||p||³.
+        """
         c = jnp.dot(pk, g)
         b = pTHp
-        a = (self.eta/2) * jnp.linalg.norm(pk)**3
-        alpha = (-b + jnp.sqrt(b**2 - 4*a*c))/(2*a)
+        p_norm = jnp.linalg.norm(pk)
+        a = 0.5 * self.eta * (p_norm ** 3)
+        eps = 1e-12
 
-        if jnp.isnan(alpha):
-            print(f"alpha nan| a={a}, b={b}, c={c}")
-            self.eta = self.eta_0
-            return .1
-            
+        # Solve aα² + bα + c = 0 → α = (-b + sqrt(b² - 4ac)) / (2a)
+        disc = b * b - 4 * a * c
+        if disc < 0 or a == 0:
+            alpha = self.BT_ls(loss_fn, x0, pk, g)
+            return alpha
 
-        model = loss + alpha * c + .5 * alpha**2 * b + a/3 * alpha**3
+        alpha = (-b + jnp.sqrt(disc)) / (2 * a)
+        if jnp.isnan(alpha) or jnp.isinf(alpha) or alpha <= 0:
+            print(f"alpha invalid | a={a}, b={b}, c={c}")
+            alpha = self.BT_ls(loss_fn, x0, pk, g)
+            return alpha
+
+        # Evaluate model and new loss
+        model = loss + alpha * c + 0.5 * alpha**2 * b + (a / 3) * alpha**3
         new_loss = loss_fn(x0 + alpha * pk)
 
-        r = (new_loss - model) / new_loss * 100
-        if r < 0 or abs(r) < .1:
-            self.eta /= self.rho
-        elif r > .4:
+        # Compute trust-region ratio
+        pred_red = loss - model
+        act_red = loss - new_loss
+        rho = act_red / (pred_red + eps)
+
+        # Update eta
+        if pred_red <= 0 or act_red <= 0 or jnp.isnan(rho):
             self.eta *= self.rho
-            if r > .7:
-                alpha = self.TR_opt(pk, g, pTHp, loss_fn, x0, loss)
-        self.eta = max(self.eta, self.eta_min)
-        #print(f"model: {model:.3e} | new loss: {new_loss:.3e}, r: {r} | eta: {self.eta:.2f}")
+        elif rho > 0.9:
+            self.eta /= self.rho
+        elif rho < 0.25:
+            self.eta *= self.rho
 
-        return alpha
-
+        self.eta = float(max(self.eta, self.eta_min))
+        return float(alpha)
+    
     @staticmethod
     def check_eig(hvp, x, v):
         vTHv = jnp.dot(v, hvp(x, v))
@@ -347,17 +367,6 @@ class DA_SR1(LS_Opt):
             #second order methods
             else:
                 #compute min Bk Eig
-                Bk_mat_vec = lambda v: self.Bk_mat_vec(Bk_vecs, Bk_scalars, v, self.current_memory)
-                A_op = LinearOperator((N, N), matvec=Bk_mat_vec, dtype=np.float64)
-                Bk_eigs, Bk_eig_vec = eigsh(A_op, k=2, which='BE')
-                min_Bk_eig_idx = jnp.argmin(Bk_eigs)
-                min_Bk_eig_vec = Bk_eig_vec[:, min_Bk_eig_idx]
-                min_Bk_eig = Bk_eigs[min_Bk_eig_idx]
-
-                max_Bk_eig_idx = jnp.argmax(Bk_eigs)
-                max_Bk_eig_vec = Bk_eig_vec[:, max_Bk_eig_idx]
-                max_Bk_eig = Bk_eigs[max_Bk_eig_idx]
-
                 if False:
                     vTAv_array = []
                     v_array = []
@@ -372,8 +381,21 @@ class DA_SR1(LS_Opt):
                     v_array = jnp.array(v_array).T
                     print(v_array.shape, vTAv_array.shape)
                 
-                w, Q, vTAv_array, v_array  = lanczos_eigs(lambda v: hvp(U_0, v), U_0.shape[0], m=4, v0=max_Bk_eig_vec)
-                Bk_vecs, Bk_scalars = self.HVP_Bk_update(vTAv_array, v_array, Bk_vecs, Bk_scalars)
+                computed_min_eig = False
+                if random.random() < 0.1:
+                    w, Q, vTAv_array, v_array  = lanczos_eigs(lambda v: hvp(U_0, v), U_0.shape[0], m=4)
+                    Bk_vecs, Bk_scalars = self.HVP_Bk_update(vTAv_array, v_array, Bk_vecs, Bk_scalars)
+
+                    min_eig_idx = jnp.argmin(w)
+                    max_eig_idx = jnp.argmax(w)
+                    max_eig_vec = Q[:, max_eig_idx]
+                    min_eig_vec = Q[:, min_eig_idx]
+                    min_eig = w[min_eig_idx]
+                    max_eig = w[max_eig_idx]
+                    if jnp.dot(min_eig_vec, grad) > 0:
+                            min_eig_vec = -min_eig_vec
+                    computed_min_eig = True
+
                 ###
                 if False:
                     print("-------")
@@ -384,23 +406,13 @@ class DA_SR1(LS_Opt):
 
                     print("------")
                 ###
-                min_eig_idx = jnp.argmin(w)
-                max_eig_idx = jnp.argmax(w)
-                max_eig_vec = Q[:, max_eig_idx]
-                min_eig_vec = Q[:, min_eig_idx]
-                min_eig = w[min_eig_idx]
-                max_eig = w[max_eig_idx]
-                if jnp.dot(min_eig_vec, grad) > 0:
-                        min_eig_vec = -min_eig_vec
 
                 #print(f"hvp_min: {jnp.min(w)}, Bk_min: {jnp.min(Bk_eigs)}")
                 #print(self.check_eig(hvp, U_0, max_eig_vec), max_eig)
                 #print(self.check_eig(hvp, U_0, min_eig_vec), min_eig)
                 #print("-----")
-                
-                #prob_neg_curve_step = self.weibull_thresh_prob(min_eig)
-                #if np.random.rand() < prob_neg_curve_step:
-                if min_eig < -1e-5:
+
+                if computed_min_eig and min_eig < -self.eps_H:
                     print(f"neg curve: {min_eig:.4e}")
                     pk = min_eig_vec
                     step_type = "neg_curve"
@@ -424,36 +436,34 @@ class DA_SR1(LS_Opt):
 
                     null_space_comp = (-grad) - Q @ (Q.T @ -grad)
                     proj_error = jnp.linalg.norm(null_space_comp)/jnp.linalg.norm(grad)
-                    #t = Q.T @ Q
-                    #ortho_error = jnp.linalg.norm(t - jnp.eye(t.shape[0]))
+                    t = Q.T @ Q
+                    ortho_error = jnp.linalg.norm(t - jnp.eye(t.shape[0]))
                     #print(f"proj error: {proj_error:.4f} | ortho error: {ortho_error:.3e}")
-                    if proj_error < .1:
+                    if proj_error < .5:
                         print("reg_newton")
                         step_type = "reg_Newton"
                         pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / NCN_min_eig) * null_space_comp
                     else:
-                        print(f"neg curve: {min_eig}")
-                        pk = min_eig_vec
-                        step_type = "neg_curve"
+                        print("no NCN, grad")
+                        pk = -grad
+                        step_type = "grad"
 
             if step_type == "none":
                 print("converged")
                 return
-
-            if step_type == "grad":
-                pTHp = gTHg
-            else:
-                pTHp = jnp.dot(pk, hvp(U_0, pk))
-                Bk_vecs, Bk_scalars = self.HVP_Bk_update(jnp.array([pTHp]), pk.reshape((-1, 1)), Bk_vecs, Bk_scalars)
-                if self.no_grad_next:
-                    self.no_grad_next = False
-
-            alpha = self.TR_opt(pk, grad, pTHp, loss_fn, U_0, loss)
-            alpha_pk = pk * alpha
-
-            if self.eta >= .1:
+            
+            if True:
                 if step_type == "grad":
-                    self.no_grad_next = True
+                    pTHp = gTHg
+                else:
+                    pTHp = jnp.dot(pk, hvp(U_0, pk))
+                    Bk_vecs, Bk_scalars = self.HVP_Bk_update(jnp.array([pTHp]), pk.reshape((-1, 1)), Bk_vecs, Bk_scalars)
+                    if self.no_grad_next:
+                        self.no_grad_next = False
+
+                alpha = self.TR_opt(pk, grad, pTHp, loss_fn, U_0, loss)
+    
+            alpha_pk = pk * alpha
 
             # Step and new loss/grad
             U_0_next = self.step(U_0, alpha, pk)
@@ -470,16 +480,22 @@ class DA_SR1(LS_Opt):
         for i in range(self.its):
             if i == 0:
                 loss, grad = loss_grad_fn(U_0)
+                print(f"loss: {loss}")
             loss_prev = loss
             grad_prev = grad
             U_0, loss, grad, alpha, alpha_pk, Rk, Bk_vecs, Bk_scalars = inner_loop(U_0, grad, Bk_vecs, Bk_scalars, loss)
+            if alpha == 0:
+                if self.print_loss:
+                    print(f"optimizer stalled | alpha={alpha}")
+
+                opt_data.early_stop_update(i)
+                break
             opt_data(i, loss_prev, grad_prev, alpha_pk)
 
-            U_0_div = div_check(U_0)
-            if U_0_div > 1e-10:
-                U_0 = div_free_proj(U_0)
-                print(U_0.shape)
-                print("----")
+            #U_0_div = div_check(U_0)
+            #if U_0_div > 1e-10:
+            #    U_0 = div_free_proj(U_0)
+
 
             if self.print_loss:
                 print(f"i:{i} | loss: {loss:.3e} | Div: {div_check(U_0):.3e} | alpha: {alpha:.3e} | Rk: {Rk:.3e} | eta: {self.eta:.3e}")

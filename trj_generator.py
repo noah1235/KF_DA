@@ -20,8 +20,8 @@ jax.config.update("jax_default_device", jax.devices("cpu")[0])
 # jax.config.update("jax_default_device", jax.devices("gpu")[0])
 
 def generate_KF_flow():
-    NDOF = 32
-    Re = 40
+    NDOF = 16
+    Re = 30
     n  = 4
     dt = 1e-2
     T = 1e3
@@ -153,9 +153,9 @@ def generate_KF_energy_plots():
     print(f"Saved: {outpath}")
 
 def generate_sample_case_ani():
-    NDOF = 16
+    NDOF = 64
     Re = 40
-    beta = 1e-3
+    beta = 0
     St = 1e-2
     n  = 4
     dt = 1e-2
@@ -192,4 +192,4 @@ def generate_sample_case_ani():
         anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=30, dpi=300)
 
 if __name__ == "__main__":
-    generate_KF_flow()
+    generate_sample_case_ani()
