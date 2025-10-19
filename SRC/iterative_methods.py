@@ -17,8 +17,87 @@ def max_eig_power_iterations(hvp, n, iters=10, key=0):
     return lams, v
 
 
+def lanczos_eigs(matvec, n, m, v0=None, tol=1e-12, dtype=jnp.float64):
+    """
+    Lanczos with m steps for a symmetric operator A (given by matvec).
+    Simple Python for-loop; no JIT tricks, just clarity.
 
-def lanczos_tridiagonal(matvec, n, m, v0=None, tol=1e-12, store_basis=True, dtype=jnp.float64):
+    Returns:
+      evals : (k,)            — Ritz eigenvalues of A (from k×k T)
+      evecs : (n, k)          — Ritz eigenvectors in R^n, V^T @ y
+      vTAv_array : (m,)       — v_t^T A v_t for t=0..k-1 (zeros after k)
+      v_array : (n, m)        — columns store v_t (zeros after k)
+    """
+    if v0 is None:
+        v0 = jnp.arange(n, dtype=dtype)
+    v0 = v0 / (jnp.linalg.norm(v0) + 1e-32)
+
+    # Preallocate
+    V = jnp.zeros((m, n), dtype=dtype)          # store v_t as rows V[t] = v_t^T
+    alphas = jnp.zeros((m,), dtype=dtype)
+    betas  = jnp.zeros((m-1,), dtype=dtype)
+
+    vTAv_array = jnp.zeros((m,),   dtype=dtype)
+    v_array    = jnp.zeros((n, m), dtype=dtype)
+
+    # init
+    v_prev = jnp.zeros_like(v0)
+    v = v0
+    beta_prev = jnp.array(0., dtype=dtype)
+
+    k = 0  # effective number of steps actually taken
+    for t in range(m):
+        Av = matvec(v)
+        vTAv_array = vTAv_array.at[t].set(jnp.vdot(v, Av).real)
+        v_array = v_array.at[:, t].set(v)
+
+        w = Av - beta_prev * v_prev
+        alpha = jnp.vdot(v, w).real
+        w = w - alpha * v
+
+        V = V.at[t].set(v)
+        alphas = alphas.at[t].set(alpha)
+
+        beta = jnp.linalg.norm(w)
+        if t < m-1:
+            betas = betas.at[t].set(beta)
+
+        # prepare next
+        v_next = jnp.where(beta > 0, w / (beta + 1e-32), jnp.zeros_like(v))
+        v_prev, v, beta_prev = v, v_next, beta
+
+        k = t + 1
+        if beta < tol:
+            break
+
+    # Effective sizes
+    alphas_eff = alphas[:k]
+    betas_eff  = betas[:max(k-1, 0)]
+    V_eff = V[:k]                 # shape (k, n); rows are basis vectors
+
+    # Build the k x k tridiagonal T
+    if k == 0:
+        # degenerate edge case: return empties
+        return (jnp.array([], dtype=dtype),
+                jnp.zeros((n, 0), dtype=dtype),
+                vTAv_array, v_array)
+
+    T = jnp.diag(alphas_eff)
+    if k > 1:
+        T = T + jnp.diag(betas_eff, 1) + jnp.diag(betas_eff, -1)
+
+    # Ritz decomposition of T
+    evals, Y = jnp.linalg.eigh(T)     # Y: (k, k)
+
+    # Lift Ritz vectors back to R^n: u_i = V_k^T y_i
+    # V_eff: (k, n) with rows v_t^T  → V_eff.T: (n, k)
+    evecs = V_eff.T @ Y                # (n, k)
+
+    return evals, evecs, vTAv_array, v_array
+
+
+
+def lanczos_tridiagonal(matvec, n, m, v0=None, tol=1e-12, dtype=jnp.float64):
     """
     Run m Lanczos steps for a symmetric operator A given by `matvec(x)=A@x`.
 
@@ -47,11 +126,18 @@ def lanczos_tridiagonal(matvec, n, m, v0=None, tol=1e-12, store_basis=True, dtyp
     alphas = jnp.zeros((m,), dtype=v0.dtype)
     betas  = jnp.zeros((m-1,), dtype=v0.dtype)
 
+    vTAv_array = jnp.zeros((m,),   dtype=v0.dtype)
+    v_array    = jnp.zeros((n, m), dtype=v0.dtype)
+
     def body(carry, t):
-        v_prev, v, beta_prev, V_acc, alphas_acc, betas_acc = carry
+        v_prev, v, beta_prev, V_acc, alphas_acc, betas_acc, vTAv_array, v_array = carry
 
         # w = A v - beta_{t-1} v_{t-1}
-        w = matvec(v) - beta_prev * v_prev
+        Av = matvec(v)
+        vTAv_array = vTAv_array.at[t].set(jnp.dot(v, Av))
+        v_array = v_array.at[:, t].set(v)
+
+        w = Av - beta_prev * v_prev
 
         # alpha_t
         alpha = jnp.vdot(v, w).real
@@ -72,13 +158,13 @@ def lanczos_tridiagonal(matvec, n, m, v0=None, tol=1e-12, store_basis=True, dtyp
             lambda b: b,
             betas_acc
         )
-        carry_next = (v, v_next, beta, V_acc, alphas_acc, betas_acc)
+        carry_next = (v, v_next, beta, V_acc, alphas_acc, betas_acc, vTAv_array, v_array)
         return carry_next, None
 
     # Initialize with v_{0} = 0, v_{1} = v0, beta_0 = 0
     v_prev0 = jnp.zeros_like(v0)
-    init_carry = (v_prev0, v0, jnp.array(0., dtype=v0.dtype), V, alphas, betas)
-    (v_prev, v_last, beta_last, V, alphas, betas), _ = lax.scan(body, init_carry, jnp.arange(m))
+    init_carry = (v_prev0, v0, jnp.array(0., dtype=v0.dtype), V, alphas, betas, vTAv_array, v_array)
+    (v_prev, v_last, beta_last, V, alphas, betas, vTAv_array, v_array), _ = lax.scan(body, init_carry, jnp.arange(m))
 
     # Detect (first) breakdown to compute effective dimension k
     # betas has length m-1; find first index where beta < tol
@@ -89,9 +175,51 @@ def lanczos_tridiagonal(matvec, n, m, v0=None, tol=1e-12, store_basis=True, dtyp
     # Slice to effective size
     alphas_eff = alphas[:k]
     betas_eff  = betas[:(k-1)]
-    V_eff = V[:k] if store_basis else None
-    return alphas_eff, betas_eff, V_eff
+    V_eff = V[:k]
+    return alphas_eff, betas_eff, V_eff, vTAv_array, v_array
 
+def lanczos_2_eig_decomp(alphas: jnp.ndarray,
+                            betas: jnp.ndarray,
+                            V: jnp.ndarray):
+    """
+    Given Lanczos outputs (alphas, betas, V), form the tridiagonal T,
+    compute its eigendecomposition T = S Λ Sᵀ, and lift the Ritz vectors
+    back to the original space: Q = V S.
+
+    Args
+    ----
+    alphas : (m,)  diagonal entries of T
+    betas  : (m-1,) off-diagonal entries of T (super/sub diagonal)
+    V      : (n, m) Lanczos basis with orthonormal columns
+
+    Returns
+    -------
+    w : (m,)        Ritz eigenvalues (sorted descending)
+    Q : (n, m)      Ritz eigenvectors in the original space (columns), Q = V S
+    S : (m, m)      Eigenvectors of T in the Krylov subspace (optional to use externally)
+    """
+    m = alphas.shape[0]
+    # Build symmetric tridiagonal T
+    T = jnp.diag(alphas) \
+        + jnp.diag(betas, k=1) \
+        + jnp.diag(betas, k=-1)
+
+    # Eigendecomposition of symmetric T
+    # jnp.linalg.eigh returns ascending; we’ll flip to descending for convenience.
+    w, S = jnp.linalg.eigh(T)
+    idx = jnp.argsort(w)[::-1]
+    w = w[idx]
+    S = S[:, idx]
+
+    # Lift eigenvectors back: Q = V S
+    Q = V.T @ S
+
+    # (Optional) tiny numerical cleanup: re-normalize columns of Q
+    # (in exact arithmetic it’s already orthonormal since V and S are)
+    norms = jnp.linalg.norm(Q, axis=0)
+    Q = Q / jnp.where(norms > 0, norms, 1.0)
+
+    return w, Q, S
 
 # ------------------------------------------------------------
 # Extremal eigenpairs via Lanczos (Ritz)

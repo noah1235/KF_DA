@@ -12,7 +12,7 @@ from SRC.DA_Comp.case_post_proc import post_proc_case_main
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
-from SRC.DA_Comp.optimization import Hessian_Opt, NCN, optax_opt, LBFGS, ADAM, BFGS, BFGS_opt
+from SRC.DA_Comp.optimization import *
 from create_results_dir import create_results_dir
 from SRC.iterative_methods import max_eig_power_iterations, lanczos_extremal
 
@@ -280,11 +280,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                 "loss_crit": [f"{loss_crit}"]
 
                                                             })
-                                                                                                
-
                                     # Run the DA optimization for this setup
                                     _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
-                                                omega_fn, div_check, build_div_free_proj(stepper), vel_part_trans, t_mask, results_df,
+                                                omega_fn, div_check, build_div_free_proj(stepper, return_type="Fourier_flat"), vel_part_trans, t_mask, results_df,
                                                 parquet_path)
                                     count += 1
                                     print(f"case: {count}/{total_cases}")
@@ -332,13 +330,17 @@ def _run_DA_case(
         Hessian_Opt(U_0_guess_fourier, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
 
     elif isinstance(optimizer, BFGS):
-        U_0_DA_fourier, opt_data, its = BFGS_opt(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check)
+
+    elif isinstance(optimizer, DA_SR1):
+        U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check, div_free_proj)
 
     elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
         U_0_DA_fourier, opt_data = optax_opt(
             U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
         )
 
+    return
     U_0_DA_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_0_DA_fourier)
     u = jnp.fft.irfft2(U_0_DA_hat[0])
     v = jnp.fft.irfft2(U_0_DA_hat[1])

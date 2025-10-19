@@ -3,6 +3,10 @@ import jax
 import optax
 import numpy as np
 from jax import lax
+from SRC.iterative_methods import lanczos_tridiagonal, lanczos_2_eig_decomp, lanczos_eigs
+from scipy.sparse.linalg import cg, LinearOperator
+from scipy.sparse.linalg import minres
+from scipy.sparse.linalg import eigsh
 
 class Optimizer:
     name = ""
@@ -11,6 +15,15 @@ class Optimizer:
 
     def __repr__(self):
         return f"{self.name}_{self.ls_method}-{self.its}"
+    
+class LS_Opt(Optimizer):
+    def step(
+        self,
+        x: jnp.ndarray,      # current x, shape (m,)
+        alpha: float,
+        p: jnp.ndarray       # search direction, shape (m,)
+    ) -> jnp.ndarray:
+        return x + alpha * p
     
 class Opt_Data:
     def __init__(self, its):
@@ -44,24 +57,11 @@ class ADAM(Optimizer):
     def __repr__(self):
         return f"{self.name}-{self.its}"
 
-class LS_Opt(Optimizer):
-    def set_ls(self):
-        if self.ls_method == "BT":
-            self.ls = ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10)
-
-    def step(
-        self,
-        x: jnp.ndarray,      # current x, shape (m,)
-        alpha: float,
-        p: jnp.ndarray       # search direction, shape (m,)
-    ) -> jnp.ndarray:
-        return x + alpha * p
-    
 class BFGS(LS_Opt):
     name = "BFGS"
-    def __init__(self, ls_method, its, fallback_opt, print_loss=False):
-        self.ls_method = ls_method
-        self.set_ls()
+    def __init__(self, ls, its, fallback_opt, print_loss=False):
+        self.ls = ls
+        self.ls_method = ls.name
         self.its = its
         self.print_loss = print_loss
 
@@ -70,8 +70,423 @@ class BFGS(LS_Opt):
     @staticmethod
     def eye_fallback(N):
         return jnp.eye(N)
+    
+    @staticmethod
+    @jax.jit
+    def Bk_inv_update(ys, sk, yk, Bk_inv):
+        I = jnp.eye(yk.shape[0], dtype=Bk_inv.dtype)
+        rho = 1.0 / ys
+        Sy = jnp.outer(sk, yk)
+        Ys = jnp.outer(yk, sk)
+        Ss = jnp.outer(sk, sk)
+        Bk_inv_next = (I - rho * Sy) @ Bk_inv @ (I - rho * Ys) + rho * Ss
+        return Bk_inv_next
+
+    def opt_loop(self, U_0, loss_fn_base, loss_grad_fn, div_check):
+        N = U_0.shape[0]
+        loss_fn = jax.jit(loss_fn_base)
+
+        @jax.jit
+        def jit_block(U_0_next):
+            # Step and new loss/grad
+            loss_next, grad_next = loss_grad_fn(U_0_next)
+
+            # Quasi-Newton pair
+            sk = U_0_next - U_0
+            yk = grad_next - grad
+
+            # Curvature
+            ys = jnp.vdot(yk, sk).real
+            return loss_next, grad_next, ys, sk, yk
         
 
+
+        def inner_loop(U_0, grad, Bk_inv, eps=1e-8):
+            # Search direction and line search
+            pk = -Bk_inv @ grad
+            alpha = self.ls(loss_fn, U_0, pk, grad)
+            U_0_next = self.step(U_0, alpha, pk)
+            alpha_pk = pk * alpha  # return value
+            loss_next, grad_next, ys, sk, yk = jit_block(U_0_next)
+
+            if ys > eps:
+                Bk_inv_next = self.Bk_inv_update(ys, sk, yk, Bk_inv)
+                return U_0_next, loss_next, grad_next, Bk_inv_next, alpha, alpha_pk, True
+
+            else:
+                return U_0_next, loss_next, grad_next, Bk_inv, alpha, alpha_pk, False
+
+
+        
+        Bk_inv = self.fallback(N)
+
+        opt_data = Opt_Data(self.its)
+        for i in range(self.its):
+            if i == 0:
+                loss, grad = loss_grad_fn(U_0)
+            loss_prev = loss
+            grad_prev = grad
+            U_0, loss, grad, Bk_inv, alpha, alpha_pk, Bk_inv_update = inner_loop(U_0, grad, Bk_inv)
+            opt_data(i, loss_prev, grad_prev, alpha_pk)
+            if self.print_loss:
+                print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha} | Bk_inv_update: {Bk_inv_update}")
+
+            if alpha <= self.ls.min_alpha:
+                if self.print_loss:
+                    print(f"optimizer stalled | alpha={alpha}")
+
+                opt_data.early_stop_update(i)
+                break
+
+
+        return U_0, opt_data, i
+
+class DA_SR1(LS_Opt):
+    name = "DA_SR1"
+    def __init__(self, its, fallback_opt, eps_g, eps_H, 
+                 max_memory, NCN_kappa,
+                 eta_0=1e-2,
+                 print_loss=False):
+        self.its = its
+        self.print_loss = print_loss
+        self.eps_g = eps_g
+        self.eps_H = eps_H
+        self.max_memory = max_memory
+        self.eta = eta_0
+        self.eta_0 = eta_0
+        self.rho = 10
+        self.eta_min = 1e-6
+        self.NCN_kappa = NCN_kappa
+
+        self.no_grad_next = False
+
+        if fallback_opt == "eye":
+            self.fallback = self.eye_fallback
+    
+    @staticmethod
+    def eye_fallback(N):
+        return jnp.eye(N) * 0 
+    
+    @staticmethod
+    def Bk_mat_vec(Bk_vecs, Bk_scalars, v, memory):
+        result = jnp.zeros(v.shape[0])
+        for i in range(memory):
+            x = Bk_vecs[:, i]
+            result += Bk_scalars[i] * x * jnp.dot(x, v)
+        return result
+    
+    def build_Bk(self, Bk_vecs, Bk_scalars):
+        n = Bk_vecs.shape[0]
+        result = jnp.zeros((n, n))
+        for i in range(self.current_memory):
+            x = Bk_vecs[:, i]
+            result += jnp.outer(x, x) * Bk_scalars[i]
+        return result
+
+    def SR1_update(self, Bk_vecs, Bk_scalars, U_0_next, U_0, grad_next, grad, N, eps=1e-6):
+        s = U_0_next - U_0
+        y = grad_next - grad
+
+        # r = y - B_k s
+        r = y - self.Bk_mat_vec(Bk_vecs, Bk_scalars, s, self.current_memory)
+        denom = jnp.vdot(r, s)
+
+        if jnp.abs(denom) <= eps:
+            # no change
+            print("Skip SR1")
+            return Bk_vecs, Bk_scalars
+
+        V, A = Bk_vecs, Bk_scalars
+        if self.current_memory < self.max_memory:
+            idx = int(self.current_memory)
+            V = V.at[:, idx].set(r)
+            A = A.at[idx].set(1.0 / denom)
+            self.current_memory = idx + 1
+        else:
+            N = U_0.shape[0]
+            V = jnp.concatenate([V[:, 1:], jnp.zeros((N, 1), dtype=V.dtype)], axis=1)
+            A = jnp.concatenate([A[1:], jnp.zeros((1,), dtype=A.dtype)], axis=0)
+            idx = self.max_memory - 1
+            V = V.at[:, idx].set(r)
+            A = A.at[idx].set(1.0 / denom)
+            self.current_memory = self.max_memory
+
+        return V, A
+
+    def HVP_Bk_update(self, vTAv_array, v_array, Bk_vecs, Bk_scalars, cos_tol = .95):
+        """
+        Insert n_new_vecs columns (xi) with scalars (-mu) into limited-memory buffers.
+
+        Args
+        ----
+        vTAv_array : (n_new_vecs,)   # v_i^T A v_i
+        v_array    : (N, n_new_vecs) # columns are x_i to insert
+        Bk_vecs    : (N, M)          # memory buffer of vectors (M = self.max_memory)
+        Bk_scalars : (M,)            # memory buffer of scalars
+        """
+
+        n_new = vTAv_array.shape[0]
+        if n_new > 1:
+            VTV = v_array.T @ v_array
+            ortho_error = jnp.linalg.norm(VTV - jnp.eye(VTV.shape[0]))
+            if ortho_error > 1e-8:
+                print("vecs not ortho")
+                return
+
+        N, M = Bk_vecs.shape
+        J = self.current_memory
+        #linear indep check
+        for i in range(n_new):
+            xi = v_array[:, i]
+            for j in range(J):
+                xj = Bk_vecs[:, j]
+                cos_sim = jnp.dot(xj, xi) / (jnp.linalg.norm(xi) * jnp.linalg.norm(xj))
+                if jnp.abs(cos_sim) > cos_tol:
+                    #delete
+                    zeros_cols = jnp.zeros((N, 1), dtype=Bk_vecs.dtype)
+                    Bk_vecs = jnp.concat([jnp.delete(Bk_vecs, j, axis=1), zeros_cols], axis=1)
+                    Bk_scalars = jnp.concat([jnp.delete(Bk_scalars, j), jnp.zeros(1, dtype=Bk_scalars.dtype)])
+                    self.current_memory -= 1
+
+        cmem = self.current_memory
+        n_free = self.max_memory - cmem
+
+        # If not enough free slots, evict the oldest n_del pairs by shifting left.
+        if n_free < n_new:
+            n_del = n_new - n_free
+            # shift left by n_del, append zeros at end
+            zeros_cols = jnp.zeros((N, n_del), dtype=Bk_vecs.dtype)
+            Bk_vecs    = jnp.concatenate([Bk_vecs[:, n_del:], zeros_cols], axis=1)
+            Bk_scalars = jnp.concatenate([Bk_scalars[n_del:], jnp.zeros((n_del,), dtype=Bk_scalars.dtype)])
+            cmem = cmem - n_del                      # current filled after eviction
+            start_idx = cmem                         # first free slot
+        else:
+            start_idx = cmem
+
+        # Insert new pairs sequentially; use the number of active pairs BEFORE each insert
+        # when evaluating Bk_mat_vec.
+        for i in range(n_new):
+            xi = v_array[:, i]
+            k_used = start_idx + i                   # active pairs available now
+            # Compute mu from current memory (do NOT include the new xi yet)
+            mu = jnp.dot(xi, self.Bk_mat_vec(Bk_vecs, Bk_scalars, xi, k_used)) - vTAv_array[i]
+            # Write into buffers
+            Bk_vecs    = Bk_vecs.at[:, k_used].set(xi)
+            Bk_scalars = Bk_scalars.at[k_used].set(-mu)
+
+
+        # Update the "filled slots" counter deterministically
+        self.current_memory = int(min(self.max_memory, start_idx + n_new))
+
+        return Bk_vecs, Bk_scalars
+
+    def TR_opt(self, pk, g, pTHp, loss_fn, x0, loss):
+        c = jnp.dot(pk, g)
+        b = pTHp
+        a = (self.eta/2) * jnp.linalg.norm(pk)**3
+        alpha = (-b + jnp.sqrt(b**2 - 4*a*c))/(2*a)
+
+        if jnp.isnan(alpha):
+            print(f"alpha nan| a={a}, b={b}, c={c}")
+            self.eta = self.eta_0
+            return .1
+            
+
+        model = loss + alpha * c + .5 * alpha**2 * b + a/3 * alpha**3
+        new_loss = loss_fn(x0 + alpha * pk)
+
+        r = (new_loss - model) / new_loss * 100
+        if r < 0 or abs(r) < .1:
+            self.eta /= self.rho
+        elif r > .4:
+            self.eta *= self.rho
+            if r > .7:
+                alpha = self.TR_opt(pk, g, pTHp, loss_fn, x0, loss)
+        self.eta = max(self.eta, self.eta_min)
+        #print(f"model: {model:.3e} | new loss: {new_loss:.3e}, r: {r} | eta: {self.eta:.2f}")
+
+        return alpha
+
+    @staticmethod
+    def check_eig(hvp, x, v):
+        vTHv = jnp.dot(v, hvp(x, v))
+        return vTHv/jnp.linalg.norm(v)
+    
+    @staticmethod
+    def weibull_thresh_prob(x, x_thr=-5e-4, q_thr=0.3, k=1.5):
+        lam = (-x_thr) / (-jnp.log1p(-q_thr))**(1.0/k)
+        t = jnp.maximum(0.0, -x) / lam
+        return 1.0 - jnp.exp(-jnp.power(t, k))
+    
+    def opt_loop(self, U_0, loss_fn, loss_grad_fn_base, div_check, div_free_proj):
+        N = U_0.shape[0]
+        loss_grad_fn = jax.jit(loss_grad_fn_base)
+
+        @jax.jit
+        def hvp(x, v):
+            return jax.jvp(jax.grad(loss_fn), (x,), (v,))[1]
+
+        def inner_loop(U_0, grad, Bk_vecs, Bk_scalars, loss):
+            # Search direction and line search
+            grad_norm = jnp.linalg.norm(grad)
+            grad_norm_cond = grad_norm > self.eps_g
+            gTHg = jnp.dot(grad, hvp(U_0, grad))
+            Rk = gTHg / grad_norm**2
+            Bk_vecs, Bk_scalars = self.HVP_Bk_update(jnp.array([gTHg]), grad.reshape((-1, 1)), Bk_vecs, Bk_scalars)
+            step_type = "none"
+            if Rk < -self.eps_H and grad_norm_cond and (not self.no_grad_next):
+                print("grad neg")
+                pk = -grad
+                step_type = "grad"
+
+            elif Rk >= -self.eps_H and Rk <= self.eps_H and grad_norm_cond and (not self.no_grad_next):
+                print("grad flat")
+                pk = -grad
+                step_type = "grad"
+
+            #second order methods
+            else:
+                #compute min Bk Eig
+                Bk_mat_vec = lambda v: self.Bk_mat_vec(Bk_vecs, Bk_scalars, v, self.current_memory)
+                A_op = LinearOperator((N, N), matvec=Bk_mat_vec, dtype=np.float64)
+                Bk_eigs, Bk_eig_vec = eigsh(A_op, k=2, which='BE')
+                min_Bk_eig_idx = jnp.argmin(Bk_eigs)
+                min_Bk_eig_vec = Bk_eig_vec[:, min_Bk_eig_idx]
+                min_Bk_eig = Bk_eigs[min_Bk_eig_idx]
+
+                max_Bk_eig_idx = jnp.argmax(Bk_eigs)
+                max_Bk_eig_vec = Bk_eig_vec[:, max_Bk_eig_idx]
+                max_Bk_eig = Bk_eigs[max_Bk_eig_idx]
+
+                if False:
+                    vTAv_array = []
+                    v_array = []
+                    def hvp_store(v):
+                        Av = hvp(U_0, v)
+                        vTAv_array.append(jnp.dot(v, Av))
+                        v_array.append(v)
+                        return Av
+                    A_op = LinearOperator((N, N), matvec=hvp_store, dtype=np.float64)
+                    w, Q = eigsh(A_op, k=1, which='SA', tol=1, v0=min_Bk_eig_vec, ncv=5, maxiter=5)
+                    vTAv_array = jnp.array(vTAv_array)
+                    v_array = jnp.array(v_array).T
+                    print(v_array.shape, vTAv_array.shape)
+                
+                w, Q, vTAv_array, v_array  = lanczos_eigs(lambda v: hvp(U_0, v), U_0.shape[0], m=4, v0=max_Bk_eig_vec)
+                Bk_vecs, Bk_scalars = self.HVP_Bk_update(vTAv_array, v_array, Bk_vecs, Bk_scalars)
+                ###
+                if False:
+                    print("-------")
+                    for i in range(4):
+                        xi = v_array[:, i]
+                        t = jnp.dot(xi, self.Bk_mat_vec(Bk_vecs, Bk_scalars, xi, self.max_memory))
+                        print(t, vTAv_array[i])
+
+                    print("------")
+                ###
+                min_eig_idx = jnp.argmin(w)
+                max_eig_idx = jnp.argmax(w)
+                max_eig_vec = Q[:, max_eig_idx]
+                min_eig_vec = Q[:, min_eig_idx]
+                min_eig = w[min_eig_idx]
+                max_eig = w[max_eig_idx]
+                if jnp.dot(min_eig_vec, grad) > 0:
+                        min_eig_vec = -min_eig_vec
+
+                #print(f"hvp_min: {jnp.min(w)}, Bk_min: {jnp.min(Bk_eigs)}")
+                #print(self.check_eig(hvp, U_0, max_eig_vec), max_eig)
+                #print(self.check_eig(hvp, U_0, min_eig_vec), min_eig)
+                #print("-----")
+                
+                #prob_neg_curve_step = self.weibull_thresh_prob(min_eig)
+                #if np.random.rand() < prob_neg_curve_step:
+                if min_eig < -1e-5:
+                    print(f"neg curve: {min_eig:.4e}")
+                    pk = min_eig_vec
+                    step_type = "neg_curve"
+
+                elif grad_norm_cond:
+                    NCN_min_eig = self.eps_H
+                    #reg newton
+                    #eigen decomp
+                    Bk_mat_vec = lambda v: self.Bk_mat_vec(Bk_vecs, Bk_scalars, v, self.current_memory)
+                    Bk_mat_vec = jax.jit(Bk_mat_vec)
+                    #Bk_eigs, Bk_eig_vec, _, _ = lanczos_eigs(Bk_mat_vec, U_0.shape[0], m=self.current_memory*2, v0=max_eig_vec)
+                    A_op = LinearOperator((N, N), matvec=Bk_mat_vec, dtype=np.float64)
+                    Bk_eigs, Bk_eig_vec = eigsh(A_op, k=self.current_memory, which='LM')
+                    
+                    Q = Bk_eig_vec
+                    Lam_reg = jnp.abs(Bk_eigs)
+                    idx = jnp.argsort(Lam_reg)[-self.current_memory:][::-1]
+                    Lam_reg = Lam_reg[idx]
+                    Q = Bk_eig_vec[:, idx]
+                    Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
+
+                    null_space_comp = (-grad) - Q @ (Q.T @ -grad)
+                    proj_error = jnp.linalg.norm(null_space_comp)/jnp.linalg.norm(grad)
+                    #t = Q.T @ Q
+                    #ortho_error = jnp.linalg.norm(t - jnp.eye(t.shape[0]))
+                    #print(f"proj error: {proj_error:.4f} | ortho error: {ortho_error:.3e}")
+                    if proj_error < .1:
+                        print("reg_newton")
+                        step_type = "reg_Newton"
+                        pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / NCN_min_eig) * null_space_comp
+                    else:
+                        print(f"neg curve: {min_eig}")
+                        pk = min_eig_vec
+                        step_type = "neg_curve"
+
+            if step_type == "none":
+                print("converged")
+                return
+
+            if step_type == "grad":
+                pTHp = gTHg
+            else:
+                pTHp = jnp.dot(pk, hvp(U_0, pk))
+                Bk_vecs, Bk_scalars = self.HVP_Bk_update(jnp.array([pTHp]), pk.reshape((-1, 1)), Bk_vecs, Bk_scalars)
+                if self.no_grad_next:
+                    self.no_grad_next = False
+
+            alpha = self.TR_opt(pk, grad, pTHp, loss_fn, U_0, loss)
+            alpha_pk = pk * alpha
+
+            if self.eta >= .1:
+                if step_type == "grad":
+                    self.no_grad_next = True
+
+            # Step and new loss/grad
+            U_0_next = self.step(U_0, alpha, pk)
+            loss_next, grad_next = loss_grad_fn(U_0_next)
+            Bk_vecs, Bk_scalars = self.SR1_update(Bk_vecs, Bk_scalars, U_0_next, U_0, grad_next, grad, N)
+            
+            return U_0_next, loss_next, grad_next, alpha, alpha_pk, Rk, Bk_vecs, Bk_scalars
+            
+        
+        opt_data = Opt_Data(self.its)
+        Bk_vecs = jnp.zeros((N, self.max_memory))
+        Bk_scalars = jnp.zeros(self.max_memory)
+        self.current_memory = 0
+        for i in range(self.its):
+            if i == 0:
+                loss, grad = loss_grad_fn(U_0)
+            loss_prev = loss
+            grad_prev = grad
+            U_0, loss, grad, alpha, alpha_pk, Rk, Bk_vecs, Bk_scalars = inner_loop(U_0, grad, Bk_vecs, Bk_scalars, loss)
+            opt_data(i, loss_prev, grad_prev, alpha_pk)
+
+            U_0_div = div_check(U_0)
+            if U_0_div > 1e-10:
+                U_0 = div_free_proj(U_0)
+                print(U_0.shape)
+                print("----")
+
+            if self.print_loss:
+                print(f"i:{i} | loss: {loss:.3e} | Div: {div_check(U_0):.3e} | alpha: {alpha:.3e} | Rk: {Rk:.3e} | eta: {self.eta:.3e}")
+
+
+        return U_0, opt_data, i
+        
 def jit_eigen_decomp(H):
     return jnp.linalg.eigh(H)
 
@@ -102,11 +517,7 @@ class NCN(LS_Opt):
         return - inv_abs_H @ grad                         # (m,)
 
 class ArmijoLineSearch:
-    """
-    Find α such that
-      f(x + α p) ≤ f(x) + c α ∇f(x)ᵀp
-    via backtracking (ρ < 1).
-    """
+    name = "Arm_BT"
     def __init__(
         self,
         alpha_init: float = 1.0,
@@ -120,49 +531,57 @@ class ArmijoLineSearch:
         self.max_iters  = max_iters
         self.min_alpha = rho**max_iters
 
-    def __call___dec(
+
+    def __call__(
         self,
         f,
         x: jnp.ndarray,
         p: jnp.ndarray,
         grad: jnp.ndarray,
     ) -> float:
-        α  = self.alpha_init
+        alpha  = self.alpha_init
         f0 = f(x)
         g0 = jnp.dot(grad, p)
+
         for _ in range(self.max_iters):
-            if f(x + α*p) <= f0 + self.c*α*g0:
+            new_loss = f(x + alpha*p)
+            max_loss = f0 + self.c*alpha*g0
+            if new_loss <= max_loss:
                 break
-            α *= self.rho
-        return α
+            alpha *= self.rho
+        return alpha
     
+class Cubic_BT_LS:
+    name = "Cub_BT"
+    def __init__(
+        self,
+        alpha_init: float = 1.0,
+        rho: float        = 0.5,
+        eta: float          = 1,
+        max_iters: int    = 10
+    ):
+        self.alpha_init = alpha_init
+        self.rho        = rho
+        self.eta          = eta
+        self.max_iters  = max_iters
+        self.min_alpha = rho**max_iters
 
-    def __call__(self, f, x: jnp.ndarray, p: jnp.ndarray, grad: jnp.ndarray) -> jnp.ndarray:
-        # f(x) must return a scalar shape ().
-        f0 = f(x)                             # ()
-        g0 = jnp.vdot(grad, p)                # scalar (inner product)
 
-        # If not a descent direction, return alpha = 0 without branching in Python.
-        def do_search(_):
-            alpha0 = jnp.asarray(self.alpha_init, dtype=f0.dtype)
-            f_alpha0 = f(x + alpha0 * p)
-
-            def cond_fun(state):
-                alpha, f_alpha, k = state
-                armijo = f0 + self.c * alpha * g0
-                need_more = jnp.logical_and(f_alpha > armijo, k < self.max_iters)
-                return need_more
-
-            def body_fun(state):
-                alpha, _, k = state
-                alpha = alpha * self.rho
-                f_alpha = f(x + alpha * p)
-                return (alpha, f_alpha, k + 1)
-
-            alpha_fin, _, _ = lax.while_loop(cond_fun, body_fun, (alpha0, f_alpha0, 0))
-            return alpha_fin
-
-        alpha = lax.cond(g0 < 0.0, do_search, lambda _: jnp.asarray(0.0, dtype=f0.dtype), operand=None)
+    def __call__(
+        self,
+        f,
+        x: jnp.ndarray,
+        p: jnp.ndarray,
+    ) -> float:
+        alpha  = self.alpha_init
+        f0 = f(x)
+        step_norm = jnp.linalg.norm(p)
+        for _ in range(self.max_iters):
+            new_loss = f(x + alpha*p)
+            max_loss = f0 - (self.eta/6) * alpha**3 * step_norm**3
+            if new_loss <= max_loss:
+                break
+            alpha *= self.rho
         return alpha
 
 def Hessian_Opt(U_0, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt, div_check):
@@ -187,72 +606,6 @@ def Hessian_Opt(U_0, loss_fn, grad_fn, Hess_fn, optimizer: LS_Opt, div_check):
         U_0, loss, grad, Hess = step(U_0)
         print(grad.shape, Hess.shape, U_0.shape)
         print(f"i:{it} | loss: {loss}")
-
-def BFGS_opt(U_0, loss_fn, loss_grad_fn, optimizer: BFGS, div_check, div_free_proj):
-    N = U_0.shape[0]
-
-
-    @jax.jit
-    def inner_loop(U_0, grad, Bk_inv, eps=1e-16):
-        # Search direction and line search
-        pk = -Bk_inv @ grad
-        alpha = optimizer.ls(loss_fn, U_0, pk, grad)
-
-        # Step and new loss/grad
-        U_0_next = optimizer.step(U_0, alpha, pk)
-        loss_next, grad_next = loss_grad_fn(U_0_next)
-
-        # Quasi-Newton pair
-        sk = U_0_next - U_0
-        yk = grad_next - grad
-
-        # Curvature
-        ys = jnp.vdot(yk, sk).real
-        do_update = ys > jnp.asarray(eps, dtype=ys.dtype)
-
-        alpha_pk = pk * alpha  # return value
-
-        n = Bk_inv.shape[0]
-        I = jnp.eye(n, dtype=Bk_inv.dtype)
-
-        def _update(_):
-            rho = 1.0 / ys
-            Sy = jnp.outer(sk, yk)
-            Ys = jnp.outer(yk, sk)
-            Ss = jnp.outer(sk, sk)
-            Bk_inv_next = (I - rho * Sy) @ Bk_inv @ (I - rho * Ys) + rho * Ss
-            return U_0_next, loss_next, grad_next, Bk_inv_next, alpha, alpha_pk, True
-
-        def _skip(_):
-            return U_0_next, loss_next, grad_next, Bk_inv, alpha, alpha_pk, False
-
-        return jax.lax.cond(do_update, _update, _skip, operand=None)
-
-    
-    Bk_inv = optimizer.fallback(N)
-    I = jnp.eye(N)
-
-    opt_data = Opt_Data(optimizer.its)
-    for i in range(optimizer.its):
-        if i == 0:
-            loss, grad = loss_grad_fn(U_0)
-        loss_prev = loss
-        grad_prev = grad
-        U_0, loss, grad, Bk_inv, alpha, alpha_pk, Bk_inv_update = inner_loop(U_0, grad, Bk_inv)
-        opt_data(i, loss_prev, grad_prev, alpha_pk)
-        if optimizer.print_loss:
-            print(f"i:{i} | loss: {loss} | Div: {div_check(U_0)} | alpha: {alpha} | Bk_inv_update: {Bk_inv_update}")
-
-        if alpha <= optimizer.ls.min_alpha:
-            if optimizer.print_loss:
-                print(f"optimizer stalled | alpha={alpha}")
-
-            opt_data.early_stop_update(i)
-            break
-
-
-    return U_0, opt_data, i
-
 
 def optax_opt(U_0, loss_fn, loss_grad_fn, optimizer_config, div_check, div_free_proj):
     optimizer = optimizer_config.alg

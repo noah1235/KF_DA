@@ -2,7 +2,7 @@ from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization import NCN, LBFGS, ADAM, BFGS
+from SRC.DA_Comp.optimization import NCN, LBFGS, ADAM, BFGS, DA_SR1, ArmijoLineSearch, Cubic_BT_LS
 from SRC.utils import load_data
 import numpy as np
 from SRC.Solver.IC_gen import init_particles_vector
@@ -52,25 +52,30 @@ def main():
     kf_opts = KF_Opts(
         Re = 40,
         n = 4,
-        NDOF = 16,
+        NDOF = 32,
         dt = 1e-2,
         T = 1e3,
         min_samp_T=500,
         t_skip=1e-1
+
     )
     DA_opts = DA_Opts(
-        n_particles_list=[10],
-        sampling_period_list=[.5],
+        n_particles_list=[20],
+        sampling_period_list=[.1],
         part_opts=Particle_Opts(St=1e-2, beta=1e-3),
         num_particle_inits=1,
-        num_opt_inits=5,
+        num_opt_inits=1,
         num_seeds=1,
-        int_pert_range=(.01, .1),
+        int_pert_range=(.2, .5),
         T_list=[1],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #LBFGS(its=20),
-            BFGS(ls_method="BT", its=50, fallback_opt="eye", print_loss=True)
+            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=20, fallback_opt="eye", print_loss=True),
+            DA_SR1( 
+                   its=50, fallback_opt="eye", eps_g=1e-6, eps_H=1e-8, 
+                   max_memory=30, NCN_kappa=1e4,
+                   print_loss=True)
             #ADAM(1e-4, its=100)
 
         ],
