@@ -6,12 +6,12 @@ from jax import lax
 
 def create_loss_fn(crit, stepper, target_parts, pIC, vel_part_trans: Vel_Part_Transformations):
     transform_fn = build_div_free_proj(
-                    stepper
+                    stepper,
+                    vel_part_trans
     )
 
     def loss_fn(U0_fourier):
-        U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U0_fourier)
-        U0 = transform_fn(U_hat)
+        U0 = transform_fn(U0_fourier)
 
         X0 = jnp.concatenate([pIC, U0])
 

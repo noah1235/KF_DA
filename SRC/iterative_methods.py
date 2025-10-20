@@ -16,7 +16,6 @@ def max_eig_power_iterations(hvp, n, iters=10, key=0):
     v, lams = jax.lax.scan(step, v, None, length=iters)
     return lams, v
 
-
 def lanczos_eigs(matvec, n, m, v0=None, tol=1e-12, dtype=jnp.float64):
     """
     Lanczos with m steps for a symmetric operator A (given by matvec).
@@ -94,8 +93,6 @@ def lanczos_eigs(matvec, n, m, v0=None, tol=1e-12, dtype=jnp.float64):
     evecs = V_eff.T @ Y                # (n, k)
 
     return evals, evecs, vTAv_array, v_array
-
-
 
 def lanczos_tridiagonal(matvec, n, m, v0=None, tol=1e-12, dtype=jnp.float64):
     """

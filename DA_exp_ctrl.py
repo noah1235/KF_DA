@@ -66,18 +66,19 @@ def main():
         num_particle_inits=1,
         num_opt_inits=1,
         num_seeds=1,
-        int_pert_range=(.01, .1),
+        int_pert_range=(.1, 1),
         T_list=[1],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #LBFGS(its=20),
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=20, fallback_opt="eye", print_loss=True),
+            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
             DA_SR1( 
-                   its=5, fallback_opt="eye", eps_g=1e-6, eps_H=1e-6, 
-                   max_memory=20, NCN_kappa=1e4,
+                   its=50, fallback_opt="eye",eps_H=1e-6,max_memory=50,
+                   rho=100, eta_min=1e-12, grad_prob=0.9, neg_curve_prob=.125,
+                   eta_0=1, eta_max=1e6, num_hvp_iters=6,
                    print_loss=True)
-            #ADAM(1e-4, its=100)
 
+            #ADAM(1e-4, its=100)
         ],
         crit_list=[
             MSE()
@@ -94,8 +95,6 @@ def main():
 
     DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
-
-
 
 def adjoint_test():
     kf_opts = KF_Opts(
