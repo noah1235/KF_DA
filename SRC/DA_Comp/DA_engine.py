@@ -12,7 +12,8 @@ from SRC.DA_Comp.case_post_proc import post_proc_case_main
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
-from SRC.DA_Comp.optimization import *
+from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt
+from SRC.DA_Comp.optimization.optax_logic import *
 from create_results_dir import create_results_dir
 from SRC.iterative_methods import max_eig_power_iterations, lanczos_extremal
 
@@ -191,6 +192,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                 stepper = Particle_Stepper(RK4_Step(RHS, kf_opts.dt), npart)
                 
                 vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
+                
                 #U_0_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0)
                 
                 for samp_period in DA_opts.sampling_period_list:
@@ -218,8 +220,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         target_trj = trj_gen_fn(pIC, U_0)
 
                         # Split particle and velocity parts of the trajectory
-                        target_part = target_trj[:, : RHS.n_particles * 4]
-                        target_vel = target_trj[:, RHS.n_particles * 4 :]
+                        #target_part = target_trj[:, : RHS.n_particles * 4]
+                        #target_vel = target_trj[:, RHS.n_particles * 4 :]
 
                         # Loop over initial-guess distances (relative to AS)
                         for opt_init_dist in opt_init_dists:
@@ -250,14 +252,15 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                 )
 
                                 for loss_crit in DA_opts.crit_list:
-                                    loss_crit.set_t_mask(t_mask)
+                                    loss_crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
                                     crit_dir = os.path.join(opt_method_dir, f"{loss_crit}")
                                     os.makedirs(crit_dir, exist_ok=True)
 
                                     # Build the loss function from criterion and stepper
                                     loss_fn = create_loss_fn(
-                                        loss_crit, stepper, target_part, pIC, vel_part_trans
+                                        loss_crit, stepper, target_trj, pIC, vel_part_trans
                                     )
+
 
                                     def omega_fn(U):
                                         U = vel_part_trans.reshape_flattened_vel(U)
@@ -282,6 +285,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                             })
                                     div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
                                     # Run the DA optimization for this setup
+                                    loss_fn(U_0_guess_fourier)
+
                                     _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
                                                 omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
                                                 parquet_path)
@@ -295,7 +300,7 @@ def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
     U_0_guess_fourier: np.ndarray | jnp.ndarray,
     loss_fn,
-    optimizer,
+    optimizer: LS_TR_Opt,
     trj_gen_fn,
     pIC,
     save_dir,
@@ -325,48 +330,42 @@ def _run_DA_case(
     """
 
 
-    # Dispatch by optimizer type
-    if isinstance(optimizer, NCN):
-        grad_fn = jax.grad(loss_fn)
-        Hess_fn = jax.hessian(loss_fn)
-        Hessian_Opt(U_0_guess_fourier, loss_fn, grad_fn, Hess_fn, optimizer, div_check)
+    U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check, div_free_proj)
 
-    elif isinstance(optimizer, BFGS):
-        U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check, div_free_proj)
-
-    elif isinstance(optimizer, DA_SR1):
-        U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check, div_free_proj)
-
-    elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
-        U_0_DA_fourier, opt_data = optax_opt(
-            U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
-        )
+    #elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
+    #    return
+    #    U_0_DA_fourier, opt_data = optax_opt(
+    #        U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), optimizer, div_check, div_free_proj
+    #    )
 
     U_0_DA_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_0_DA_fourier)
     u = jnp.fft.irfft2(U_0_DA_hat[0])
     v = jnp.fft.irfft2(U_0_DA_hat[1])
     U_0_DA = jnp.stack([u, v], axis=0).reshape(-1)
 
-
-    hvp = build_hvp(loss_fn, U_0_DA_fourier)
-    #lanczo_result = lanczos_extremal(hvp, U_0_DA_fourier.shape[0], m=10)
-    return
-    print("eig decomp")
-    A_op = LinearOperator((U_0_DA_fourier.shape[0], U_0_DA_fourier.shape[0]), matvec=hvp, dtype=np.float64)
-    w, Q = eigsh(A_op, k=2, which='BE', tol=1e-6)
-    print("done")
-    
-    max_H_eig = float(jnp.max(w))
-    min_H_eig = float(jnp.min(w))
-
-    with open(os.path.join(save_dir, "extreme_H_eigs.txt"), "w") as f:
-        f.write(f"lambda_max={max_H_eig} \n lambda_min={min_H_eig}")
-
     DA_trj = trj_gen_fn(pIC, U_0_DA)
-    results_df["max_H_eig"] = [max_H_eig]
-    results_df["min_H_eig"] = [min_H_eig]
+
+    if False:
+        hvp = build_hvp(loss_fn, U_0_DA_fourier)
+        print("eig decomp")
+        A_op = LinearOperator((U_0_DA_fourier.shape[0], U_0_DA_fourier.shape[0]), matvec=hvp, dtype=np.float64)
+        w, Q = eigsh(A_op, k=2, which='BE', tol=1e-6)
+        print("done")
+        
+        max_H_eig = float(jnp.max(w))
+        min_H_eig = float(jnp.min(w))
+
+        with open(os.path.join(save_dir, "extreme_H_eigs.txt"), "w") as f:
+            f.write(f"lambda_max={max_H_eig} \n lambda_min={min_H_eig}")
+
+        results_df["max_H_eig"] = [max_H_eig]
+        results_df["min_H_eig"] = [min_H_eig]
     results_df["final_loss"] = [opt_data.loss_record[-1]]
     results_df["iterations"] = its
+
+    #saving npy files
+    np.save(os.path.join(save_dir, "DA_trj.npy"), np.array(DA_trj))
+    np.save(os.path.join("U_0_guess_fourier.npy"), U_0_guess_fourier)
 
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)

@@ -27,7 +27,6 @@ class Vel_Reshaper:
         U_fourier = np.concatenate([U_hat_flat.real, U_hat_flat.imag])
         return U_fourier
     
-    
     def vel_Fourier_2_vel_hat(self, U_fourier):
         """
         Inverse of vel_flat_2_vel_Fourier:
@@ -42,7 +41,6 @@ class Vel_Reshaper:
         U_hat = U_hat_flat.reshape((2, self.NDOF, self.NDOF//2 + 1))
         return U_hat
 
-    
     @staticmethod
     def flatten_from_comps(u, v):
         return jnp.stack([u, v], axis=0).reshape(-1)

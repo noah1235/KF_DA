@@ -100,9 +100,9 @@ def push_orthonormal_matrix(stepper, u_0, Y_0, n):
 
 def ly_exp_main():
     kf_opts = KF_Opts(
-        Re = 30,
+        Re = 100,
         n = 4,
-        NDOF = 16,
+        NDOF = 32,
         dt = 1e-2,
         T = 1e3,
         min_samp_T=500,

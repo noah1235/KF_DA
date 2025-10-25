@@ -20,8 +20,8 @@ jax.config.update("jax_default_device", jax.devices("cpu")[0])
 # jax.config.update("jax_default_device", jax.devices("gpu")[0])
 
 def generate_KF_flow():
-    NDOF = 16
-    Re = 30
+    NDOF = 32
+    Re = 100
     n  = 4
     dt = 1e-2
     T = 1e3
@@ -154,11 +154,11 @@ def generate_KF_energy_plots():
 
 def generate_sample_case_ani():
     NDOF = 64
-    Re = 40
+    Re = 100
     beta = 0
     St = 1e-2
     n  = 4
-    dt = 1e-2
+    dt = 2e-2
     T = 20
     vort=False
 
@@ -177,7 +177,7 @@ def generate_sample_case_ani():
     os.makedirs(root, exist_ok=True)
     fig, anim = animate_particles_and_flow(
                     trj, L, n_particles, NDOF,
-                    interval=1, s=15, qskip=5,
+                    interval=1, s=15, qskip=2,
                     repeat=True, blit=True, dpi=120, ax=None,
                     title="Particles + Velocity Field", skip=1
                 )
@@ -189,7 +189,7 @@ def generate_sample_case_ani():
                         cmap="icefire", interval=1, repeat=True, blit=False,
                         dpi=120, skip=1, cbar=True, sym=True, clim=None, ax=None,
                         title=r"Vorticity $\omega_z$")
-        anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=30, dpi=300)
+        anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=10, dpi=300)
 
 if __name__ == "__main__":
     generate_sample_case_ani()
