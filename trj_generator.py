@@ -156,18 +156,18 @@ def generate_sample_case_ani():
     NDOF = 64
     Re = 100
     beta = 0
-    St = 1e-2
+    St = 0
     n  = 4
     dt = 2e-2
-    T = 20
+    T = 50
     vort=False
 
-    n_particles = 20
+    n_particles = 100
     nsteps = int(T/dt)
     rhs = KF_LPT_PS_RHS(NDOF, Re, n, n_particles, beta=beta, St=St)
     L = rhs.KF_RHS.L
-    particles = init_particles_vector(n_particles, (0, L), (0, L), rng=None)
     U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=2).reshape(-1)
+    particles = init_particles_vector(n_particles, U_0.reshape((2, NDOF, NDOF)), (0, L), (0, L), L, rng=None)
     X0 = jnp.concat([particles, U_0])
 
     integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=n_particles)

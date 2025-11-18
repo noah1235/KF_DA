@@ -101,8 +101,8 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, sa
     os.makedirs(save_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
 
-    ax.plot(time_axis, vel_cos_sim, label="Velocity error")
-    ax.plot(time_axis, part_cos_sim, label="Particle error")
+    ax.plot(time_axis, vel_cos_sim, label="Velocity error", marker="o")
+    ax.plot(time_axis, part_cos_sim, label="Particle error", marker="o")
     
     for t in time_axis[t_mask == 1]:
         ax.axvline(x=t, color="k", linestyle="--", alpha=0.3, linewidth=1.0)
@@ -111,7 +111,7 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, sa
     ax.set_ylabel("Cosine Similarity")
     ax.grid(True, alpha=0.3)
     ax.legend()
-    ax.set_ylim(-0.2, 1.2)
+    ax.set_ylim(-1.2, 1.2)
     fig.tight_layout()
 
     out_path = os.path.join(save_dir, "vel_part_error_vs_time.png")

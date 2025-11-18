@@ -3,6 +3,9 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling, Vel_Part_Transformations, Vel_Reshaper
+from dataclasses import dataclass
+
+
 
 def run_particle_advection(U_hat_0, part_IC, rhs, dt, T):
     nsteps = int(T/dt)
@@ -231,26 +234,17 @@ class KF_PS_RHS:
         else:
             return RHS
 
-class KF_LPT_PS_RHS:
-    def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=512):
-        self.KF_RHS = KF_PS_RHS(NDOF, Re, n, calc_mat_deriv=True)
-        self.vel_part_trans = Vel_Part_Transformations(NDOF, n_particles)
-        if beta == 0 and St == 0:
-            self.tracer_eq = self.tracer_eq_tracer
-        else:
-            self.a = 1.0 / (1.0 + beta/2.0)
-            self.alpha = -self.a / St
-            self.St_inv = 1.0 / St
-            self.beta = beta
-            self.tracer_eq = self.tracer_eq_inertial
+class Maxey_Riley_RHS:
+    def __init__(self, beta, St, L):
+        self.a = 1.0 / (1.0 + beta/2.0)
+        self.alpha = -self.a / St
+        self.St_inv = 1.0 / St
+        self.beta = beta
+        self.L = L
 
-        self.N = NDOF
-        self.n_particles = n_particles
-        self.r = int(round(vel_fine_NDOF / NDOF))
-
-    def tracer_eq_inertial(self, u, v, xp, yp, up, vp, u_t_field, v_t_field):
-        u_mat = bilinear_sample_periodic(u_t_field, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
-        v_mat = bilinear_sample_periodic(v_t_field, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
+    def __call__(self, u, v, xp, yp, up, vp, u_t_field, v_t_field):
+        u_mat = bilinear_sample_periodic(u_t_field, xp, yp, self.L, self.L)
+        v_mat = bilinear_sample_periodic(v_t_field, xp, yp, self.L, self.L)
 
         hx = self.a * (self.St_inv * u + 1.5 * self.beta * u_mat)
         hy = self.a * (self.St_inv * v + 1.5 * self.beta * v_mat)
@@ -259,12 +253,24 @@ class KF_LPT_PS_RHS:
         vp_dot_rhs = self.alpha * vp + hy
 
         return up_dot_rhs, vp_dot_rhs
-    
-    def tracer_eq_tracer(self, u, v, xp, yp, up, vp, u_t_field, v_t_field):
-        up_dot_rhs = u
-        vp_dot_rhs = v
 
-        return up_dot_rhs, vp_dot_rhs
+
+class KF_LPT_PS_RHS:
+    def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=512):
+        self.KF_RHS = KF_PS_RHS(NDOF, Re, n, calc_mat_deriv=True)
+        self.vel_part_trans = Vel_Part_Transformations(NDOF, n_particles)
+        if beta == 0 and St == 0:
+            self.tracer_parts = True
+        else:
+            maxey_riley_rhs = Maxey_Riley_RHS(beta, St, self.KF_RHS.L)
+            self.particle_GE = maxey_riley_rhs
+            self.tracer_parts = False
+
+        self.N = NDOF
+        self.n_particles = n_particles
+        self.r = int(round(vel_fine_NDOF / NDOF))
+
+    
 
     def __call__(self, X):
         # unpack
@@ -276,7 +282,7 @@ class KF_LPT_PS_RHS:
         yp = jnp.mod(yp, self.KF_RHS.L)
 
         # flow RHS & material derivative fields (real)
-        KF_rhs, u_t_field, v_t_field = self.KF_RHS(U_flat)
+        KF_rhs_eval, u_t_field, v_t_field = self.KF_RHS(U_flat)
 
         # upsample to a finer grid for particle sampling
         u_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(U[0]), self.r)
@@ -285,15 +291,21 @@ class KF_LPT_PS_RHS:
         # bilinear samples (periodic) at particle positions
         u = bilinear_sample_periodic(u_fine, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
         v = bilinear_sample_periodic(v_fine, xp, yp, self.KF_RHS.L, self.KF_RHS.L)
-
-        up_dot_rhs, vp_dot_rhs = self.tracer_eq(u, v, xp, yp, up, vp, u_t_field, v_t_field)
+        if self.tracer_parts:
+            px = u
+            py = v
+            up_dot_rhs = (u - up) * 0
+            vp_dot_rhs = (v - vp) * 0
+            
+        else:
+            up_dot_rhs, vp_dot_rhs = self.particle_GE(u, v, xp, yp, up, vp, u_t_field, v_t_field)
+            px = up
+            py = vp
 
         # particle RHS: [dx/dt, dy/dt, du_p/dt, dv_p/dt]
-        px = up
-        py = vp
         particle_rhs = jnp.stack([px, py, up_dot_rhs, vp_dot_rhs], axis=1).reshape(-1)
 
-        return jnp.concatenate([particle_rhs, KF_rhs])
+        return jnp.concatenate([particle_rhs, KF_rhs_eval])
 
 def make_divergence_monitor_rfft(rhs, NDOF, n_particles=None, n_print=50):
     """

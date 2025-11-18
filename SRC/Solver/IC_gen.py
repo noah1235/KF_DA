@@ -1,5 +1,8 @@
 import numpy as np
 import jax.numpy as jnp
+from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling
+
+
 def make_incompressible_ic(Nx, Ny, Lx=2*np.pi, Ly=2*np.pi, amp=1e-3, kmax=4, seed=None):
     """
     Divergence-free IC returned in rfft2 layout: shape (2, Ny, Nx_r) with Nx_r=Nx//2+1.
@@ -37,7 +40,7 @@ def make_incompressible_ic(Nx, Ny, Lx=2*np.pi, Ly=2*np.pi, amp=1e-3, kmax=4, see
     U = np.stack((u, v), axis=0)      # (2, Ny, Nx_r)
     return U
 
-def init_particles_vector(n, x_range, y_range, rng=None):
+def init_particles_vector(n, U, x_range, y_range, L, rng=None, r=4):
     """
     Initialize particle state vector:
     (x1, y1, u1, v1, x2, y2, u2, v2, ..., xN, yN, uN, vN).
@@ -63,8 +66,12 @@ def init_particles_vector(n, x_range, y_range, rng=None):
     
     xs = rng.uniform(x_range[0], x_range[1], size=n)
     ys = rng.uniform(y_range[0], y_range[1], size=n)
-    us = np.zeros(n)
-    vs = np.zeros(n)
+
+    u_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(U[0]), r)
+    v_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(U[1]), r)
+    us = bilinear_sample_periodic(u_fine, xs, ys, L, L)
+    vs = bilinear_sample_periodic(v_fine, xs, ys, L, L)
+
     
     # Interleave into [x1,y1,u1,v1, x2,y2,u2,v2, ...]
     z = np.empty(4*n)

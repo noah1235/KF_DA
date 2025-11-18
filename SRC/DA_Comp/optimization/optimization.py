@@ -72,8 +72,8 @@ class BFGS(LS_TR_Opt):
         Ss = jnp.outer(sk, sk)
         self.Bk_inv = (I - rho * Sy) @ self.Bk_inv @ (I - rho * Ys) + rho * Ss
 
-class DA_SR1(LS_TR_Opt, L_SR1, HVP_Update):
-    name = "DA_SR1"
+class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
+    name = "NCSR1"
     ls_method = "TR"
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,

@@ -56,7 +56,6 @@ def get_max_seed_index(directory: str) -> int | None:
                     max_x = x
     return max_x
 
-
 def calc_attractor_size(attractor_snapshots: jnp.ndarray) -> jnp.ndarray:
     """
     Estimate a characteristic size of the attractor as the mean distance
@@ -98,7 +97,6 @@ def append_to_parquet(df, parquet_path):
     combined = pd.concat([existing_df, df], ignore_index=True)
     combined.to_parquet(parquet_path, index=False)
     print(f"Appended data and updated {parquet_path}")
-
 
 def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
@@ -193,12 +191,10 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                 
                 vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
                 
-                #U_0_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0)
-                
                 for samp_period in DA_opts.sampling_period_list:
                     period_idx = int(samp_period/kf_opts.dt)
                     idx = jnp.arange(int(T/kf_opts.dt)+1)
-                    t_mask = (idx % period_idx == 0).astype(jnp.float32)
+                    t_mask = (idx % period_idx == 0)
 
                     samp_p_root = os.path.join(npart_root, f"SP={samp_period}")
                     # Loop over particle initializations
@@ -207,7 +203,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         os.makedirs(PI_root, exist_ok=True)
 
                         # Random particle ICs in the periodic domain
-                        pIC = init_particles_vector(npart, (0, 2 * np.pi), (0, 2 * np.pi))
+                        
+                        
+                        pIC = init_particles_vector(npart,vel_part_trans.reshape_flattened_vel(U_0), (0, RHS.KF_RHS.L), (0, RHS.KF_RHS.L), RHS.KF_RHS.L)
                         np.save(os.path.join(PI_root, "pIC.npy"), pIC)
 
                         # Quick visualization of particle ICs
@@ -219,9 +217,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T)
                         target_trj = trj_gen_fn(pIC, U_0)
 
-                        # Split particle and velocity parts of the trajectory
-                        #target_part = target_trj[:, : RHS.n_particles * 4]
-                        #target_vel = target_trj[:, RHS.n_particles * 4 :]
 
                         # Loop over initial-guess distances (relative to AS)
                         for opt_init_dist in opt_init_dists:
@@ -243,7 +238,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                 jnp.argmin(jnp.abs(True_IC_dist - state_dist)), :
                             ]
                             np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
-                            U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
 
                             # For each optimizer and loss criterion, run a DA case
                             for optimizer in DA_opts.optimizer_list:
@@ -284,10 +278,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                                                             })
                                     div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
-                                    # Run the DA optimization for this setup
-                                    loss_fn(U_0_guess_fourier)
+            
 
-                                    _run_DA_case(target_trj, U_0_guess_fourier, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
+                                    _run_DA_case(target_trj, U_0_guess, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
                                                 omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
                                                 parquet_path)
                                     count += 1
@@ -298,7 +291,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
 def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
-    U_0_guess_fourier: np.ndarray | jnp.ndarray,
+    U_0_guess: np.ndarray | jnp.ndarray,
     loss_fn,
     optimizer: LS_TR_Opt,
     trj_gen_fn,
@@ -329,7 +322,7 @@ def _run_DA_case(
         Optimizer configuration object (used to dispatch the optimization routine).
     """
 
-
+    U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
     U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check, div_free_proj)
 
     #elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
@@ -365,7 +358,6 @@ def _run_DA_case(
 
     #saving npy files
     np.save(os.path.join(save_dir, "DA_trj.npy"), np.array(DA_trj))
-    np.save(os.path.join("U_0_guess_fourier.npy"), U_0_guess_fourier)
 
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)

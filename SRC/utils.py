@@ -28,10 +28,6 @@ class Vel_Reshaper:
         return U_fourier
     
     def vel_Fourier_2_vel_hat(self, U_fourier):
-        """
-        Inverse of vel_flat_2_vel_Fourier:
-        Convert concatenated real vector back to complex Fourier representation.
-        """
         n_half = U_fourier.size // 2
         real_part = U_fourier[:n_half]
         imag_part = U_fourier[n_half:]
