@@ -24,15 +24,23 @@ class BFGS(LS_TR_Opt):
 
         if fallback_opt == "eye":
             self.fallback = self.eye_fallback
+        self.Bk_inv_init = None
+
+    def set_Bk_inv_init(self, mat):
+        self.Bk_inv_init = mat
+
     @staticmethod
     def eye_fallback(N):
         return jnp.eye(N)
     
     def init_opt_params(self, N):
-        self.Bk_inv = self.fallback(N)
+        if self.Bk_inv_init is not None:
+            self.Bk_inv = self.Bk_inv_init
+        else:
+            self.Bk_inv = self.fallback(N)
 
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_base, loss_grad_fn, div_free_proj, eps=1e-8):
+    def inner_loop(self, U_0, grad, loss, loss_fn_base, loss_grad_fn, div_free_proj, eps=1e-12):
         loss_fn = jax.jit(loss_fn_base)
         @jax.jit
         def jit_block(U_0_next):
@@ -63,7 +71,6 @@ class BFGS(LS_TR_Opt):
         else:
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {False}"
 
-    @jax.jit
     def Bk_inv_update(self, ys, sk, yk):
         I = jnp.eye(yk.shape[0], dtype=self.Bk_inv.dtype)
         rho = 1.0 / ys
@@ -129,8 +136,9 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             NCN_min_eig = self.eps_H
             #reg newton
             #eigen decomp
-            A_op = LinearOperator((N, N), matvec=lambda v: self.Bk @ v, dtype=np.float64)
-            Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which='LM')
+            #A_op = LinearOperator((N, N), matvec=lambda v: self.Bk @ v, dtype=np.float64)
+            #Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which='LM')
+            Bk_eigs, Bk_eig_vec = self.Bk_eig_decomp(which="LM")
             Bk_eigs = jnp.array(Bk_eigs)
             Bk_eig_vec = jnp.array(Bk_eig_vec)
 
@@ -201,9 +209,12 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if step_type == "grad":
             pTHp = gTHg
         else:
-            pTHp = jnp.dot(pk, hvp(U_0, pk))
-            self.HVP_Bk_update(jnp.array([pTHp]), pk.reshape((-1, 1)))
-            #pTHp_approx = jnp.dot(pk, self.Bk_mat_vec(Bk_vecs, Bk_scalars, pk, self.current_memory))
+            if False:
+                pTHp = jnp.dot(pk, hvp(U_0, pk))
+                self.HVP_Bk_update(jnp.array([pTHp]), pk.reshape((-1, 1)))
+                #pTHp_approx = jnp.dot(pk, self.Bk_mat_vec(Bk_vecs, Bk_scalars, pk, self.current_memory))
+            else:
+                pTHp = jnp.dot(pk, self.Bk @ pk)
         
         alpha = self.cubic_TR.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
         alpha_pk = pk * alpha

@@ -3,7 +3,8 @@ from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
 from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
+from SRC.DA_Comp.optimization.parent_classes import NCSR1_and_BFGS
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Quad_TR
 from SRC.utils import load_data
 import numpy as np
 from SRC.Solver.IC_gen import init_particles_vector
@@ -61,21 +62,31 @@ def main():
 
     )
     DA_opts = DA_Opts(
-        n_particles_list=[40],
+        n_particles_list=[100],
         sampling_period_list=[.1],
         part_opts=Particle_Opts(St=0, beta=0),
         num_particle_inits=1,
         num_opt_inits=1,
         num_seeds=1,
-        int_pert_range=(.01, .1),
+        int_pert_range=(1.0, 3.0),
         T_list=[1],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, fallback_opt="eye", print_loss=True),
-            NCSR1(its=2, eps_H=1e-6, max_memory=50,
-                   cubic_TR=Cubic_TR(rho=100, eta_min=1e-14, eta_0=1, eta_max=1e6),
-                   grad_prob=0.9, neg_curve_prob=.1, num_hvp_iters=5, print_loss=True
+            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=100, fallback_opt="eye", print_loss=True),
+            
+            #NCSR1(its=25, eps_H=1e-8, max_memory=20,
+            #       cubic_TR=Cubic_TR(rho=30, eta_min=1e-14, eta_0=1, eta_max=1e6),
+            #       grad_prob=0.9, neg_curve_prob=.25, num_hvp_iters=5, print_loss=True
+            #       ),
+            NCSR1_and_BFGS(
+                NCSR1(its=50, eps_H=1e-8, max_memory=20,
+                   cubic_TR=Cubic_TR(rho=30, eta_min=1e-14, eta_0=1, eta_max=1e6),
+                   grad_prob=0.9, neg_curve_prob=.1, num_hvp_iters=10, print_loss=True
                    ),
+                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
+                
+            )
+
             #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[

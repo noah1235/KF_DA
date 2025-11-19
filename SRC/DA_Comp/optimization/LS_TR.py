@@ -37,7 +37,68 @@ class ArmijoLineSearch:
                 break
             alpha *= self.rho
         return alpha
-    
+
+class Quad_TR:
+    def __init__(self, rho=100, eta_min=1e-12, eta_0=1, eta_max=1e6):
+        self.eta_0 = eta_0
+        self.eta_max = eta_max
+        self.rho = rho
+        self.eta_min = eta_min
+
+    def init_opt(self):
+        self.eta = self.eta_0
+
+    def get_alpha(self, pk, g, pTHp, loss_fn, x0, loss, num_repeats=0):
+        """
+        quad regularized trust-region step solver.
+        model: ax + bx^2 + cx^2
+        derivative = a + 2bx + 2*c * x
+        """
+        retry = False
+
+        a = jnp.dot(pk, g)
+        b = pTHp
+        p_norm = jnp.linalg.norm(pk)
+        c = self.eta * (p_norm ** 2)
+        eps = 1e-12
+        alpha = -a / (2*b + 2*c)
+
+        try:
+            # Evaluate model and new loss
+            model = loss + (alpha * c) + (0.5 * alpha**2 * b) + ((a / 3) * alpha**3)
+            new_loss = loss_fn(x0 + alpha * pk)
+            if jnp.isnan(new_loss) or jnp.isnan(model):
+                raise ValueError("NaN encountered in model or new_loss")
+        except:
+            retry = True
+
+        # Compute trust-region ratio
+        pred_red = loss - model
+        act_red = loss - new_loss
+        rho = act_red / (pred_red + eps)
+        if act_red < 0:
+            retry = True
+
+        if retry:
+            if num_repeats == 2:
+                return 0
+            elif num_repeats == 1:
+                self.eta = self.eta_max
+                return self.get_alpha(pk, g, pTHp, loss_fn, x0, loss, num_repeats=num_repeats+1)
+            elif num_repeats == 0:
+                self.eta = self.eta_0
+                return self.get_alpha(pk, g, pTHp, loss_fn, x0, loss, num_repeats=num_repeats+1)
+
+
+        # Update eta
+        if rho > 0.9:
+            self.eta /= self.rho
+        elif rho < 0.5:
+            self.eta *= self.rho
+
+        self.eta = float(max(self.eta, self.eta_min))
+        return float(alpha)
+
 class Cubic_TR:
     def __init__(self, rho=100, eta_min=1e-12, eta_0=1, eta_max=1e6):
         self.BT_ls = ArmijoLineSearch()

@@ -354,7 +354,6 @@ def _run_DA_case(
         results_df["max_H_eig"] = [max_H_eig]
         results_df["min_H_eig"] = [min_H_eig]
     results_df["final_loss"] = [opt_data.loss_record[-1]]
-    results_df["iterations"] = its
 
     #saving npy files
     np.save(os.path.join(save_dir, "DA_trj.npy"), np.array(DA_trj))

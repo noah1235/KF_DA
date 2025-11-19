@@ -1,4 +1,6 @@
 import jax.numpy as jnp
+import numpy as np
+from scipy.sparse.linalg import LinearOperator, eigsh
 
 class L_BK:
     def __init__(self, max_memory, N):
@@ -87,13 +89,12 @@ class L_BK:
     def get_num_open_slots(self):
         return self.max_memory - self.cmem
 
-        
 
 class L_SR1():
     def __init__(self):
         self.Bk = L_BK()
 
-    def SR1_update(self, U_0_next, U_0, grad_next, grad, N, eps=1e-8):
+    def SR1_update(self, U_0_next, U_0, grad_next, grad, N, eps=1e-12):
         s = U_0_next - U_0
         y = grad_next - grad
 
@@ -114,6 +115,14 @@ class L_SR1():
             return
         
         self.Bk.append(r, 1/denom)
+    
+    def Bk_eig_decomp(self, which):
+        #which='LM'
+        A_op = LinearOperator((self.Bk.N, self.Bk.N), matvec=lambda v: self.Bk @ v)
+        Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which=which)
+        return Bk_eigs, Bk_eig_vec
+
+
 
 
 
