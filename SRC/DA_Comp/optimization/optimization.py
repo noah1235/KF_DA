@@ -11,6 +11,9 @@ from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt
 from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK
 
+def is_jitted(fn):
+    return hasattr(fn, "lower")
+
 class BFGS(LS_TR_Opt):
     name = "BFGS"
     def __init__(self, ls, its, fallback_opt, print_loss=False):
@@ -36,10 +39,20 @@ class BFGS(LS_TR_Opt):
         else:
             self.Bk_inv = self.fallback(N)
 
+    def opt_loop(self, U_0, loss_fn_and_derivs, div_check, div_free_proj):
+        if not is_jitted(loss_fn_and_derivs["loss_fn"]):
+            loss_fn_and_derivs["loss_fn"] = jax.jit(loss_fn_and_derivs["loss_fn"])
+        if not is_jitted(loss_fn_and_derivs["loss_grad_fn"]):
+            loss_fn_and_derivs["loss_grad_fn"] = jax.jit(loss_fn_and_derivs["loss_grad_fn"])
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_base, loss_grad_fn, div_free_proj, eps=1e-12):
-        loss_fn = jax.jit(loss_fn_base)
-        @jax.jit
+        return super().opt_loop(
+            U_0, loss_fn_and_derivs, div_check, div_free_proj
+        )
+
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, eps=1e-12):
+        loss_fn = loss_fn_and_derivs["loss_fn"]
+        loss_grad_fn = loss_fn_and_derivs["loss_grad_fn"]
+
         def jit_block(U_0_next):
             # Step and new loss/grad
             loss_next, grad_next = loss_grad_fn(U_0_next)
@@ -160,16 +173,29 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.current_memory = 0
         self.cubic_TR.init_opt()
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_base, loss_grad_fn_base, div_free_proj):
-        N = U_0.shape[0]
-
-        #Jit and define model functions
-        loss_grad_fn = jax.jit(loss_grad_fn_base)
-        loss_fn = jax.jit(loss_fn_base)
+    def opt_loop(self, U_0, loss_fn_and_derivs, div_check, div_free_proj):
+        loss_fn = loss_fn_and_derivs["loss_fn"]
         
         @jax.jit
         def hvp(x, v):
             return jax.jvp(jax.grad(loss_fn), (x,), (v,))[1]
+        if not is_jitted(loss_fn_and_derivs["loss_fn"]):
+            loss_fn_and_derivs["loss_fn"] = jax.jit(loss_fn_and_derivs["loss_fn"])
+        if not is_jitted(loss_fn_and_derivs["loss_grad_fn"]):
+            loss_fn_and_derivs["loss_grad_fn"] = jax.jit(loss_fn_and_derivs["loss_grad_fn"])
+        loss_fn_and_derivs["hvp"] = hvp
+
+        return super().opt_loop(
+            U_0, loss_fn_and_derivs, div_check, div_free_proj
+        )
+
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj):
+        N = U_0.shape[0]
+
+        loss_grad_fn = loss_fn_and_derivs["loss_grad_fn"]
+        loss_fn = loss_fn_and_derivs["loss_fn"]
+        hvp = loss_fn_and_derivs["hvp"]
+
 
 
         # Search direction and line search

@@ -27,6 +27,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import pandas as pd
+import gc
 
 
 
@@ -125,6 +126,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     # Load attractor snapshots and compute attractor size scale
     attractor_snapshots = load_data(kf_opts)
     AS = calc_attractor_size(attractor_snapshots)
+    unused_IC_mask = np.ones(attractor_snapshots.shape[0], dtype=np.bool)
 
     # Draw initial-distance multipliers from a uniform distribution
     opt_init_dists = np.random.uniform(
@@ -220,7 +222,17 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                         # Loop over initial-guess distances (relative to AS)
                         for opt_init_dist in opt_init_dists:
-                            opt_init_dir = os.path.join(PI_root, "cases", f"{opt_init_dist}")
+                            # Choose a guess U_0 at the requested distance from the true IC
+                            state_dist = AS * opt_init_dist
+                            True_IC_dist = jnp.linalg.norm(
+                                attractor_snapshots[unused_IC_mask, :] - U_0.reshape((1, -1)), axis=1
+                            )
+                            IC_idx = jnp.argmin(jnp.abs(True_IC_dist - state_dist))
+                            U_0_guess = attractor_snapshots[
+                                IC_idx, :
+                            ]
+                            init_dist = jnp.linalg.norm(U_0_guess - U_0)/AS
+                            opt_init_dir = os.path.join(PI_root, "cases", f"{init_dist}")
 
                             # Skip if this case directory already exists
                             if os.path.isdir(opt_init_dir):
@@ -229,16 +241,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                             os.makedirs(opt_init_dir)
 
-                            # Choose a guess U_0 at the requested distance from the true IC
-                            state_dist = AS * opt_init_dist
-                            True_IC_dist = jnp.linalg.norm(
-                                attractor_snapshots - U_0.reshape((1, -1)), axis=1
-                            )
-                            U_0_guess = attractor_snapshots[
-                                jnp.argmin(jnp.abs(True_IC_dist - state_dist)), :
-                            ]
                             np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
-
+                            unused_IC_mask[IC_idx] = False
                             # For each optimizer and loss criterion, run a DA case
                             for optimizer in DA_opts.optimizer_list:
                                 opt_method_dir = os.path.join(
@@ -323,7 +327,11 @@ def _run_DA_case(
     """
 
     U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
-    U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn, jax.value_and_grad(loss_fn), div_check, div_free_proj)
+    loss_fn_and_derivs = {
+        "loss_fn": loss_fn,
+        "loss_grad_fn": jax.value_and_grad(loss_fn)
+    }
+    U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn_and_derivs, div_check, div_free_proj)
 
     #elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
     #    return
@@ -354,6 +362,7 @@ def _run_DA_case(
 
         results_df["max_H_eig"] = [max_H_eig]
         results_df["min_H_eig"] = [min_H_eig]
+    
     results_df["final_loss"] = [opt_data.loss_record[-1]]
 
     #saving npy files
@@ -362,6 +371,12 @@ def _run_DA_case(
     n_particles = pIC.shape[0]//4
     post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)
     append_to_parquet(results_df, parquet_path)
+    
+    #cleanup
+    del  loss_fn_and_derivs
+    jax.clear_caches()
+    gc.collect()
+
 
     
     

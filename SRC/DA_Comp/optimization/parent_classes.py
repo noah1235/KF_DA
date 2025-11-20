@@ -40,14 +40,14 @@ class NCSR1_and_BFGS:
         Bk_inv = jnp.array(Bk_inv)
         return Bk_inv
 
-    def opt_loop(self, U_0_DA_fourier, loss_fn, loss_grad_fn, div_check, div_free_proj):
+    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
         min_eig = 1e-8
-        U_0_DA_fourier, opt_data, its = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn, loss_grad_fn, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data, its = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
 
         Bk_inv = self.get_Bk_inv_for_BFGS()
         self.BFGS_opt.set_Bk_inv_init(Bk_inv)
 
-        U_0_DA_fourier, opt_data, its = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn, loss_grad_fn, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data, its = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
 
         return U_0_DA_fourier, opt_data, its
     
@@ -75,17 +75,17 @@ class LS_TR_Opt():
         
         return div_free_proj(x + alpha * p)
     
-    def opt_loop(self, U_0, loss_fn, loss_grad_fn, div_check, div_free_proj):
+    def opt_loop(self, U_0, loss_fn_and_derivs, div_check, div_free_proj):
         opt_data = Opt_Data(self.its)
         self.init_opt_params(U_0.shape[0])
         for i in range(self.its):
             if i == 0:
-                loss, grad = loss_grad_fn(U_0)
+                loss, grad = loss_fn_and_derivs["loss_grad_fn"](U_0)
                 print(f"loss: {loss}")
             loss_prev = loss
             grad_prev = grad
 
-            U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn, loss_grad_fn, div_free_proj)
+            U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj)
             if alpha == 0:
                 if self.print_loss:
                     print(f"optimizer stalled | alpha={alpha}")

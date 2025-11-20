@@ -79,11 +79,11 @@ def main():
             #       grad_prob=0.9, neg_curve_prob=.25, num_hvp_iters=5, print_loss=True
             #       ),
             NCSR1_and_BFGS(
-                NCSR1(its=50, eps_H=1e-6, max_memory=20,
+                NCSR1(its=5, eps_H=1e-6, max_memory=20,
                    cubic_TR=Cubic_TR(rho=30, eta_min=1e-14, eta_0=1, eta_max=1e6),
                    grad_prob=0.9, neg_curve_prob=.1, num_hvp_iters=10, print_loss=True
                    ),
-                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
+                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=4, fallback_opt="eye", print_loss=True),
                 
             )
 
