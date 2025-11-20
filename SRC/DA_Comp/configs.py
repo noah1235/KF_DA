@@ -6,7 +6,7 @@ class KF_Opts:
     n: int
     NDOF: int
     dt: float
-    T: float
+    total_T: float
     min_samp_T: float
     t_skip: float
 

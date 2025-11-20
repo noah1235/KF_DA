@@ -56,7 +56,7 @@ def main():
         n = 4,
         NDOF = 32,
         dt = 1e-2,
-        T = 1e3,
+        total_T=2000,
         min_samp_T=500,
         t_skip=1e-1
 

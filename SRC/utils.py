@@ -156,10 +156,10 @@ def bilinear_sample_periodic(F, x, y, Lx, Ly):
             tx       * ty       * f11)
 
 def load_data(kf_opts: KF_Opts):
-    path = os.path.join(create_results_dir(), "Trjs", "KF_trjs", f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_T={kf_opts.T}_n={kf_opts.n}", "trj.npy")
-    start_idx = int(kf_opts.min_samp_T/kf_opts.dt)
+    #Re=100_NDOF=32_dt=0.01_n=4_sampT=500_total_T=2000
+    path = os.path.join(create_results_dir(), "Trjs", "KF_datasets", f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_n={kf_opts.n}_sampT={kf_opts.min_samp_T}_total_T={kf_opts.total_T}", "dataset.npy")
     skip = int(kf_opts.t_skip / kf_opts.dt)
-    trj = np.load(path)[start_idx::skip, :]
+    trj = np.load(path)[::skip, :]
     return trj
 
 class Specteral_Upsampling:

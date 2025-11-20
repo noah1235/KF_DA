@@ -13,6 +13,7 @@ from SRC.Solver.ploting import plot_vorticity, plot_div, plot_D_vs_time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from jax import config
+from multiprocessing import Pool, cpu_count
 config.update("jax_enable_x64", True)
 
 jax.config.update("jax_default_device", jax.devices("cpu")[0])
@@ -53,6 +54,67 @@ def generate_KF_flow():
     plt.close()
 
     np.save(os.path.join(root, "trj.npy"), trj)
+
+
+def _generate_single_trj(args):
+    """
+    Worker to generate a single trajectory for one initial condition.
+    Returns an array of shape (nsteps, 2 * NDOF**2).
+    """
+    i, NDOF, Re, n, dt, nsteps, sample_steps = args
+
+    rhs = KF_PS_RHS(NDOF, Re, n)
+    L = rhs.L
+    U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=5e-1).reshape(-1)
+    integrator = Time_Stepper(rhs, dt, method="RK4")
+
+    trj = integrator.integrate_scan(U_0, nsteps)  # assume shape (nsteps+1, dim)
+    trj = np.asarray(trj[sample_steps:, :])                  # drop initial state → (nsteps, dim)
+
+    return trj
+
+
+# ---- main dataset generator ----
+def generate_KF_dataset():
+    NDOF = 32
+    Re = 100
+    n  = 4
+    dt = 1e-2
+    T = 1e3
+    T_samp = 500
+    nsteps = int(T / dt)
+    sample_steps = int(T_samp / dt)
+    num_inits = 4
+    n_workers = 2
+
+
+    # Build argument list for workers
+    worker_args = [
+        (i, NDOF, Re, n, dt, nsteps, sample_steps) for i in range(num_inits)
+    ]
+
+    # Run in parallel
+    with Pool(processes=min(num_inits, n_workers)) as pool:
+        trj_list = pool.map(_generate_single_trj, worker_args)
+
+    # Stack trajectories into a single dataset
+    dataset = np.vstack(trj_list)  # shape (num_inits * nsteps, 2 * NDOF**2)
+
+    # Prepare output directory
+    total_snaps = dataset.shape[0]
+    total_T = int(total_snaps * dt)
+    print(dataset.shape)
+
+    root = os.path.join(
+        create_results_dir(),
+        "Trjs",
+        "KF_datasets",
+        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={total_T}"
+    )
+    os.makedirs(root, exist_ok=True)
+
+    np.save(os.path.join(root, "dataset.npy"), dataset)
+    return dataset
 
 def generate_KF_energy_plots():
     NDOF   = 16
@@ -192,4 +254,4 @@ def generate_sample_case_ani():
         anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=10, dpi=300)
 
 if __name__ == "__main__":
-    generate_sample_case_ani()
+    generate_KF_dataset()
