@@ -22,13 +22,6 @@ class L_BK:
     def __len__(self):
         return self.cmem
     
-    def __matmul___dec(self, v: jnp.ndarray):
-        result = jnp.zeros(v.shape[0])
-        for i in range(self.cmem):
-            x = self.Bk_vecs[:, i]
-            result += self.Bk_scalars[i] * x * jnp.dot(x, v)
-        return result
-
     def __matmul__(self, v: jnp.ndarray):
         X = self.Bk_vecs[:, :self.cmem]         # shape (n, cmem)
         alpha = self.Bk_scalars[:self.cmem]     # shape (cmem,)
@@ -100,12 +93,21 @@ class L_BK:
 class L_SR1():
     def __init__(self):
         self.Bk = L_BK()
+    
+    def set_SR1_update_type(self, type):
+        self.SR1_type = type
 
-    def SR1_update(self, U_0_next, U_0, grad_next, grad, N, eps=1e-12):
+    def SR1_update(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
+        
+        if self.SR1_type == "conv":
+            self.SR1_update_conv(U_0_next, U_0, grad_next, grad)
+        elif self.SR1_type == "mod":
+            self.SR1_update_mod(U_0_next, U_0, grad_next, grad, loss_next, loss)
+
+    def SR1_update_conv(self, U_0_next, U_0, grad_next, grad, eps=1e-12):
         s = U_0_next - U_0
         y = grad_next - grad
 
-        #maxed_mem = len(self.Bk) >= self.Bk.max_memory
         maxed_mem = self.Bk.get_num_open_slots() == 0
 
         if maxed_mem:
@@ -123,6 +125,19 @@ class L_SR1():
         
         self.Bk.append(r, 1/denom)
 
+    def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
+        s = U_0_next - U_0
+        y = grad_next - grad
+        theta = 6 * (loss - loss_next) + 3 * jnp.dot(((grad_next - grad)), s)
+        delta = jnp.dot(y, s) + theta - jnp.dot(s, self.Bk @ s)
+        u = y - self.Bk @ s
+        gamma = delta / (jnp.dot(u, s)**2)
+
+        maxed_mem = self.Bk.get_num_open_slots() == 0
+        if maxed_mem:
+            removed_vec, removed_scalar = self.Bk.pop(0)
+
+        self.Bk.append(u, gamma)
 
     
     def Bk_eig_decomp(self, which="LM"):

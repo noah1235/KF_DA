@@ -90,13 +90,18 @@ class BFGS(LS_TR_Opt):
         self.Bk_inv = (I - rho * Sy) @ self.Bk_inv @ (I - rho * Ys) + rho * Ss
 
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
-    name = "NCSR1"
     ls_method = "TR"
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,
                 grad_prob=0.9, neg_curve_prob=.125, num_hvp_iters=5,
+                SR1_type="conv",
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
+        self.set_SR1_update_type(SR1_type)
+        self.name = "NCSR1"
+        if SR1_type == "mod":
+            self.name += "M"
+
         self.eps_H = eps_H
         self._max_memory = max_memory
         self.cubic_TR = cubic_TR
@@ -233,7 +238,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         # Step and new loss/grad
         U_0_next = self.step(U_0, alpha, pk, div_free_proj)
         loss_next, grad_next = loss_grad_fn(U_0_next)
-        self.SR1_update(U_0_next, U_0, grad_next, grad, N)
+        self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
         
         diag_string = f"step type: {step_type} | eta: {self.cubic_TR.eta:.2e}"
 
