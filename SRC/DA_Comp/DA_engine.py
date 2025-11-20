@@ -15,7 +15,7 @@ from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt
 from SRC.DA_Comp.optimization.optax_logic import *
 from create_results_dir import create_results_dir
-from SRC.iterative_methods import max_eig_power_iterations, lanczos_extremal
+from SRC.Solver.ploting import plot_vorticity
 
 # --- Stdlib / third-party imports ---
 import os
@@ -337,6 +337,7 @@ def _run_DA_case(
     U_0_DA = jnp.stack([u, v], axis=0).reshape(-1)
 
     DA_trj = trj_gen_fn(pIC, U_0_DA)
+    init_guess_trj = trj_gen_fn(pIC, vel_part_trans.reshape_flattened_vel(U_0_guess))
 
     if False:
         hvp = build_hvp(loss_fn, U_0_DA_fourier)
@@ -359,7 +360,7 @@ def _run_DA_case(
     np.save(os.path.join(save_dir, "DA_trj.npy"), np.array(DA_trj))
 
     n_particles = pIC.shape[0]//4
-    post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)
+    post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df)
     append_to_parquet(results_df, parquet_path)
 
     

@@ -1,7 +1,6 @@
 import jax.numpy as jnp
-import numpy as np
 from scipy.sparse.linalg import LinearOperator, eigsh
-
+import jax
 class L_BK:
     def __init__(self, max_memory, N):
         self.N = N
@@ -10,7 +9,8 @@ class L_BK:
         self.Bk_vecs = jnp.zeros((N, self.max_memory))
         self.Bk_scalars = jnp.zeros(self.max_memory)
 
-    
+
+    @jax.jit
     def build_Bk(self, Bk_vecs, Bk_scalars):
         n = Bk_vecs.shape[0]
         result = jnp.zeros((n, n))
@@ -22,13 +22,20 @@ class L_BK:
     def __len__(self):
         return self.cmem
     
-    def __matmul__(self, v: jnp.ndarray):
+    def __matmul___dec(self, v: jnp.ndarray):
         result = jnp.zeros(v.shape[0])
         for i in range(self.cmem):
             x = self.Bk_vecs[:, i]
             result += self.Bk_scalars[i] * x * jnp.dot(x, v)
         return result
-    
+
+    def __matmul__(self, v: jnp.ndarray):
+        X = self.Bk_vecs[:, :self.cmem]         # shape (n, cmem)
+        alpha = self.Bk_scalars[:self.cmem]     # shape (cmem,)
+
+        proj = X.T @ v                           # (cmem,)
+        weights = alpha * proj                   # (cmem,)
+        return X @ weights                       # (n,)
     
     def append(self, vec: jnp.ndarray, scalar: any):
         vec = vec.reshape((self.N, -1))
@@ -115,12 +122,17 @@ class L_SR1():
             return
         
         self.Bk.append(r, 1/denom)
+
+
     
-    def Bk_eig_decomp(self, which):
-        #which='LM'
-        A_op = LinearOperator((self.Bk.N, self.Bk.N), matvec=lambda v: self.Bk @ v)
+    def Bk_eig_decomp(self, which="LM"):
+        def matvec(v):
+            v = jnp.asarray(v)
+            return self.Bk @ v
+
+        A_op = LinearOperator((self.Bk.N, self.Bk.N), matvec=matvec)
         Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which=which)
-        return Bk_eigs, Bk_eig_vec
+        return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
 
 
 

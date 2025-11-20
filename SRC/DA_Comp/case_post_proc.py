@@ -5,7 +5,7 @@ import numpy as np
 
 from SRC.Solver.ploting import plot_vorticity
 
-def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df):
+def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df):
     """
     Post-process a DA case:
       - compute per-timestep errors for velocity and particles
@@ -17,6 +17,8 @@ def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt,
 
     DA_part = DA_trj[:, : n_particles * 4]
     DA_vel  = DA_trj[:, n_particles * 4 :]
+
+    init_guess_vel = init_guess_trj[:, n_particles * 4 :]
 
     trj_cos_sim = jnp.vdot(target_vel.reshape(-1), DA_vel.reshape(-1)) / (jnp.linalg.norm(target_vel) * jnp.linalg.norm(DA_vel))
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
@@ -30,10 +32,13 @@ def post_proc_case_main(target_trj, DA_trj, opt_data, n_particles, save_dir, dt,
     plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, save_dir)
 
     #Vorticity plot
-    plot_final_vort(DA_vel, target_vel, omega_fn, save_dir)
+    plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison.png"),
+                   l1="DA final vorticity", l2="Target final vorticity")
+    plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison_init.png"),
+                   l1="DA init final vorticity", l2="Target final vorticity")
     plot_convergence(opt_data, save_dir)
 
-def plot_final_vort(DA_vel, target_vel, omega_fn, save_dir):
+def plot_vort_comp(DA_vel, target_vel, omega_fn, save_path, l1, l2):
     """
     Make a side-by-side vorticity plot at final time for DA vs. target.
 
@@ -57,11 +62,10 @@ def plot_final_vort(DA_vel, target_vel, omega_fn, save_dir):
     out_path : str
         Path to the saved PNG.
     """
-    os.makedirs(save_dir, exist_ok=True)
 
     # Compute final-time vorticity fields
-    omega_T_DA     = omega_fn(DA_vel[-1])
-    omega_T_target = omega_fn(target_vel[-1])
+    omega_T_DA     = omega_fn(DA_vel)
+    omega_T_target = omega_fn(target_vel)
 
 
 
@@ -69,7 +73,6 @@ def plot_final_vort(DA_vel, target_vel, omega_fn, save_dir):
     fig, axes = plt.subplots(1, 2, figsize=(9, 4), constrained_layout=True)
     ax1, ax2 = axes
 
-    # Draw both plots using your helper (assumed signature: (omega, Lx, Ly, cmap, ax))
     _, _, im1, _ = plot_vorticity(omega_T_DA, ax=ax1)
     _, _, im2, _ = plot_vorticity(omega_T_target, ax=ax2)
 
@@ -80,12 +83,11 @@ def plot_final_vort(DA_vel, target_vel, omega_fn, save_dir):
     im2.set_clim(vmin, vmax)
 
     # Titles
-    ax1.set_title("DA final vorticity")
-    ax2.set_title("Target final vorticity")
+    ax1.set_title(l1)
+    ax2.set_title(l2)
 
     # Save
-    out_path = os.path.join(save_dir, "final_vorticity_comparison.png")
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(save_path, dpi=150)
     plt.close(fig)
 
 def compute_cosine_vs_time(A, B, eps=1e-12):

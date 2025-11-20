@@ -1,9 +1,8 @@
 import jax.numpy as jnp
 import jax
 import optax
-import numpy as np
 from jax import lax
-from SRC.iterative_methods import lanczos_tridiagonal, lanczos_2_eig_decomp, lanczos_eigs
+from SRC.iterative_methods import lanczos_eigs
 from scipy.sparse.linalg import cg, LinearOperator
 from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import eigsh
@@ -11,8 +10,6 @@ import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt
 from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK
-
-
 
 class BFGS(LS_TR_Opt):
     name = "BFGS"
@@ -109,10 +106,8 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
             min_eig_idx = jnp.argmin(w)
             max_eig_idx = jnp.argmax(w)
-            max_eig_vec = Q[:, max_eig_idx]
             min_eig_vec = Q[:, min_eig_idx]
             min_eig = w[min_eig_idx]
-            max_eig = w[max_eig_idx]
             if jnp.dot(min_eig_vec, grad) > 0:
                     min_eig_vec = -min_eig_vec
             computed_min_eig = True
@@ -134,13 +129,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         else:
             NCN_min_eig = self.eps_H
-            #reg newton
-            #eigen decomp
-            #A_op = LinearOperator((N, N), matvec=lambda v: self.Bk @ v, dtype=np.float64)
-            #Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which='LM')
-            Bk_eigs, Bk_eig_vec = self.Bk_eig_decomp(which="LM")
-            Bk_eigs = jnp.array(Bk_eigs)
-            Bk_eig_vec = jnp.array(Bk_eig_vec)
+            Bk_eigs, Bk_eig_vec = self.Bk_eig_decomp()
 
             Q = Bk_eig_vec
             Lam_reg = jnp.abs(Bk_eigs)
@@ -150,11 +139,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
 
             null_space_comp = (-grad) - Q @ (Q.T @ -grad)
-            #proj_error = jnp.linalg.norm(null_space_comp)/jnp.linalg.norm(grad)
-            #t = Q.T @ Q
-            #ortho_error = jnp.linalg.norm(t - jnp.eye(t.shape[0]))
-            #print(f"proj error: {proj_error:.4f} | ortho error: {ortho_error:.3e}")
-            
             step_type = "reg_Newton"
             pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
 
@@ -182,6 +166,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         #Jit and define model functions
         loss_grad_fn = jax.jit(loss_grad_fn_base)
         loss_fn = jax.jit(loss_fn_base)
+        
         @jax.jit
         def hvp(x, v):
             return jax.jvp(jax.grad(loss_fn), (x,), (v,))[1]
