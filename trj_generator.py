@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from jax import config
 from multiprocessing import Pool, cpu_count
 config.update("jax_enable_x64", True)
+import multiprocessing as mp
 
 jax.config.update("jax_default_device", jax.devices("cpu")[0])
 # or for GPU:
@@ -84,8 +85,8 @@ def generate_KF_dataset():
     T_samp = 500
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    num_inits = 4
-    n_workers = 2
+    num_inits = 8
+    n_workers = 8
 
 
     # Build argument list for workers
@@ -94,7 +95,8 @@ def generate_KF_dataset():
     ]
 
     # Run in parallel
-    with Pool(processes=min(num_inits, n_workers)) as pool:
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=min(num_inits, ctx.cpu_count())) as pool:
         trj_list = pool.map(_generate_single_trj, worker_args)
 
     # Stack trajectories into a single dataset
