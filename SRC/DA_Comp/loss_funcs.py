@@ -51,10 +51,20 @@ class Loss_fn:
 
 
 class MSE_PP(Loss_fn):
-    def g(self, part_x, part_y, target_part_x, target_part_y, U_flat, trg_U_flat, upsample_factor, i):
-        MSE_x = jnp.mean((part_x - target_part_x)**2)
-        MSE_y = jnp.mean((part_y - target_part_y)**2)
-        return self.t_mask[i] * ((MSE_x + MSE_y)/2) / self.num_frames
+    def g(self, part_x, part_y, target_part_x, target_part_y,
+          U_flat, trg_U_flat, upsample_factor, i):
+
+        # periodic (minimum-image) differences in x and y
+        dx = part_x - target_part_x
+        dy = part_y - target_part_y
+
+        dx = dx - self.L * jnp.round(dx / self.L)
+        dy = dy - self.L * jnp.round(dy / self.L)
+
+        MSE_x = jnp.mean(dx**2)
+        MSE_y = jnp.mean(dy**2)
+
+        return self.t_mask[i] * ((MSE_x + MSE_y) / 2.0) / self.num_frames
 
     def __repr__(self):
         return "PP_MSE"
