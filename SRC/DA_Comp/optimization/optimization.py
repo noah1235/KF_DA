@@ -118,14 +118,14 @@ class PCGBFGS(BFGS):
             return Hv
 
         pk, info = pcg(matvec, self.Bk_inv, -grad, x0=(-self.Bk_inv @ grad), maxiter=self.n_hvp)
-        print(jnp.linalg.norm(matvec(pk) + grad) / jnp.linalg.norm(grad))
+        #print(jnp.linalg.norm(matvec(pk) + grad) / jnp.linalg.norm(grad))
         S = jnp.vstack(S).T
         Y = jnp.vstack(Y).T
         R = S - self.Bk_inv @ Y
     
         self.Bk_inv = self.Bk_inv + R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
 
-        if True:
+        if False:
             for i in range(5):
                 v = S[:, i]
                 Hv = Y[:, i]
