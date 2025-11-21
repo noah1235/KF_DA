@@ -22,12 +22,12 @@ class ArmijoLineSearch:
     def __call__(
         self,
         f,
+        f0,
         x: jnp.ndarray,
         p: jnp.ndarray,
         grad: jnp.ndarray,
     ) -> float:
         alpha  = self.alpha_init
-        f0 = f(x)
         g0 = jnp.dot(grad, p)
 
         for _ in range(self.max_iters):

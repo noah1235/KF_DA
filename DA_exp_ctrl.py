@@ -78,24 +78,23 @@ def main():
             #       grad_prob=0.9, neg_curve_prob=0, num_hvp_iters=5, print_loss=True
             #       ),
 
-            #NCSR1(its=25, eps_H=1e-6, max_memory=20,
-            #       cubic_TR=Cubic_TR(rho=30, eta_min=1e-14, eta_0=1e-2, eta_max=1e6),
-            #       grad_prob=0.9, neg_curve_prob=0, num_hvp_iters=5, SR1_type="mod",
-            #       print_loss=True
-            #       ),
+            #NCSR1(its=5, eps_H=1e-6, max_memory=50,
+            #cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
+            #grad_prob=0.9, neg_curve_prob=0, num_hvp_iters=5, psd_stop=False,
+            #print_loss=True
+            #,
 
             NCSR1_and_BFGS_and_PCGBFGS(
-                   NCSR1(its=50, eps_H=1e-6, max_memory=50,
+                   NCSR1(its=5, eps_H=1e-6, max_memory=50,
                    cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-                   grad_prob=0.9, neg_curve_prob=0, num_hvp_iters=5,
+                   grad_prob=0.9, neg_curve_prob=.25, num_hvp_iters=5, psd_stop=True,
                    print_loss=True
                    ),
-                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, fallback_opt="eye", print_loss=True),
-               PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=20, fallback_opt="eye", print_loss=True),
+                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=3, fallback_opt="eye", print_loss=True),
+               #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
             ),
-
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", use_powell=True, print_loss=True),
+            #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
+            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),

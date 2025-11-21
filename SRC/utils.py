@@ -162,6 +162,10 @@ def load_data(kf_opts: KF_Opts):
     trj = np.load(path)[::skip, :]
     return trj
 
+
+def is_jitted(fn):
+    return hasattr(fn, "lower")
+
 class Specteral_Upsampling:
     @classmethod
     def spectral_upsample_from_hat2d_rfft(cls, U_hat_r, r: int):

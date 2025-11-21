@@ -139,13 +139,15 @@ class L_SR1():
         self.Bk.append(u, gamma)
 
     
-    def Bk_eig_decomp(self, which="LM"):
+    def Bk_eig_decomp(self, which="LM", num_eig=None):
+        if num_eig is None or num_eig > len(self.Bk):
+            num_eig = len(self.Bk)
         def matvec(v):
             v = jnp.asarray(v)
             return self.Bk @ v
 
         A_op = LinearOperator((self.Bk.N, self.Bk.N), matvec=matvec)
-        Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which=which)
+        Bk_eigs, Bk_eig_vec = eigsh(A_op, k=num_eig, which=which)
         return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
 
 class BFGS_Update():

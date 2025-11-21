@@ -12,7 +12,7 @@ from SRC.DA_Comp.case_post_proc import post_proc_case_main
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
-from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt
+from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from SRC.DA_Comp.optimization.optax_logic import *
 from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
@@ -327,11 +327,11 @@ def _run_DA_case(
     """
 
     U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
-    loss_fn_and_derivs = {
-        "loss_fn": loss_fn,
-        "loss_grad_fn": jax.value_and_grad(loss_fn)
-    }
-    U_0_DA_fourier, opt_data, its = optimizer.opt_loop(U_0_guess_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+    loss_fn_and_derivs = Loss_and_Deriv_fns(loss_fn)
+    U_0_DA_fourier, opt_data = optimizer.opt_loop(U_0_guess_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+    print(loss_fn_and_derivs)
+    print(opt_data.loss_evals_record[-1], opt_data.loss_grad_evals_record[-1], opt_data.Hvp_evals_record[-1])
+    print("----")
 
     #elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
     #    return
@@ -363,7 +363,10 @@ def _run_DA_case(
         results_df["max_H_eig"] = [max_H_eig]
         results_df["min_H_eig"] = [min_H_eig]
     
-    results_df["final_loss"] = [opt_data.loss_record[-1]]
+    results_df["loss_record"] = [opt_data.loss_record]
+    results_df["loss_evals_record"] = [opt_data.loss_evals_record]
+    results_df["loss_grad_evals_record"] = [opt_data.loss_grad_evals_record]
+    results_df["Hvp_evals_record"] = [opt_data.Hvp_evals_record]
 
     #saving npy files
     np.save(os.path.join(save_dir, "DA_trj.npy"), np.array(DA_trj))
