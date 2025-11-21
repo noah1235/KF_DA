@@ -89,7 +89,6 @@ class L_BK:
     def get_num_open_slots(self):
         return self.max_memory - self.cmem
 
-
 class L_SR1():
     def __init__(self):
         self.Bk = L_BK()
@@ -149,8 +148,32 @@ class L_SR1():
         Bk_eigs, Bk_eig_vec = eigsh(A_op, k=len(self.Bk), which=which)
         return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
 
+class BFGS_Update():
+    def __init__(self, fallback_opt):
+        if fallback_opt == "eye":
+            self.fallback = self.eye_fallback
+        self.Bk_inv_init = None
 
+    def set_Bk_inv_init(self, mat):
+        self.Bk_inv_init = mat
 
+    @staticmethod
+    def eye_fallback(N):
+        return jnp.eye(N)
+    
+    def init_opt_params(self, N):
+        if self.Bk_inv_init is not None:
+            self.Bk_inv = self.Bk_inv_init
+        else:
+            self.Bk_inv = self.fallback(N)
+
+    def Bk_inv_update(self, ys, sk, yk):
+        I = jnp.eye(yk.shape[0], dtype=self.Bk_inv.dtype)
+        rho = 1.0 / ys
+        Sy = jnp.outer(sk, yk)
+        Ys = jnp.outer(yk, sk)
+        Ss = jnp.outer(sk, sk)
+        self.Bk_inv = (I - rho * Sy) @ self.Bk_inv @ (I - rho * Ys) + rho * Ss
 
 
 class HVP_Update():

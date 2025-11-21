@@ -256,4 +256,4 @@ def generate_sample_case_ani():
         anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=10, dpi=300)
 
 if __name__ == "__main__":
-    generate_KF_dataset()
+    generate_sample_case_ani()

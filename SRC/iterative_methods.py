@@ -3,6 +3,165 @@ from jax import debug
 from jax.scipy.linalg import eigh_tridiagonal
 from jax import lax
 
+def pcg(matvec, M, b, x0=None, maxiter=10, tol=1e-8, eps=1e-12):
+    """
+    Preconditioned Conjugate Gradient in JAX, but using plain Python loops.
+
+    Solves A x ≈ b where:
+      - matvec: function v -> A v   (e.g. Hv)
+      - M: preconditioner (matrix or linear operator), approx A^{-1}
+      - b: RHS
+      - x0: optional initial guess (defaults to zeros)
+      - maxiter: max iterations
+      - tol: stopping tolerance on ||r||
+
+    Returns:
+      x    : approximate solution
+      info : dict with {'num_iter', 'res_norm'}
+    """
+
+    b = jnp.asarray(b)
+    M = jnp.asarray(M)
+
+    if x0 is None:
+        x = jnp.zeros_like(b)
+    else:
+        x = jnp.asarray(x0)
+
+    def apply_M(r):
+        return M @ r
+
+    # Initial residual & search direction
+    r = b - matvec(x)
+    z = apply_M(r)
+    p = z
+
+    rz = jnp.dot(r, z)
+    res_norm = jnp.linalg.norm(r)
+
+    num_iter = 0
+
+    for k in range(maxiter):
+        # stopping criterion
+        if res_norm <= tol:
+            break
+
+        Ap = matvec(p)
+        pAp = jnp.dot(p, Ap)
+
+        alpha = rz / (pAp + eps)
+
+        x = x + alpha * p
+        r = r - alpha * Ap
+
+        z = apply_M(r)
+        rz_new = jnp.dot(r, z)
+
+        beta = rz_new / (rz + eps)
+        p = z + beta * p
+
+        rz = rz_new
+        res_norm = jnp.linalg.norm(r)
+        num_iter = k + 1
+
+    info = {
+        "num_iter": num_iter,
+        "res_norm": res_norm,
+    }
+    return x, info
+
+
+def pcg_dec(matvec, M, b, x0=None, maxiter=10, tol=1e-8, eps=1e-12):
+    """
+    Preconditioned Conjugate Gradient in pure JAX.
+
+    Solves A x ≈ b where:
+      - matvec: function v -> A v
+      - M: preconditioner (matrix), approx A^{-1}
+      - b: RHS
+      - x0: optional initial guess (defaults to zeros)
+      - maxiter: max iterations
+      - tol: stopping tolerance on ||r||
+
+    Returns:
+      x        : approximate solution
+      info     : dict with {'num_iter', 'res_norm'}
+      V_hist   : array of all p-vectors used, shape (maxiter, n)
+      HV_hist  : array of all A p-vectors, shape (maxiter, n)
+                 (use info['num_iter'] to slice the valid rows)
+    """
+
+    if x0 is None:
+        x0 = jnp.zeros_like(b)
+
+    def mv(v):
+        return matvec(v)
+
+    def apply_M(r):
+        # M is Bk_inv in your case
+        return M @ r
+
+    # Initial residual & search direction
+    x0 = jnp.asarray(x0)
+    b  = jnp.asarray(b)
+
+    r0 = b - mv(x0)
+    z0 = apply_M(r0)
+    p0 = z0
+
+    rz0 = jnp.dot(r0, z0)
+    res0 = jnp.linalg.norm(r0)
+
+    n = b.size
+    # histories: (maxiter, n). We'll fill up to num_iter.
+    V0  = jnp.zeros((maxiter, n))
+    HV0 = jnp.zeros((maxiter, n))
+
+    # State: (iter, x, r, z, p, rz, res_norm, V_hist, HV_hist)
+    state0 = (jnp.array(0, dtype=jnp.int32),
+              x0, r0, z0, p0, rz0, res0,
+              V0, HV0)
+
+    def cond_fun(state):
+        i, x, r, z, p, rz, res_norm, V_hist, HV_hist = state
+        return jnp.logical_and(i < maxiter, res_norm > tol)
+
+    def body_fun(state):
+        i, x, r, z, p, rz, res_norm, V_hist, HV_hist = state
+
+        Ap = mv(p)
+
+        # Store current v (=p) and Hv (=Ap)
+        V_hist  = V_hist.at[i].set(p)
+        HV_hist = HV_hist.at[i].set(Ap)
+
+        pAp   = jnp.dot(p, Ap)
+        alpha = rz / (pAp + eps)
+
+        x_new = x + alpha * p
+        r_new = r - alpha * Ap
+
+        z_new  = apply_M(r_new)
+        rz_new = jnp.dot(r_new, z_new)
+
+        beta  = rz_new / (rz + eps)
+        p_new = z_new + beta * p
+
+        res_new = jnp.linalg.norm(r_new)
+        i_new   = i + 1
+
+        return (i_new, x_new, r_new, z_new, p_new, rz_new, res_new,
+                V_hist, HV_hist)
+
+    iters, x_final, r_final, z_final, p_final, rz_final, res_final, \
+        V_hist, HV_hist = lax.while_loop(cond_fun, body_fun, state0)
+
+    info = {
+        "num_iter": iters,
+        "res_norm": res_final,
+    }
+    return x_final, info, V_hist, HV_hist
+
 def lanczos_eigs(matvec, n, m, v0=None, tol=1e-12, dtype=jnp.float64):
     """
     Lanczos with m steps for a symmetric operator A (given by matvec).

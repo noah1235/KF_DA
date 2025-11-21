@@ -2,42 +2,29 @@ import jax.numpy as jnp
 import jax
 import optax
 from jax import lax
-from SRC.iterative_methods import lanczos_eigs
+from SRC.iterative_methods import lanczos_eigs, pcg
 from scipy.sparse.linalg import cg, LinearOperator
 from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import eigsh
 import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt
 from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
-from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK
+from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, BFGS_Update
+import numpy as np
 
 def is_jitted(fn):
     return hasattr(fn, "lower")
 
-class BFGS(LS_TR_Opt):
+
+class BFGS(LS_TR_Opt, BFGS_Update):
     name = "BFGS"
     def __init__(self, ls, its, fallback_opt, print_loss=False):
+        BFGS_Update.__init__(self, fallback_opt)
         self.ls = ls
         self.ls_method = ls.name
         self.its = its
         self.print_loss = print_loss
 
-        if fallback_opt == "eye":
-            self.fallback = self.eye_fallback
-        self.Bk_inv_init = None
-
-    def set_Bk_inv_init(self, mat):
-        self.Bk_inv_init = mat
-
-    @staticmethod
-    def eye_fallback(N):
-        return jnp.eye(N)
-    
-    def init_opt_params(self, N):
-        if self.Bk_inv_init is not None:
-            self.Bk_inv = self.Bk_inv_init
-        else:
-            self.Bk_inv = self.fallback(N)
 
     def opt_loop(self, U_0, loss_fn_and_derivs, div_check, div_free_proj):
         if not is_jitted(loss_fn_and_derivs["loss_fn"]):
@@ -81,14 +68,82 @@ class BFGS(LS_TR_Opt):
         else:
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {False}"
 
-    def Bk_inv_update(self, ys, sk, yk):
-        I = jnp.eye(yk.shape[0], dtype=self.Bk_inv.dtype)
-        rho = 1.0 / ys
-        Sy = jnp.outer(sk, yk)
-        Ys = jnp.outer(yk, sk)
-        Ss = jnp.outer(sk, sk)
-        self.Bk_inv = (I - rho * Sy) @ self.Bk_inv @ (I - rho * Ys) + rho * Ss
 
+class PCGBFGS(BFGS):
+    def __init__(self, ls, its, fallback_opt, print_loss=False):
+        super().__init__(ls, its, fallback_opt, print_loss)
+        self.n_hvp = 5
+        self.pinv_cond = 1e-8
+
+
+    def opt_loop(self, U_0, loss_fn_and_derivs, div_check, div_free_proj):
+        loss_fn = loss_fn_and_derivs["loss_fn"]
+        
+        @jax.jit
+        def hvp(x, v):
+            return jax.jvp(jax.grad(loss_fn), (x,), (v,))[1]
+        if not is_jitted(loss_fn_and_derivs["loss_fn"]):
+            loss_fn_and_derivs["loss_fn"] = jax.jit(loss_fn_and_derivs["loss_fn"])
+        if not is_jitted(loss_fn_and_derivs["loss_grad_fn"]):
+            loss_fn_and_derivs["loss_grad_fn"] = jax.jit(loss_fn_and_derivs["loss_grad_fn"])
+        loss_fn_and_derivs["hvp"] = hvp
+
+        return super().opt_loop(
+            U_0, loss_fn_and_derivs, div_check, div_free_proj
+        )
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, eps=1e-12):
+        loss_fn = loss_fn_and_derivs["loss_fn"]
+        loss_grad_fn = loss_fn_and_derivs["loss_grad_fn"]
+        hvp = loss_fn_and_derivs["hvp"]
+
+        def jit_block(U_0_next):
+            # Step and new loss/grad
+            loss_next, grad_next = loss_grad_fn(U_0_next)
+
+            # Quasi-Newton pair
+            sk = U_0_next - U_0
+            yk = grad_next - grad
+
+            # Curvature
+            ys = jnp.vdot(yk, sk).real
+            return loss_next, grad_next, ys, sk, yk
+        
+        S = []
+        Y = []
+
+        def matvec(v):
+            S.append(v)
+            Hv = hvp(U_0, v)
+            Y.append(Hv)
+            return Hv
+
+        pk, info = pcg(matvec, self.Bk_inv, -grad, x0=(-self.Bk_inv @ grad), maxiter=self.n_hvp)
+        print(jnp.linalg.norm(matvec(pk) + grad) / jnp.linalg.norm(grad))
+        S = jnp.vstack(S).T
+        Y = jnp.vstack(Y).T
+        R = S - self.Bk_inv @ Y
+    
+        self.Bk_inv = self.Bk_inv + R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
+
+        if True:
+            for i in range(5):
+                v = S[:, i]
+                Hv = Y[:, i]
+                print(jnp.linalg.norm(self.Bk_inv @ Hv - v) / jnp.linalg.norm(v), jnp.linalg.norm(v))
+                print("-----")
+
+        alpha = self.ls(loss_fn, U_0, pk, grad)
+        U_0_next = self.step(U_0, alpha, pk, div_free_proj)
+        alpha_pk = pk * alpha  # return value
+        loss_next, grad_next, ys, sk, yk = jit_block(U_0_next)
+
+        if ys > eps:
+            self.Bk_inv_update(ys, sk, yk)
+            return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {True}"
+
+        else:
+            return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {False}"
+        
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     ls_method = "TR"
     def __init__(self, its, eps_H, max_memory,
@@ -113,7 +168,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         self.num_hvp_iters = num_hvp_iters
 
-    
     def second_order_logic(self, grad, hvp, U_0, div_free_proj):
         N = U_0.shape[0]
         computed_min_eig = False
@@ -244,4 +298,41 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         return U_0_next, loss_next, grad_next, alpha, alpha_pk, diag_string
         
+class NCSR1_and_BFGS_and_PCGBFGS:
+    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS, PCGBFGS_opt: PCGBFGS):
+        self.NCSR1_opt = NCSR1_opt
+        self.BFGS_opt = BFGS_opt
+        self.PCGBFGS_opt = PCGBFGS_opt
+
+    def get_Bk_inv_for_BFGS(self):
+        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk_eig_decomp(which="LM")
+        n = self.NCSR1_opt.Bk.N        
+        k = Bk_eig_vec.shape[1]
+        min_eig = 1e-6
+        Bk_eigs_clipped = np.maximum(Bk_eigs, min_eig)
+        pad = np.full(n - k, min_eig, dtype=Bk_eigs.dtype)
+        Bk_eigs_full = np.concatenate([Bk_eigs_clipped, pad], axis=0)
+        U, _, _ = np.linalg.svd(Bk_eig_vec, full_matrices=True)
+        Q_perp = U[:, k:]
+        Bk_eig_vec_full = np.concatenate([Bk_eig_vec, Q_perp], axis=1)
+
+        Bk_inv = (Bk_eig_vec_full * (1/Bk_eigs_full)) @ Bk_eig_vec_full.T
+        Bk_inv = 0.5 * (Bk_inv + Bk_inv.T)
+        Bk_inv = jnp.array(Bk_inv)
+        return Bk_inv
+
+    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
+        U_0_DA_fourier, opt_data, its = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+
+        Bk_inv = self.get_Bk_inv_for_BFGS()
+        self.BFGS_opt.set_Bk_inv_init(Bk_inv)
+        U_0_DA_fourier, opt_data, its = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+
+        self.PCGBFGS_opt.set_Bk_inv_init(self.BFGS_opt.Bk_inv)
+        U_0_DA_fourier, opt_data, its = self.PCGBFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+
+        return U_0_DA_fourier, opt_data, its
+    
+    def __repr__(self):
+        return f"{self.NCSR1_opt}__{self.BFGS_opt}__{self.PCGBFGS_opt}"
 
