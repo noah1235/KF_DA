@@ -176,6 +176,8 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             if self.psd_stop:
                 if iter >= (self.min_its-1) and min_eig > 0:
                     self.num_pos_min_eigs += 1
+                else:
+                    self.num_pos_min_eigs = 0
 
 
             ###
