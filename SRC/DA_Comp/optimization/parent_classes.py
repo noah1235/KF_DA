@@ -118,12 +118,12 @@ class LS_TR_Opt():
             grad_prev = grad
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals
             Hvp_evals_prev = loss_fn_and_derivs.Hvp_evals
-            
+
             #last iteration
             if i == (self.its-1):
-                U_0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, last_iteration=True)
+                U_0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, i, last_iteration=True)
             else:
-                U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, last_iteration=False)
+                U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, i, last_iteration=False)
 
             if alpha == 0:
                 if self.print_loss:

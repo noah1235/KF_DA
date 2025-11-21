@@ -24,7 +24,7 @@ class BFGS(LS_TR_Opt, BFGS_Update):
         self.print_loss = print_loss
 
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, last_iteration, eps=1e-12):
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
 
@@ -67,7 +67,7 @@ class PCGBFGS(BFGS):
         self.n_hvp = n_hvp
         self.pinv_cond = 1e-8
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, last_iteration, eps=1e-12):
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
         hvp = loss_fn_and_derivs.Hvp_fn
@@ -128,7 +128,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,
                 grad_prob=0.9, neg_curve_prob=.125, num_hvp_iters=5,
-                SR1_type="conv", psd_stop=False,
+                SR1_type="conv", psd_stop_crit=None,
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
         self.set_SR1_update_type(SR1_type)
@@ -146,10 +146,15 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.neg_curve_prob = neg_curve_prob
 
         self.num_hvp_iters = num_hvp_iters
-        self.psd_stop = psd_stop
-        self.num_pos_min_eigs = 0
+        
+        self.psd_stop = False
+        if psd_stop_crit is not None:
+            self.psd_stop = True
+            self.min_its, self.num_pos_eigs_crit, self.min_loss_crit = psd_stop_crit
+            self.num_pos_min_eigs = 0
+        
 
-    def second_order_logic(self, grad, hvp, U_0, div_free_proj):
+    def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
         N = U_0.shape[0]
     
         computed_min_eig = False
@@ -167,8 +172,11 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             if jnp.dot(min_eig_vec, grad) > 0:
                     min_eig_vec = -min_eig_vec
             computed_min_eig = True
-            if min_eig > 0:
-                self.num_pos_min_eigs += 1
+            
+            if self.psd_stop:
+                if iter >= (self.min_its-1) and min_eig > 0:
+                    self.num_pos_min_eigs += 1
+
 
             ###
             if False:
@@ -218,7 +226,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.current_memory = 0
         self.cubic_TR.init_opt()
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, last_iteration):
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
         N = U_0.shape[0]
 
         loss_fn = loss_fn_and_derivs.loss_fn
@@ -244,7 +252,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         #second order methods
         else:                
-            pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj)
+            pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
 
         if step_type == "grad":
             pTHp = gTHg
@@ -269,7 +277,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
             
 
-            if self.psd_stop and self.num_pos_min_eigs >= 1:
+            if self.psd_stop and (self.num_pos_min_eigs >= self.num_pos_eigs_crit) and (loss <= self.min_loss_crit):
                 print("psd stopping")
                 alpha = 0
 
