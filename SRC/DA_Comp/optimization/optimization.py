@@ -2,7 +2,7 @@ import jax.numpy as jnp
 import jax
 import optax
 from jax import lax
-from SRC.iterative_methods import lanczos_eigs, pcg
+from SRC.iterative_methods import lanczos_eigs, pcg_curve_detection
 from scipy.sparse.linalg import cg, LinearOperator
 from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import eigsh
@@ -128,7 +128,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,
                 grad_prob=0.9, neg_curve_prob=.125, num_hvp_iters=5,
-                SR1_type="conv", psd_stop_crit=None,
+                SR1_type="conv", psd_crit=None,
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
         self.set_SR1_update_type(SR1_type)
@@ -147,14 +147,14 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         self.num_hvp_iters = num_hvp_iters
         
-        self.psd_stop = False
-        if psd_stop_crit is not None:
-            self.psd_stop = True
-            self.min_its, self.num_pos_eigs_crit, self.min_loss_crit = psd_stop_crit
-            self.num_pos_min_eigs = 0
-        
 
-    def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
+        if psd_crit is not None:
+            #psd decision can be: early stopping, no negative curvature, nothing
+            self.min_its, self.num_pos_eigs_crit, self.min_loss_crit, self.psd_decision = psd_crit
+            self.num_pos_min_eigs = 0
+
+
+    def second_order_logic_backup(self, grad, hvp, U_0, div_free_proj, iter):
         N = U_0.shape[0]
     
         computed_min_eig = False
@@ -173,11 +173,10 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
                     min_eig_vec = -min_eig_vec
             computed_min_eig = True
             
-            if self.psd_stop:
-                if iter >= (self.min_its-1) and min_eig > 0:
-                    self.num_pos_min_eigs += 1
-                else:
-                    self.num_pos_min_eigs = 0
+            if iter >= (self.min_its-1) and min_eig > 0:
+                self.num_pos_min_eigs += 1
+            else:
+                self.num_pos_min_eigs = 0
 
 
             ###
@@ -194,6 +193,27 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if computed_min_eig and min_eig < -self.eps_H:
             pk = min_eig_vec
             step_type = "neg_curve"
+        
+        elif computed_min_eig and (min_eig > 0):
+            print("SR1 PCG")
+            step_type = "PCG"
+            v_array = []
+            vTAv_array = []
+
+            def matvec(v):
+                v_array.append(v)
+                Hv = hvp(U_0, v)
+                vTAv_array.append(jnp.dot(v, Hv))
+                return Hv
+            M = self.Bk.build_Bk()
+            M = jnp.linalg.pinv(M)
+            pk, info = pcg(matvec, M, -grad, x0=(-M @ grad), maxiter=10)
+            #print(jnp.linalg.norm(matvec(pk) + grad) / jnp.linalg.norm(grad))
+            v_array = jnp.vstack(v_array).T
+            vTAv_array = jnp.array(vTAv_array)
+            print(v_array.shape, vTAv_array.shape)
+
+            self.HVP_Bk_update(vTAv_array, v_array)
 
         else:
             NCN_min_eig = self.eps_H
@@ -217,6 +237,84 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         return pk, step_type
 
+
+
+    def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
+        N = U_0.shape[0]
+        k = 4
+        tried_PCG = False
+        step_type = "SR1_reg"
+        if iter % k == 0:
+            tried_PCG = True
+            v_array = []
+            vTAv_array = []
+
+            def matvec(v):
+                v_array.append(v)
+                Hv = hvp(U_0, v)
+                vTAv_array.append(jnp.dot(v, Hv))
+                return Hv
+            if k == 0:
+                M = jnp.eye(N)
+            else:
+                M = jnp.linalg.pinv(self.Bk.build_Bk())
+            
+            result, flag = pcg_curve_detection(matvec, M, -grad, max_iters=20)
+            v_array = jnp.vstack(v_array).T
+            vTAv_array = jnp.array(vTAv_array)
+            self.HVP_Bk_update(vTAv_array, v_array)
+
+            if flag == "indef":
+                v_nc, vHv = result
+                if vHv < -self.eps_H:
+                    step_type = "neg_curve"
+                    if jnp.dot(v_nc, grad) > 0:
+                        pk = -v_nc
+                    else:
+                        pk = v_nc
+            else:
+                step_type = "PCG"
+                pk = result
+                #PCG error
+                res = -grad - hvp(U_0, pk)
+                print(jnp.linalg.norm(res) / jnp.linalg.norm(grad))
+                
+
+
+            ###
+            if False:
+                print("-------")
+                for i in range(v_array.shape[1]):
+                    xi = v_array[:, i]
+                    t = jnp.dot(xi, self.Bk @ xi)
+                    print(t, vTAv_array[i])
+
+                print("------")
+            ###
+
+        if tried_PCG or (step_type == "SR1_reg"):
+            NCN_min_eig = self.eps_H
+            Bk_eigs = jnp.array([self.Bk.Bk_scalars[0]])
+            Bk_eig_vec = self.Bk.Bk_vecs[:, 0].reshape((-1, 1))
+
+            Q = Bk_eig_vec
+            Lam_reg = jnp.abs(Bk_eigs)
+            idx = jnp.argsort(Lam_reg)[-self.current_memory:][::-1]
+            Lam_reg = Lam_reg[idx]
+            Q = Bk_eig_vec[:, idx]
+            Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
+
+            null_space_comp = (-grad) - Q @ (Q.T @ -grad)
+            pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
+
+        pk = div_free_proj(pk)
+
+        if jnp.any(jnp.isnan(pk)):
+            pk = -grad
+
+        return pk, step_type
+
+
     @staticmethod
     def check_eig(hvp, x, v):
         vTHv = jnp.dot(v, hvp(x, v))
@@ -235,20 +333,19 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
         hvp = loss_fn_and_derivs.Hvp_fn
 
+        if iter == 0:
+            grad_norm = jnp.linalg.norm(grad)
+            gTHg = jnp.dot(grad, hvp(U_0, grad))
+            Rk = gTHg / grad_norm**2
+            self.HVP_Bk_update(jnp.array([gTHg]), grad.reshape((-1, 1)))
+            er = jnp.linalg.norm( jnp.dot(grad, self.Bk @ grad))
+            print(f"er: {er}")
 
-
-        # Search direction and line search
-        grad_norm = jnp.linalg.norm(grad)
-        gTHg = jnp.dot(grad, hvp(U_0, grad))
-        Rk = gTHg / grad_norm**2
-        self.HVP_Bk_update(jnp.array([gTHg]), grad.reshape((-1, 1)))
-        step_type = "none"
-
-        if ((Rk < -self.eps_H) and (random.random() < self.grad_prob)):
+        if False and ((Rk < -self.eps_H) and (random.random() < self.grad_prob)):
             pk = -grad
             step_type = "grad"
 
-        elif Rk >= -self.eps_H and Rk <= self.eps_H and (random.random() < self.grad_prob):
+        elif False and Rk >= -self.eps_H and Rk <= self.eps_H and (random.random() < self.grad_prob):
             pk = -grad
             step_type = "grad"
 
@@ -256,22 +353,15 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         else:                
             pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
 
-        if step_type == "grad":
-            pTHp = gTHg
-        else:
-            if False:
-                pTHp = jnp.dot(pk, hvp(U_0, pk))
-                self.HVP_Bk_update(jnp.array([pTHp]), pk.reshape((-1, 1)))
-                #pTHp_approx = jnp.dot(pk, self.Bk_mat_vec(Bk_vecs, Bk_scalars, pk, self.current_memory))
-            else:
-                pTHp = jnp.dot(pk, self.Bk @ pk)
-        
+
+        pTHp = jnp.dot(pk, self.Bk @ pk)
         alpha = self.cubic_TR.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
         alpha_pk = pk * alpha
 
         # Step and new loss/grad
         U_0_next = self.step(U_0, alpha, pk, div_free_proj)
         diag_string = f"step type: {step_type} | eta: {self.cubic_TR.eta:.2e}"
+        
         if last_iteration:
             return U_0_next, np.nan, np.nan, alpha, alpha_pk, diag_string
         else:
@@ -279,9 +369,13 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
             
 
-            if self.psd_stop and (self.num_pos_min_eigs >= self.num_pos_eigs_crit) and (loss <= self.min_loss_crit):
-                print("psd stopping")
-                alpha = 0
+            if (self.num_pos_min_eigs >= self.num_pos_eigs_crit) and (loss <= self.min_loss_crit):
+                if self.psd_decision == "early_stop":
+                    print("psd stopping")
+                    alpha = 0
+                elif self.psd_decision == "no_neg":
+                    self.neg_curve_prob = 0
+                    print("psd: no neg curv")
 
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, diag_string
         

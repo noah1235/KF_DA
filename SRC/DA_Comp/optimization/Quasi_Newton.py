@@ -10,13 +10,11 @@ class L_BK:
         self.Bk_scalars = jnp.zeros(self.max_memory)
 
 
-    @jax.jit
-    def build_Bk(self, Bk_vecs, Bk_scalars):
-        n = Bk_vecs.shape[0]
-        result = jnp.zeros((n, n))
+    def build_Bk(self):
+        result = jnp.zeros((self.N, self.N))
         for i in range(self.cmem):
-            x = Bk_vecs[:, i]
-            result += jnp.outer(x, x) * Bk_scalars[i]
+            x = self.Bk_vecs[:, i]
+            result += jnp.outer(x, x) * self.Bk_scalars[i]
         return result
     
     def __len__(self):
@@ -159,6 +157,7 @@ class BFGS_Update():
     def set_Bk_inv_init(self, mat):
         self.Bk_inv_init = mat
 
+
     @staticmethod
     def eye_fallback(N):
         return jnp.eye(N)
@@ -177,12 +176,11 @@ class BFGS_Update():
         Ss = jnp.outer(sk, sk)
         self.Bk_inv = (I - rho * Sy) @ self.Bk_inv @ (I - rho * Ys) + rho * Ss
 
-
 class HVP_Update():
     def __init__(self):
         self.Bk = L_BK()
 
-    def linear_dep_check(self, v_array, vTAv_array, cos_tol=.97):
+    def linear_dep_check(self, v_array, vTAv_array, cos_tol=.99):
         n_new = vTAv_array.shape[0]
 
         for i in range(n_new):
@@ -202,7 +200,7 @@ class HVP_Update():
         return v_array, vTAv_array
 
 
-    def HVP_Bk_update(self, vTAv_array, v_array):
+    def HVP_Bk_update_dec(self, vTAv_array, v_array):
         """
         Insert n_new_vecs columns (xi) with scalars (-mu) into limited-memory buffers.
 
@@ -240,3 +238,77 @@ class HVP_Update():
             xi = v_array[:, i]
             mu = jnp.dot(xi, self.Bk @ xi) - vTAv_array[i]
             self.Bk.append(xi, -mu)
+
+
+    def HVP_Bk_update(self, vTAv_array, v_array):
+        """
+        Insert n_new_vecs columns (x_i) with scalars (-mu_i) into limited-memory buffers,
+        enforcing x_i^T H_new x_i = vTAv_array[i] in the Frobenius-minimal sense.
+
+        Args
+        ----
+        vTAv_array : () or (m,)      # y_i = desired quadratic forms x_i^T A x_i
+        v_array    : (N,) or (N, m)  # columns are x_i
+        """
+        # --- Normalize shapes so we always have (N, m) and (m,) ---
+
+        # Ensure vTAv_array is 1D (m,)
+        vTAv_array = jnp.atleast_1d(vTAv_array)
+
+        # Ensure v_array is 2D with shape (N, m)
+        if v_array.ndim == 1:
+            # (N,) -> (N, 1)
+            v_array = v_array[:, None]
+
+        N = self.Bk.N
+        if v_array.shape[0] != N:
+            raise ValueError(f"New vecs must have dimension N={N}, got {v_array.shape[0]}")
+
+        n_new = vTAv_array.shape[0]
+        if v_array.shape[1] != n_new:
+            raise ValueError(
+                f"Mismatch: v_array has {v_array.shape[1]} columns but "
+                f"vTAv_array has length {n_new}"
+            )
+
+        # Optional: linear independence / sanity check
+        self.linear_dep_check(v_array, vTAv_array)
+
+        # Handle limited-memory buffer
+        n_free = self.Bk.get_num_open_slots()
+        if n_free < n_new:
+            n_del = n_new - n_free
+            self.Bk.evict_oldest(n_del)
+
+        # --- 1. Build Gram matrix G_{ij} = (x_i^T x_j)^2 ---
+        # VTV[i,j] = x_i^T x_j
+        VTV = v_array.T @ v_array           # shape (m, m)
+        G = VTV * VTV                       # elementwise square → (x_i^T x_j)^2
+
+        # --- 2. Build b_j = x_j^T H0 x_j - y_j ---
+
+        def quad_form(x):
+            Hx = self.Bk @ x                # H0 x
+            return jnp.dot(x, Hx)           # x^T H0 x
+
+        # Works for both m=1 and m>1
+        b = jnp.stack(
+            [quad_form(v_array[:, j]) - vTAv_array[j] for j in range(n_new)],
+            axis=0
+        )  # shape (m,)
+
+        # --- 3. Solve G mu = b (small m×m system) ---
+        if n_new == 1:
+            # Scalar case: G is 1×1, b is scalar -> avoid full solve
+            # G[0,0] = (x^T x)^2
+            denom = G[0, 0]
+            # Add tiny regularization if you’re paranoid:
+            # denom = denom + 1e-12
+            mu = jnp.array([b[0] / denom])
+        else:
+            mu = jnp.linalg.solve(G, b)   # shape (m,)
+
+        # --- 4. Apply update: H* = H0 - sum_i mu_i x_i x_i^T ---
+        for j in range(n_new):
+            xj = v_array[:, j]
+            self.Bk.append(xj, -mu[j])

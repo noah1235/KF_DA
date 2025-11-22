@@ -3,7 +3,84 @@ from jax import debug
 from jax.scipy.linalg import eigh_tridiagonal
 from jax import lax
 
-def pcg(matvec, M, b, x0=None, maxiter=10, tol=1e-8, eps=1e-12):
+def pcg_curve_detection(
+    matvec,        # v -> H v
+    M_inv,         # v -> M^{-1} v   (can be identity)
+    b,             # right-hand side (usually -grad)
+    max_iters=50,
+    tol=1e-8,
+):
+    """
+    Preconditioned Conjugate Gradient with negative curvature detection.
+
+    If negative curvature is detected (d^T H d <= 0 for some search
+    direction d), returns the direction among all tested directions
+    with the *most negative* x^T H x, optionally scaled to lie in the
+    trust region if delta is not None.
+
+    Returns:
+        p    : approximate solution or NC direction
+        info : dict with {"flag", "k", "hvp"}
+    """
+
+    # Initial guess p = 0
+    p = jnp.zeros_like(b)
+
+    r = b.copy()
+    z = M_inv @ r
+    d = -z
+    rz_old = jnp.dot(r, z)
+
+    hvp_count = 0
+
+    # Store all tested directions and their curvatures d^T H d
+    dirs = []
+    curvs = []
+
+    for k in range(max_iters):
+        Hd = matvec(d)
+        hvp_count += 1
+
+        dHd = jnp.dot(d, Hd)
+
+        # Record this direction + curvature
+        dirs.append(d)
+        curvs.append(dHd)
+
+        # ------------ negative curvature handling ------------
+        if dHd <= 1e-10:
+            # Pick the direction with the most negative curvature
+            curvs_arr = jnp.array(curvs)
+            idx = int(jnp.argmin(curvs_arr))   # most negative x^T H x
+            v_nc = dirs[idx]
+
+            return (v_nc, curvs_arr[idx]), "indef"
+
+        # Standard PCG update
+        alpha = rz_old / dHd
+        p_new = p + alpha * d
+        r_new = r + alpha * Hd
+
+        # Convergence check
+        if jnp.linalg.norm(r_new) < tol:
+            return p_new, "converged"
+
+        z_new = M_inv @ r_new
+        rz_new = jnp.dot(r_new, z_new)
+        beta = rz_new / rz_old
+
+        d = -z_new + beta * d
+
+        # Shift iterates
+        p, r, z = p_new, r_new, z_new
+        rz_old = rz_new
+
+    # If we hit max iters with no NC and no convergence, just return p
+    return p, "max_iter"
+
+
+
+def pcg_dec(matvec, M, b, x0=None, maxiter=10, tol=1e-8, eps=1e-12):
     """
     Preconditioned Conjugate Gradient in JAX, but using plain Python loops.
 

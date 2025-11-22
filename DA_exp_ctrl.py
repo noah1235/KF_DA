@@ -55,20 +55,20 @@ def main():
         n = 4,
         NDOF = 32,
         dt = 1e-2,
-        total_T=2000,
+        total_T=4000,
         min_samp_T=500,
         t_skip=1e-1
 
     )
     DA_opts = DA_Opts(
-        n_particles_list=[100],
+        n_particles_list=[40],
         sampling_period_list=[.1],
         part_opts=Particle_Opts(St=0, beta=0),
         num_particle_inits=1,
-        num_opt_inits=1,
+        num_opt_inits=10,
         num_seeds=1,
-        int_pert_range=(.4, .6),
-        T_list=[1],
+        int_pert_range=(.1, 1),
+        T_list=[1.5],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
@@ -84,17 +84,23 @@ def main():
             #print_loss=True
             #,
 
-            NCSR1_and_BFGS_and_PCGBFGS(
-                   NCSR1(its=100, eps_H=1e-6, max_memory=50,
-                   cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-                   grad_prob=0.9, neg_curve_prob=.1, num_hvp_iters=5, psd_stop_crit=(25, 2, 5e-2),
-                   print_loss=True
-                   ),
-                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=3, fallback_opt="eye", print_loss=True),
-               #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
+            #NCSR1_and_BFGS_and_PCGBFGS(
+            #       NCSR1(its=100, eps_H=1e-6, max_memory=50,
+            #       cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
+            #       grad_prob=0.9, neg_curve_prob=.2, num_hvp_iters=3, psd_crit=(20, 3, .01, "early_stop"),
+            #       print_loss=True
+            #       ),
+            #    BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=200, fallback_opt="eye", print_loss=True),
+               #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, n_hvp=10, fallback_opt="eye", print_loss=True),
+            #),
+
+            NCSR1(its=150, eps_H=1e-6, max_memory=200,
+            cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
+            grad_prob=0.9, neg_curve_prob=.2, num_hvp_iters=3, psd_crit=(20, 3, .01, "nothing"),
+            print_loss=True
             ),
             #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
-            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, fallback_opt="eye", print_loss=True),
+            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),
