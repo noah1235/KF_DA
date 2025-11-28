@@ -2,18 +2,22 @@ import jax.numpy as jnp
 import jax
 import numpy as np
 import functools
-
-
+from SRC.DA_Comp.adjoint import Adjoint_Solver
+from SRC.DA_Comp.loss_funcs import create_loss_fn
+from SRC.utils import build_div_free_proj
 
 class Loss_and_Deriv_fns:
-    def __init__(self, loss_fn_base):
+    def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
+        loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, vel_part_trans)
+        adj_transform = build_div_free_proj(stepper, vel_part_trans)
+
         loss_grad_fn_base = jax.value_and_grad(loss_fn_base)
-        def Hvp_base(x, v):
-            return jax.jvp(jax.grad(loss_fn_base), (x,), (v,))[1]
+        self.adj_solver = Adjoint_Solver(pIC, loss_crit, target_trj, stepper, adj_transform,
+                        vel_part_trans, trj_gen_fn)
+
         
         self.loss_fn_jit = jax.jit(loss_fn_base)
         self.loss_grad_fn_jit = jax.jit(loss_grad_fn_base)
-        self.Hvp_jit = jax.jit(Hvp_base)
 
         self.loss_evals = 0
         self.loss_grad_evals = 0
@@ -27,9 +31,13 @@ class Loss_and_Deriv_fns:
         self.loss_grad_evals += 1
         return self.loss_grad_fn_jit(*args, **kwargs)
     
-    def Hvp_fn(self, *args, **kwargs):
+    def loss_grad_adj_fn(self, *args, **kwargs):
+        self.loss_grad_evals += 1
+        return self.adj_solver.compute_grad(*args, **kwargs)
+    
+    def Hvp_adj_fn(self, *args, **kwargs):
         self.Hvp_evals += 1
-        return self.Hvp_jit(*args, **kwargs)  
+        return self.adj_solver.compute_Hvp(*args, **kwargs)  
 
     def __repr__(self):
         return f"loss_evals: {self.loss_evals} | loss_grad_evals: {self.loss_grad_evals} | Hvp_evals: {self.Hvp_evals}"
@@ -113,7 +121,8 @@ class LS_TR_Opt():
 
         for i in range(self.its):
             if i == 0:
-                loss, grad = loss_fn_and_derivs.loss_grad_fn(U_0)
+                #loss, grad = loss_fn_and_derivs.loss_grad_fn(U_0)
+                loss, grad = loss_fn_and_derivs.loss_grad_adj_fn(U_0)
             loss_prev = loss
             grad_prev = grad
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals

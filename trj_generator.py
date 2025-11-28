@@ -77,8 +77,8 @@ def _generate_single_trj(args):
 
 # ---- main dataset generator ----
 def generate_KF_dataset():
-    NDOF = 32
-    Re = 100
+    NDOF = 8
+    Re = 30
     n  = 4
     dt = 1e-2
     T = 1e3
@@ -256,4 +256,4 @@ def generate_sample_case_ani():
         anim.save(os.path.join(root, "vorticity.mp4"), writer="ffmpeg", fps=10, dpi=300)
 
 if __name__ == "__main__":
-    generate_sample_case_ani()
+    generate_KF_dataset()

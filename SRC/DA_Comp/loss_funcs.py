@@ -19,7 +19,6 @@ def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, vel_part_tr
 
         def body(X, data):
             target_snapshot, i = data
-            #particles = X[: stepper.n_particles * 4]
             particles, U_flat = vel_part_trans.split_part_and_vel(X)
             xp, yp, up, vp = vel_part_trans.get_part_pos_and_vel(particles)
 

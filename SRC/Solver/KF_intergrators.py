@@ -14,16 +14,16 @@ def run_particle_advection(U_hat_0, part_IC, rhs, dt, T):
     trj = integrator.integrate_scan(X0, nsteps)
     return trj
 
-def run_particle_advection_with_sens(U_hat_0, part_IC, rhs, dt, T):
+def run_particle_advection_with_sens(U_hat_0, part_IC, rhs, dt, T, V):
     nsteps = int(T/dt)
     X0 = jnp.concat([part_IC, U_hat_0.reshape(-1)])
     integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=rhs.n_particles)
-    trj, sens_trj = integrator.integrate_scan_with_sens(X0, nsteps)
+    trj, sens_trj = integrator.integrate_scan_with_sens(X0, nsteps, V=V)
     return trj, sens_trj
 
 def create_trj_sens_generator(rhs, dt, T):
-    def trj_gen(pIC, U_hat_0):
-        return run_particle_advection_with_sens(U_hat_0, pIC, rhs, dt, T)
+    def trj_gen(pIC, U_hat_0, V):
+        return run_particle_advection_with_sens(U_hat_0, pIC, rhs, dt, T, V)
     return trj_gen
 
 def create_trj_generator(rhs, dt, T):
@@ -78,7 +78,6 @@ class Time_Stepper:
             self.step = Particle_Stepper(self.step, n_particles)
     
     
-
     def integrate(self, U_hat0, nsteps, callback=None):
         """
         Integrate for nsteps. Optionally pass a callback(n, U_hat) every step.
@@ -104,7 +103,7 @@ class Time_Stepper:
         trj = jnp.concatenate([U0[None, ...], trj], axis=0)
         return trj
     
-    def integrate_scan_with_sens(self, U0, nsteps):
+    def integrate_scan_with_sens(self, U0, nsteps, V=None):
         """
         Returns (traj, sens_trj) where:
           - traj has shape (nsteps+1, *U0.shape) and stores U_k for k=0..nsteps
@@ -112,7 +111,8 @@ class Time_Stepper:
             (the cumulative sensitivity/Jacobian wrt the initial state)
         """
         Udim = U0.size
-        I = jnp.eye(Udim, dtype=U0.dtype)
+        if V is None:
+            V = jnp.eye(Udim, dtype=U0.dtype)
 
         def apply_lin_to_matrix(lin_fn, M):
             # lin_fn: R^{Udim} -> R^{Udim}, M: (Udim, Udim) (columns = directions)
@@ -123,17 +123,18 @@ class Time_Stepper:
             U_k, J_k = carry                            # J_k = dU_k/dU_0
             U_kp1, lin = jax.linearize(self.step, U_k)  # lin(v) = (dU_{k+1}/dU_k) @ v
 
-            A_k = apply_lin_to_matrix(lin, jnp.eye(Udim, dtype=U0.dtype))  # dU_{k+1}/dU_k
-            J_kp1 = A_k @ J_k                         # chain rule: dU_{k+1}/dU_0 = A_k @ J_k
+            #A_k = apply_lin_to_matrix(lin, jnp.eye(Udim, dtype=U0.dtype))  # dU_{k+1}/dU_k
+            #J_kp1 = A_k @ J_k                         # chain rule: dU_{k+1}/dU_0 = A_k @ J_k
+            J_kp1 = apply_lin_to_matrix(lin, J_k)
 
             return (U_kp1, J_kp1), (U_kp1, J_kp1)      # carry, y
 
         (U_last, J_last), (traj_noinit, sens_noinit) = lax.scan(
-            body, (U0, I), xs=None, length=nsteps
+            body, (U0, V), xs=None, length=nsteps
         )
 
         traj = jnp.concatenate([U0[None, ...], traj_noinit], axis=0)     # (nsteps+1, ...)
-        sens_trj = jnp.concatenate([I[None, ...], sens_noinit], axis=0)  # (nsteps+1, Udim, Udim)
+        sens_trj = jnp.concatenate([V[None, ...], sens_noinit], axis=0)  # (nsteps+1, Udim, Udim)
 
         return traj, sens_trj
 

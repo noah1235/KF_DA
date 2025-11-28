@@ -258,6 +258,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     loss_fn = create_loss_fn(
                                         loss_crit, stepper, target_trj, pIC, vel_part_trans
                                     )
+                                    loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn)
 
 
                                     def omega_fn(U):
@@ -284,7 +285,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
             
 
-                                    _run_DA_case(target_trj, U_0_guess, loss_fn, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
+                                    _run_DA_case(target_trj, U_0_guess, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
                                                 omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
                                                 parquet_path)
                                     count += 1
@@ -296,7 +297,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
     U_0_guess: np.ndarray | jnp.ndarray,
-    loss_fn,
+    loss_fn_and_derivs,
     optimizer: LS_TR_Opt,
     trj_gen_fn,
     pIC,
@@ -327,7 +328,6 @@ def _run_DA_case(
     """
 
     U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
-    loss_fn_and_derivs = Loss_and_Deriv_fns(loss_fn)
     U_0_DA_fourier, opt_data = optimizer.opt_loop(U_0_guess_fourier, loss_fn_and_derivs, div_check, div_free_proj)
     print(loss_fn_and_derivs)
     print(opt_data.loss_evals_record[-1], opt_data.loss_grad_evals_record[-1], opt_data.Hvp_evals_record[-1])

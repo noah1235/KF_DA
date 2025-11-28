@@ -8,7 +8,7 @@ from SRC.utils import load_data
 import numpy as np
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.DA_Comp.loss_funcs import create_loss_fn
-from SRC.DA_Comp.adjoint import build_adjoint_grad_fn, build_adjoint_Hess_fn
+from SRC.DA_Comp.adjoint import Adjoint_Solver
 import jax
 from SRC.function_perf_bench import bench
 from SRC.utils import build_div_free_proj
@@ -55,7 +55,7 @@ def main():
         n = 4,
         NDOF = 32,
         dt = 1e-2,
-        total_T=4000,
+        total_T=2000,
         min_samp_T=500,
         t_skip=1e-1
 
@@ -96,7 +96,7 @@ def main():
 
             NCSR1(its=150, eps_H=1e-6, max_memory=200,
             cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-            grad_prob=0.9, neg_curve_prob=.2, num_hvp_iters=3, psd_crit=(20, 3, .01, "nothing"),
+            grad_prob=0.9, pcg_freq=20, num_hvp_iters=20, psd_crit=(20, 3, .01, "nothing"),
             print_loss=True
             ),
             #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
@@ -120,26 +120,65 @@ def main():
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
 
 def adjoint_test():
+    def hvp_many(loss_fn, x, V):
+        """
+        Compute k Hessian–vector products H(x) v_i for a scalar loss.
+
+        Args
+        ----
+        loss_fn : callable
+            Function loss_fn(x) -> scalar.
+        x : array, shape (n,)
+            Point at which to evaluate the Hessian.
+        V : array, shape (n, k)
+            Columns are direction vectors v_i.
+
+        Returns
+        -------
+        loss : scalar
+            loss_fn(x)
+        grad : array, shape (n,)
+            Gradient at x.
+        HV : array, shape (n, k)
+            Column i is H(x) @ V[:, i].
+        """
+        grad_fn = jax.grad(loss_fn)
+
+        def loss_and_grad(x):
+            return loss_fn(x), grad_fn(x)
+
+        # One linearization: gives (loss, grad) and a linear map
+        (loss, grad), lin = jax.linearize(loss_and_grad, x)
+
+        # lin(v) returns (d_loss[v], H v); we only want H v
+        def hvp_one(v):
+            _, hv = lin(v)
+            return hv
+
+        HV = jax.vmap(hvp_one, in_axes=1, out_axes=1)(V)  # (n, k)
+        return loss, grad, HV
+
+
     kf_opts = KF_Opts(
-        Re = 10,
+        Re = 100,
         n = 4,
-        NDOF = 16,
+        NDOF = 32,
         dt = 1e-2,
-        T = 1e3,
-        min_samp_T=500
+        total_T=2000,
+        min_samp_T=500,
+        t_skip=1e-1
+
     )
     transform = True
-    grad_comp = True
-    Hess_comp = False
-    npart = 100
-    T = .1
+    grad_comp = False
+    Hess_comp = True
+    npart = 30
+    T = 2
 
     attractor_snapshots = load_data(kf_opts)
     U_true = attractor_snapshots[np.random.randint(0, attractor_snapshots.shape[0]-1), :]
     U_DA = attractor_snapshots[np.random.randint(0, attractor_snapshots.shape[0]-1), :]
 
-
-    pIC = init_particles_vector(npart, (0, 2 * np.pi), (0, 2 * np.pi))
 
     RHS = KF_LPT_PS_RHS(
         kf_opts.NDOF,
@@ -149,61 +188,95 @@ def adjoint_test():
         beta=0,
         St=1e-2,
     )
+    vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
+    U_DA_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_DA)
+    pIC = init_particles_vector(npart,vel_part_trans.reshape_flattened_vel(U_true), (0, RHS.KF_RHS.L), (0, RHS.KF_RHS.L), RHS.KF_RHS.L)
+
     stepper = Particle_Stepper(RK4_Step(RHS, kf_opts.dt), npart)
     trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T)
     target_trj = trj_gen_fn(pIC, U_true)
-    target_part = target_trj[:, : RHS.n_particles * 4]
 
-    crit = MSE(jnp.ones(target_part.shape[0]))
 
-    loss_fn = create_loss_fn(crit, stepper, target_part, pIC, transform=transform)
+    crit = MSE_Vel()
+    #crit = MSE_PP()
+
+    t_mask = np.ones(target_trj.shape[0])
+    t_mask = jnp.array(t_mask)
+    crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
+
+    loss_fn = create_loss_fn(
+        crit, stepper, target_trj, pIC, vel_part_trans
+    )
     loss_grad_fn_auto = jax.jit(jax.value_and_grad(loss_fn))
     hess_fn = jax.jit(jax.hessian(loss_fn))
-    loss_auto, grad_auto = loss_grad_fn_auto(U_DA)
+    loss_auto, grad_auto = loss_grad_fn_auto(U_DA_fourier)
 
     if transform is None:
         adj_transform = lambda x: x
     else:
-        adj_transform = build_div_free_proj(stepper)
+        adj_transform = build_div_free_proj(stepper, vel_part_trans)
 
     if grad_comp:
-        loss_grad_fn_adj = build_adjoint_grad_fn(pIC, crit, target_part, trj_gen_fn, stepper, adj_transform)
-        loss_adj, grad_adj = loss_grad_fn_adj(U_DA)
+        loss_grad_fn_adj = build_adjoint_grad_fn(pIC, crit, target_trj, trj_gen_fn, stepper, adj_transform, vel_part_trans)
+
+        loss_adj, grad_adj = loss_grad_fn_adj(U_DA_fourier)
 
         loss_per_error = jnp.abs(loss_adj - loss_auto)/ loss_auto * 100
         grad_error = jnp.linalg.norm(grad_adj - grad_auto) / jnp.linalg.norm(grad_auto)
         print(f"Loss Percent Error: {loss_per_error}")
         print(f"grad error: {grad_error}")
 
-        s1 = bench(loss_grad_fn_auto, U_DA, runs=1)
-        s2 = bench(loss_grad_fn_adj, U_DA, runs=1)
+
+        s1 = bench(loss_grad_fn_auto, U_DA_fourier, runs=1)
+        s2 = bench(loss_grad_fn_adj, U_DA_fourier, runs=1)
 
         print("auto:", s1)
         print("adjoint:", s2)
     
     if Hess_comp:
-        trj_sens_gen_fn = create_trj_sens_generator(RHS, kf_opts.dt, T)
-        loss_grad_Hess_fn = build_adjoint_Hess_fn(pIC, crit, target_part, trj_sens_gen_fn, stepper, adj_transform)
-        loss_adj, grad_adj, Hess_adj = loss_grad_Hess_fn(U_DA)
 
+        adj_solver = Adjoint_Solver(pIC, crit, target_trj, stepper, adj_transform,
+                        vel_part_trans, trj_gen_fn)
+        loss_adj, grad_adj = adj_solver.compute_grad(U_DA_fourier)
         loss_per_error = jnp.abs(loss_adj - loss_auto)/ loss_auto * 100
         grad_error = jnp.linalg.norm(grad_adj - grad_auto) / jnp.linalg.norm(grad_auto)
         print(f"Loss Percent Error: {loss_per_error}")
         print(f"grad error: {grad_error}")
 
-        sym_err = jnp.linalg.norm(Hess_adj - Hess_adj.T) / jnp.linalg.norm(Hess_adj)
-        print("symmetry rel. error:", sym_err)
 
-        hess_auto = hess_fn(U_DA)
-        hess_error = jnp.linalg.norm(hess_auto - Hess_adj) / jnp.linalg.norm(hess_auto)
+        key = jax.random.PRNGKey(0)  # seed
+        v = jax.random.normal(key, (U_DA_fourier.shape[0], 3))
+        HV_adj = adj_solver.compute_Hvp(v)
+        _, _, HV_auto = hvp_many(loss_fn, U_DA_fourier, v)
+        hess_error = jnp.linalg.norm(HV_auto - HV_adj) / jnp.linalg.norm(HV_auto)
+        print(f"Hess error: {hess_error}")
+        return
+
+
+        trj_sens_gen_fn = create_trj_sens_generator(RHS, kf_opts.dt, T)
+
+        loss_grad_Hess_fn = build_adjoint_Hess_fn(pIC, crit, target_trj, stepper, adj_transform, vel_part_trans, trj_sens_gen_fn)
+        loss_adj, grad_adj, HV_adj = loss_grad_Hess_fn(U_DA_fourier, v)
+
+
+
+
+        #sym_err = jnp.linalg.norm(Hess_adj - Hess_adj.T) / jnp.linalg.norm(Hess_adj)
+        #print("symmetry rel. error:", sym_err)
+
+        _, _, HV_auto = hvp_many(loss_fn, U_DA_fourier, v)
+        print(HV_auto.shape, HV_adj.shape)
+
+        hess_error = jnp.linalg.norm(HV_auto - HV_adj) / jnp.linalg.norm(HV_auto)
         print(f"Hess error: {hess_error}")
 
-        s1 = bench(hess_fn, U_DA, runs=1)
-        s2 = bench(loss_grad_Hess_fn, U_DA, runs=1)
+        #s1 = bench(hess_fn, U_DA_fourier, runs=1)
+        #s2 = bench(loss_grad_Hess_fn, U_DA_fourier, runs=1)
 
-        print("auto:", s1)
-        print("adjoint:", s2)
+        #print("auto:", s1)
+        #print("adjoint:", s2)
 
 
 if __name__ == "__main__":
     main()
+    #adjoint_test()

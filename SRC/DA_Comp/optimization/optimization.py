@@ -127,7 +127,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     ls_method = "TR"
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,
-                grad_prob=0.9, neg_curve_prob=.125, num_hvp_iters=5,
+                grad_prob=0.9, pcg_freq=20, num_hvp_iters=5,
                 SR1_type="conv", psd_crit=None,
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
@@ -143,7 +143,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         #step prob
         self.grad_prob = grad_prob
-        self.neg_curve_prob = neg_curve_prob
+        self.pcg_freq = pcg_freq
 
         self.num_hvp_iters = num_hvp_iters
         
@@ -154,164 +154,50 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             self.num_pos_min_eigs = 0
 
 
-    def second_order_logic_backup(self, grad, hvp, U_0, div_free_proj, iter):
-        N = U_0.shape[0]
-    
-        computed_min_eig = False
-        if (random.random() < self.neg_curve_prob) or (self.init_Bk == False):
-            self.init_Bk = True
-            Bk_min_eig, Bk_min_vec = self.Bk_eig_decomp(which="SA", num_eig=1)
-            w, Q, vTAv_array, v_array  = lanczos_eigs(lambda v: hvp(U_0, v), N, v0=Bk_min_vec.reshape(-1), m=self.num_hvp_iters)
-            self.HVP_Bk_update(vTAv_array, v_array)
-
-            min_eig_idx = jnp.argmin(w)
-            max_eig_idx = jnp.argmax(w)
-            min_eig_vec = Q[:, min_eig_idx]
-            min_eig = w[min_eig_idx]
-
-            if jnp.dot(min_eig_vec, grad) > 0:
-                    min_eig_vec = -min_eig_vec
-            computed_min_eig = True
-            
-            if iter >= (self.min_its-1) and min_eig > 0:
-                self.num_pos_min_eigs += 1
-            else:
-                self.num_pos_min_eigs = 0
-
-
-            ###
-            if False:
-                print("-------")
-                for i in range(4):
-                    xi = v_array[:, i]
-                    t = jnp.dot(xi, self.Bk @ xi)
-                    print(t, vTAv_array[i])
-
-                print("------")
-            ###
-
-        if computed_min_eig and min_eig < -self.eps_H:
-            pk = min_eig_vec
-            step_type = "neg_curve"
-        
-        elif computed_min_eig and (min_eig > 0):
-            print("SR1 PCG")
-            step_type = "PCG"
-            v_array = []
-            vTAv_array = []
-
-            def matvec(v):
-                v_array.append(v)
-                Hv = hvp(U_0, v)
-                vTAv_array.append(jnp.dot(v, Hv))
-                return Hv
-            M = self.Bk.build_Bk()
-            M = jnp.linalg.pinv(M)
-            pk, info = pcg(matvec, M, -grad, x0=(-M @ grad), maxiter=10)
-            #print(jnp.linalg.norm(matvec(pk) + grad) / jnp.linalg.norm(grad))
-            v_array = jnp.vstack(v_array).T
-            vTAv_array = jnp.array(vTAv_array)
-            print(v_array.shape, vTAv_array.shape)
-
-            self.HVP_Bk_update(vTAv_array, v_array)
-
-        else:
-            NCN_min_eig = self.eps_H
-            Bk_eigs, Bk_eig_vec = self.Bk_eig_decomp()
-
-            Q = Bk_eig_vec
-            Lam_reg = jnp.abs(Bk_eigs)
-            idx = jnp.argsort(Lam_reg)[-self.current_memory:][::-1]
-            Lam_reg = Lam_reg[idx]
-            Q = Bk_eig_vec[:, idx]
-            Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
-
-            null_space_comp = (-grad) - Q @ (Q.T @ -grad)
-            step_type = "reg_Newton"
-            pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
-
-        pk = div_free_proj(pk)
-
-        if jnp.any(jnp.isnan(pk)):
-            pk = -grad
-
-        return pk, step_type
-
-
-
     def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
         N = U_0.shape[0]
-        k = 4
-        tried_PCG = False
-        step_type = "SR1_reg"
-        if iter % k == 0:
-            tried_PCG = True
-            v_array = []
-            vTAv_array = []
-
-            def matvec(v):
-                v_array.append(v)
-                Hv = hvp(U_0, v)
-                vTAv_array.append(jnp.dot(v, Hv))
-                return Hv
-            if k == 0:
-                M = jnp.eye(N)
-            else:
-                M = jnp.linalg.pinv(self.Bk.build_Bk())
+        num_batch_hvp = 5
+        num_power_iters = 1
+        if iter == 0:
+            key = jax.random.PRNGKey(0)
+            A = jax.random.normal(key, (self.Bk.N, num_batch_hvp))
+            # 2. QR factorization (reduced)
+            Q, R = jnp.linalg.qr(A, mode="reduced")  # Q: (n, k)
             
-            result, flag = pcg_curve_detection(matvec, M, -grad, max_iters=20)
-            v_array = jnp.vstack(v_array).T
-            vTAv_array = jnp.array(vTAv_array)
-            self.HVP_Bk_update(vTAv_array, v_array)
-
-            if flag == "indef":
-                v_nc, vHv = result
-                if vHv < -self.eps_H:
-                    step_type = "neg_curve"
-                    if jnp.dot(v_nc, grad) > 0:
-                        pk = -v_nc
-                    else:
-                        pk = v_nc
-            else:
-                step_type = "PCG"
-                pk = result
-                #PCG error
-                res = -grad - hvp(U_0, pk)
-                print(jnp.linalg.norm(res) / jnp.linalg.norm(grad))
-                
-
-
-            ###
+            
+        else:
+            _, Q = self.Bk.eig_decomp(which="LM", num_eig=num_batch_hvp)
+        
+        for i in range(num_power_iters):
+            HQ = hvp(Q)
+            qTHq = jnp.sum(Q * HQ, axis=0)
+            self.HVP_Bk_update(qTHq, Q)
             if False:
-                print("-------")
-                for i in range(v_array.shape[1]):
-                    xi = v_array[:, i]
+                for i in range(qTHq.shape[0]):
+                    xi = Q[:, i]
                     t = jnp.dot(xi, self.Bk @ xi)
-                    print(t, vTAv_array[i])
+                    print(t, qTHq[i])
+                print("----")
+            Q, R = jnp.linalg.qr(HQ, mode="reduced")
+            
 
-                print("------")
-            ###
+        NCN_min_eig = self.eps_H
+        #Bk_eigs = jnp.array([self.Bk.Bk_scalars[0]])
+        #Bk_eig_vec = self.Bk.Bk_vecs[:, 0].reshape((-1, 1))
+        Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
+        print(jnp.min(Bk_eigs))
+        Lam_reg = jnp.abs(Bk_eigs)
+        Q = Bk_eig_vec
+        Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
 
-        if tried_PCG or (step_type == "SR1_reg"):
-            NCN_min_eig = self.eps_H
-            Bk_eigs = jnp.array([self.Bk.Bk_scalars[0]])
-            Bk_eig_vec = self.Bk.Bk_vecs[:, 0].reshape((-1, 1))
-
-            Q = Bk_eig_vec
-            Lam_reg = jnp.abs(Bk_eigs)
-            idx = jnp.argsort(Lam_reg)[-self.current_memory:][::-1]
-            Lam_reg = Lam_reg[idx]
-            Q = Bk_eig_vec[:, idx]
-            Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
-
-            null_space_comp = (-grad) - Q @ (Q.T @ -grad)
-            pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
+        null_space_comp = (-grad) - Q @ (Q.T @ -grad)
+        pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
 
         pk = div_free_proj(pk)
 
         if jnp.any(jnp.isnan(pk)):
             pk = -grad
-
+        step_type = "NCN"
         return pk, step_type
 
 
@@ -330,30 +216,30 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         N = U_0.shape[0]
 
         loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
-        hvp = loss_fn_and_derivs.Hvp_fn
+        loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
+        hvp = loss_fn_and_derivs.Hvp_adj_fn
+        if False:
+            if iter == 0:
+                grad_norm = jnp.linalg.norm(grad)
+                gTHg = jnp.dot(grad, hvp(U_0, grad))
+                Rk = gTHg / grad_norm**2
+                self.HVP_Bk_update(jnp.array([gTHg]), grad.reshape((-1, 1)))
+                er = jnp.linalg.norm( jnp.dot(grad, self.Bk @ grad))
+                print(f"er: {er}")
 
-        if iter == 0:
-            grad_norm = jnp.linalg.norm(grad)
-            gTHg = jnp.dot(grad, hvp(U_0, grad))
-            Rk = gTHg / grad_norm**2
-            self.HVP_Bk_update(jnp.array([gTHg]), grad.reshape((-1, 1)))
-            er = jnp.linalg.norm( jnp.dot(grad, self.Bk @ grad))
-            print(f"er: {er}")
+            if False and ((Rk < -self.eps_H) and (random.random() < self.grad_prob)):
+                pk = -grad
+                step_type = "grad"
 
-        if False and ((Rk < -self.eps_H) and (random.random() < self.grad_prob)):
-            pk = -grad
-            step_type = "grad"
+            elif False and Rk >= -self.eps_H and Rk <= self.eps_H and (random.random() < self.grad_prob):
+                pk = -grad
+                step_type = "grad"
 
-        elif False and Rk >= -self.eps_H and Rk <= self.eps_H and (random.random() < self.grad_prob):
-            pk = -grad
-            step_type = "grad"
+            #second order methods
+            else:                
+                pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
 
-        #second order methods
-        else:                
-            pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
-
-
+        pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
         pTHp = jnp.dot(pk, self.Bk @ pk)
         alpha = self.cubic_TR.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
         alpha_pk = pk * alpha

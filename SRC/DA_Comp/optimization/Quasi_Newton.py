@@ -16,10 +16,21 @@ class L_BK:
             x = self.Bk_vecs[:, i]
             result += jnp.outer(x, x) * self.Bk_scalars[i]
         return result
+
+    def eig_decomp(self, which="LM", num_eig=None):
+        if num_eig is None or num_eig > len(self):
+            num_eig = len(self)
+        def matvec(v):
+            v = jnp.asarray(v)
+            return self @ v
+
+        A_op = LinearOperator((self.N, self.N), matvec=matvec)
+        Bk_eigs, Bk_eig_vec = eigsh(A_op, k=num_eig, which=which)
+        return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
     
     def __len__(self):
         return self.cmem
-    
+
     def __matmul__(self, v: jnp.ndarray):
         X = self.Bk_vecs[:, :self.cmem]         # shape (n, cmem)
         alpha = self.Bk_scalars[:self.cmem]     # shape (cmem,)
@@ -137,16 +148,6 @@ class L_SR1():
         self.Bk.append(u, gamma)
 
     
-    def Bk_eig_decomp(self, which="LM", num_eig=None):
-        if num_eig is None or num_eig > len(self.Bk):
-            num_eig = len(self.Bk)
-        def matvec(v):
-            v = jnp.asarray(v)
-            return self.Bk @ v
-
-        A_op = LinearOperator((self.Bk.N, self.Bk.N), matvec=matvec)
-        Bk_eigs, Bk_eig_vec = eigsh(A_op, k=num_eig, which=which)
-        return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
 
 class BFGS_Update():
     def __init__(self, fallback_opt):
@@ -200,7 +201,7 @@ class HVP_Update():
         return v_array, vTAv_array
 
 
-    def HVP_Bk_update_dec(self, vTAv_array, v_array):
+    def HVP_Bk_update(self, vTAv_array, v_array):
         """
         Insert n_new_vecs columns (xi) with scalars (-mu) into limited-memory buffers.
 
@@ -240,7 +241,7 @@ class HVP_Update():
             self.Bk.append(xi, -mu)
 
 
-    def HVP_Bk_update(self, vTAv_array, v_array):
+    def HVP_Bk_update_dec(self, vTAv_array, v_array):
         """
         Insert n_new_vecs columns (x_i) with scalars (-mu_i) into limited-memory buffers,
         enforcing x_i^T H_new x_i = vTAv_array[i] in the Frobenius-minimal sense.
