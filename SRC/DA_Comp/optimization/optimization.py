@@ -156,7 +156,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
     def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
         N = U_0.shape[0]
-        num_batch_hvp = 5
+        num_batch_hvp = 10
         num_power_iters = 1
         if iter == 0:
             key = jax.random.PRNGKey(0)
@@ -166,7 +166,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             
             
         else:
-            _, Q = self.Bk.eig_decomp(which="LM", num_eig=num_batch_hvp)
+            _, Q = self.Bk.eig_decomp(which="BE", num_eig=num_batch_hvp)
         
         for i in range(num_power_iters):
             HQ = hvp(Q)
@@ -185,19 +185,24 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         #Bk_eigs = jnp.array([self.Bk.Bk_scalars[0]])
         #Bk_eig_vec = self.Bk.Bk_vecs[:, 0].reshape((-1, 1))
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
-        print(jnp.min(Bk_eigs))
-        Lam_reg = jnp.abs(Bk_eigs)
-        Q = Bk_eig_vec
-        Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
+        if False and jnp.min(Bk_eigs) < -self.eps_H:
+            step_type = "neg curve"
+            pk = Bk_eig_vec[:, jnp.argmin(Bk_eigs)]
+            if jnp.dot(pk, grad) > 0:
+                pk = -pk
+        else:
+            Lam_reg = jnp.abs(Bk_eigs)
+            Q = Bk_eig_vec
+            Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
 
-        null_space_comp = (-grad) - Q @ (Q.T @ -grad)
-        pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
+            null_space_comp = (-grad) - Q @ (Q.T @ -grad)
+            pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
 
-        pk = div_free_proj(pk)
+            pk = div_free_proj(pk)
 
-        if jnp.any(jnp.isnan(pk)):
-            pk = -grad
-        step_type = "NCN"
+            if jnp.any(jnp.isnan(pk)):
+                pk = -grad
+            step_type = "NCN"
         return pk, step_type
 
 
