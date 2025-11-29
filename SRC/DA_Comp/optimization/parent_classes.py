@@ -35,9 +35,9 @@ class Loss_and_Deriv_fns:
         self.loss_grad_evals += 1
         return self.adj_solver.compute_grad(*args, **kwargs)
     
-    def Hvp_adj_fn(self, *args, **kwargs):
-        self.Hvp_evals += 1
-        return self.adj_solver.compute_Hvp(*args, **kwargs)  
+    def Hvp_adj_fn(self, Q):
+        self.Hvp_evals += Q.shape[1]
+        return self.adj_solver.compute_Hvp(Q)  
 
     def __repr__(self):
         return f"loss_evals: {self.loss_evals} | loss_grad_evals: {self.loss_grad_evals} | Hvp_evals: {self.Hvp_evals}"
