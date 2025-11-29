@@ -84,21 +84,21 @@ def main():
             #print_loss=True
             #,
 
-            #NCSR1_and_BFGS_and_PCGBFGS(
-            #       NCSR1(its=100, eps_H=1e-6, max_memory=50,
-            #       cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-            #       grad_prob=0.9, neg_curve_prob=.2, num_hvp_iters=3, psd_crit=(20, 3, .01, "early_stop"),
-            #       print_loss=True
-            #       ),
-            #    BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=200, fallback_opt="eye", print_loss=True),
+            NCSR1_and_BFGS_and_PCGBFGS(
+                   NCSR1(its=1, eps_H=1e-6, max_memory=50,
+                   cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
+                   grad_prob=0.9, num_hvp_iters=3, psd_crit=(20, 3, .01, "early_stop"),
+                   print_loss=True
+                   ),
+                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=4, fallback_opt="eye", print_loss=True),
                #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, n_hvp=10, fallback_opt="eye", print_loss=True),
-            #),
-
-            NCSR1(its=150, eps_H=1e-6, max_memory=200,
-            cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-            grad_prob=0.9, pcg_freq=20, num_hvp_iters=20, psd_crit=(20, 3, .01, "nothing"),
-            print_loss=True
             ),
+
+            #NCSR1(its=150, eps_H=1e-6, max_memory=200,
+            #cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
+            #grad_prob=0.9, pcg_freq=20, num_hvp_iters=20, psd_crit=(20, 3, .01, "nothing"),
+            #print_loss=True
+            #),
             #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
             #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
         ],

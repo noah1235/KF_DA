@@ -166,7 +166,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             
             
         else:
-            _, Q = self.Bk.eig_decomp(which="BE", num_eig=num_batch_hvp)
+            _, Q = self.Bk.eig_decomp(which="LM", num_eig=num_batch_hvp)
         
         for i in range(num_power_iters):
             HQ = hvp(Q)
@@ -277,7 +277,7 @@ class NCSR1_and_BFGS_and_PCGBFGS:
         self.PCGBFGS_opt = PCGBFGS_opt
 
     def get_Bk_inv_for_BFGS(self):
-        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk_eig_decomp(which="LM")
+        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp(which="LM")
         n = self.NCSR1_opt.Bk.N        
         k = Bk_eig_vec.shape[1]
         min_eig = 1e-6
