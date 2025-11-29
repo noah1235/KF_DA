@@ -12,7 +12,85 @@ from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, BFGS_Update
 import numpy as np
 
+def equal_component_Q(g, k, key=None):
+    """
+    Construct Q ∈ R^{k×n} with orthonormal rows such that:
+      - q_i^T g = ||g|| / sqrt(k)   for all i
+      - Q Q^T g = g
+    
+    Args:
+        g:  (n,) array, nonzero vector in R^n
+        k:  int, number of orthonormal vectors (1 <= k <= n)
+        key: PRNGKey for randomization (optional)
 
+    Returns:
+        Q: (k, n) array, with rows q_i satisfying the above.
+    """
+    if key is None:
+        key = jax.random.PRNGKey(0)
+
+    n = g.shape[0]
+    assert 1 <= k <= n, "Need 1 <= k <= n"
+
+    g_norm = jnp.linalg.norm(g)
+    g_hat = g / g_norm
+
+    # Special case k = 1: just take q_1 = g_hat
+    if k == 1:
+        return g_hat[None, :]
+
+    # -----------------------------
+    # 1. Build U with orthonormal rows spanning a subspace containing g_hat
+    #    First row is exactly g_hat, remaining k-1 rows random GS-orthonormalized.
+    # -----------------------------
+    key_U = key
+    # random initial rows for i >= 1
+    U_init = jax.random.normal(key_U, (k, n))
+    U_init = U_init.at[0].set(g_hat)  # first row is g_hat
+
+    def gs_rows(M):
+        """Orthonormalize rows of M with Gram-Schmidt, keeping row 0 as is (unit)."""
+        k, n = M.shape
+        Q = jnp.zeros_like(M)
+        # row 0 is already unit: g_hat
+        Q = Q.at[0].set(M[0])
+
+        def body_fun(i, Q):
+            v = M[i]
+            def proj_sub(j, v_inner):
+                qj = Q[j]
+                return v_inner - jnp.dot(qj, v_inner) * qj
+            v = jax.lax.fori_loop(0, i, proj_sub, v)
+            v = v / jnp.linalg.norm(v)
+            Q = Q.at[i].set(v)
+            return Q
+
+        Q = jax.lax.fori_loop(1, k, body_fun, Q)
+        return Q
+
+    U = gs_rows(U_init)   # shape (k, n), rows orthonormal, first row = g_hat
+
+    # -----------------------------
+    # 2. Build R ∈ O(k) with first column v = (1/√k) * 1
+    #    Use a Householder reflection mapping e1 -> v.
+    # -----------------------------
+    v = jnp.ones((k,)) / jnp.sqrt(k)
+    e1 = jnp.zeros_like(v).at[0].set(1.0)
+
+    # u = (e1 - v) / ||e1 - v|| ; H = I - 2 u u^T ; H e1 = v
+    u = e1 - v
+    u = u / jnp.linalg.norm(u)
+    H = jnp.eye(k) - 2.0 * jnp.outer(u, u)  # orthogonal, H e1 = v
+    R = H  # columns orthonormal, first column is v
+
+    # -----------------------------
+    # 3. Q = R U
+    #    - rows of Q are orthonormal
+    #    - Q g_hat = R e1 = v = (1/√k) 1
+    # -----------------------------
+    Q = R @ U  # shape (k, n)
+
+    return Q
 
 class BFGS(LS_TR_Opt, BFGS_Update):
     name = "BFGS"
@@ -127,8 +205,9 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     ls_method = "TR"
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,
-                grad_prob=0.9, pcg_freq=20, num_hvp_iters=5,
-                SR1_type="conv", psd_crit=None,
+                num_batch_hvp=5,
+                num_power_iters=2,
+                SR1_type="conv",
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
         self.set_SR1_update_type(SR1_type)
@@ -140,35 +219,26 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self._max_memory = max_memory
         self.cubic_TR = cubic_TR
         
+        self.num_batch_hvp = num_batch_hvp
+        self.num_power_iters = num_power_iters
 
-        #step prob
-        self.grad_prob = grad_prob
-        self.pcg_freq = pcg_freq
-
-        self.num_hvp_iters = num_hvp_iters
-        
-
-        if psd_crit is not None:
-            #psd decision can be: early stopping, no negative curvature, nothing
-            self.min_its, self.num_pos_eigs_crit, self.min_loss_crit, self.psd_decision = psd_crit
-            self.num_pos_min_eigs = 0
 
 
     def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
-        N = U_0.shape[0]
-        num_batch_hvp = 10
-        num_power_iters = 1
+        
         if iter == 0:
-            key = jax.random.PRNGKey(0)
-            A = jax.random.normal(key, (self.Bk.N, num_batch_hvp))
-            # 2. QR factorization (reduced)
-            Q, R = jnp.linalg.qr(A, mode="reduced")  # Q: (n, k)
-            
+            Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
             
         else:
-            _, Q = self.Bk.eig_decomp(which="LM", num_eig=num_batch_hvp)
-        
-        for i in range(num_power_iters):
+            _, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
+            g_proj = Q @ (Q.T @ grad)
+            r = grad - g_proj
+            u = r / jnp.linalg.norm(r)
+            Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
+            print(Q.shape)
+    
+
+        for i in range(self.num_power_iters):
             HQ = hvp(Q)
             qTHq = jnp.sum(Q * HQ, axis=0)
             self.HVP_Bk_update(qTHq, Q)
@@ -185,6 +255,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         #Bk_eigs = jnp.array([self.Bk.Bk_scalars[0]])
         #Bk_eig_vec = self.Bk.Bk_vecs[:, 0].reshape((-1, 1))
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
+        print(jnp.min(Bk_eigs))
         if False and jnp.min(Bk_eigs) < -self.eps_H:
             step_type = "neg curve"
             pk = Bk_eig_vec[:, jnp.argmin(Bk_eigs)]
@@ -223,26 +294,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
         hvp = loss_fn_and_derivs.Hvp_adj_fn
-        if False:
-            if iter == 0:
-                grad_norm = jnp.linalg.norm(grad)
-                gTHg = jnp.dot(grad, hvp(U_0, grad))
-                Rk = gTHg / grad_norm**2
-                self.HVP_Bk_update(jnp.array([gTHg]), grad.reshape((-1, 1)))
-                er = jnp.linalg.norm( jnp.dot(grad, self.Bk @ grad))
-                print(f"er: {er}")
-
-            if False and ((Rk < -self.eps_H) and (random.random() < self.grad_prob)):
-                pk = -grad
-                step_type = "grad"
-
-            elif False and Rk >= -self.eps_H and Rk <= self.eps_H and (random.random() < self.grad_prob):
-                pk = -grad
-                step_type = "grad"
-
-            #second order methods
-            else:                
-                pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
 
         pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
         pTHp = jnp.dot(pk, self.Bk @ pk)
@@ -258,15 +309,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         else:
             loss_next, grad_next = loss_grad_fn(U_0_next)
             self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
-            
-
-            if (self.num_pos_min_eigs >= self.num_pos_eigs_crit) and (loss <= self.min_loss_crit):
-                if self.psd_decision == "early_stop":
-                    print("psd stopping")
-                    alpha = 0
-                elif self.psd_decision == "no_neg":
-                    self.neg_curve_prob = 0
-                    print("psd: no neg curv")
 
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, diag_string
         

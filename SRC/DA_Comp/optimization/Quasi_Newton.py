@@ -201,7 +201,7 @@ class HVP_Update():
         return v_array, vTAv_array
 
 
-    def HVP_Bk_update(self, vTAv_array, v_array):
+    def HVP_Bk_update_dec(self, vTAv_array, v_array):
         """
         Insert n_new_vecs columns (xi) with scalars (-mu) into limited-memory buffers.
 
@@ -241,7 +241,7 @@ class HVP_Update():
             self.Bk.append(xi, -mu)
 
 
-    def HVP_Bk_update_dec(self, vTAv_array, v_array):
+    def HVP_Bk_update(self, vTAv_array, v_array):
         """
         Insert n_new_vecs columns (x_i) with scalars (-mu_i) into limited-memory buffers,
         enforcing x_i^T H_new x_i = vTAv_array[i] in the Frobenius-minimal sense.
