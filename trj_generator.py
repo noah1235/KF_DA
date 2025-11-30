@@ -77,8 +77,8 @@ def _generate_single_trj(args):
 
 # ---- main dataset generator ----
 def generate_KF_dataset():
-    NDOF = 8
-    Re = 30
+    NDOF = 32
+    Re = 100
     n  = 4
     dt = 1e-2
     T = 1e3
@@ -86,7 +86,7 @@ def generate_KF_dataset():
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
     num_inits = 8
-    n_workers = 8
+    n_workers = 4
 
 
     # Build argument list for workers
@@ -96,7 +96,7 @@ def generate_KF_dataset():
 
     # Run in parallel
     ctx = mp.get_context("spawn")
-    with ctx.Pool(processes=min(num_inits, ctx.cpu_count())) as pool:
+    with ctx.Pool(processes=n_workers) as pool:
         trj_list = pool.map(_generate_single_trj, worker_args)
 
     # Stack trajectories into a single dataset

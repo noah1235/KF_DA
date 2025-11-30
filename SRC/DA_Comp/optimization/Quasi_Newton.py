@@ -9,6 +9,13 @@ class L_BK:
         self.Bk_vecs = jnp.zeros((N, self.max_memory))
         self.Bk_scalars = jnp.zeros(self.max_memory)
 
+    def set_Bk(self, Bk_vecs, Bk_scalars):
+        if Bk_vecs.shape[1] != Bk_scalars.shape[0]:
+            raise ValueError("Need same number of vecs and scalars")
+        self.Bk_vecs = Bk_vecs
+        self.Bk_scalars = Bk_scalars
+        self.cmem = Bk_scalars.shape[0]
+        
 
     def build_Bk(self):
         result = jnp.zeros((self.N, self.N))

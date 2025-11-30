@@ -2,7 +2,7 @@ from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, PCGBFGS, NCSR1_and_BFGS_and_PCGBFGS
+from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, PCGBFGS, NCSR1_and_BFGS
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 from SRC.utils import load_data
 import numpy as np
@@ -84,15 +84,14 @@ def main():
             #print_loss=True
             #,
 
-            NCSR1_and_BFGS_and_PCGBFGS(
-                NCSR1(its=25, eps_H=1e-6, max_memory=50,
+            NCSR1_and_BFGS(
+                NCSR1(its=2, eps_H=1e-6, max_memory=50,
                 cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-                num_batch_hvp=4,
+                num_batch_hvp=2,
                 num_power_iters=1,
                 print_loss=True
                 ),
-                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=75, fallback_opt="eye", print_loss=True),
-               #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=10, n_hvp=10, fallback_opt="eye", print_loss=True),
+                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, fallback_opt="eye", print_loss=True),
             ),
 
             #NCSR1(its=4, eps_H=1e-6, max_memory=50,
@@ -102,7 +101,7 @@ def main():
             #print_loss=True
             #),
             #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
-            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
+            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),
