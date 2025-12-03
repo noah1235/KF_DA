@@ -76,7 +76,7 @@ def build_div_free_proj(stepper, vel_part_trans, M=None, return_type="2D"):
     K2 = stepper.step.rhs.KF_RHS.K2
     #M = stepper.step.rhs.KF_RHS.M
 
-    def transform_fn(U0_fourier, M=None):
+    def transform_fn(U0_fourier, M=stepper.step.rhs.KF_RHS.M):
         U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U0_fourier)
         X_proj = project_divfree_rfft2(U_hat, KX, KY, K2, M, return_type)
         X = X_proj.reshape(-1)
