@@ -39,6 +39,7 @@ class ArmijoLineSearch:
         return alpha
 
 class Cubic_TR:
+    name = "TR"
     def __init__(self, rho_trg, eta_kp, eta_ki, eta_kd, eta_min=1e-12, eta_0=1, eta_max=1e6):
         self.BT_ls = ArmijoLineSearch()
         self.eta_0 = eta_0

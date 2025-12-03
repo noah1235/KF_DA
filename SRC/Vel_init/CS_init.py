@@ -116,6 +116,7 @@ class CS_init(IC_init):
             # Map back to physical-space initial condition
             u_0_opt = self.transform_fn(u_0_fourier_opt)
             DA_loss = DA_loss_fn(u_0_opt)
+            print(DA_loss, final_loss)
             if best_DA_loss is None:
                 best_DA_loss = DA_loss
                 best_u_0 = u_0_opt

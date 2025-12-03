@@ -88,13 +88,16 @@ def main():
             #,
 
             NCSR1_and_BFGS(
-                NCSR1(its=5, eps_H=1e-6, max_memory=50,
+                NCSR1(its=3, eps_H=1e-6, max_memory=50,
                 cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
                 num_batch_hvp=2,
                 num_power_iters=1,
                 print_loss=True
                 ),
-                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
+                BFGS(
+                    #ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
+                    ls=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
+                    its=50, fallback_opt="eye", print_loss=True),
             ),
 
             #NCSR1(its=4, eps_H=1e-6, max_memory=50,

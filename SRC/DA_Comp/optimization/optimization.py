@@ -9,6 +9,7 @@ from scipy.sparse.linalg import eigsh
 import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, BFGS_Update
 import numpy as np
 
@@ -101,6 +102,10 @@ class BFGS(LS_TR_Opt, BFGS_Update):
         self.its = its
         self.print_loss = print_loss
 
+    def init_opt_params(self, N):
+        if isinstance(self.ls, Cubic_TR):
+            self.ls.init_opt()
+        super().init_opt_params(N)
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
         loss_fn = loss_fn_and_derivs.loss_fn
@@ -122,7 +127,13 @@ class BFGS(LS_TR_Opt, BFGS_Update):
 
         # Search direction and line search
         pk = -self.Bk_inv @ grad
-        alpha = self.ls(loss_fn, loss, U_0, pk, grad)
+        if isinstance(self.ls, ArmijoLineSearch):
+            alpha = self.ls(loss_fn, loss, U_0, pk, grad)
+            debug_str = ""
+        elif isinstance(self.ls, Cubic_TR):
+            pTHp = jnp.dot(pk, -grad)
+            alpha = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
+            debug_str = f"eta: {self.ls.eta}"
         U_0_next = self.step(U_0, alpha, pk, div_free_proj)
         alpha_pk = pk * alpha  # return value
         if last_iteration:
@@ -132,10 +143,10 @@ class BFGS(LS_TR_Opt, BFGS_Update):
 
             if ys > eps:
                 self.Bk_inv_update(ys, sk, yk)
-                return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {True}"
+                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {True}"
 
             else:
-                return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {False}"
+                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {False}"
 
 
 class PCGBFGS(BFGS):
@@ -202,7 +213,6 @@ class PCGBFGS(BFGS):
                 return U_0_next, loss_next, grad_next, alpha, alpha_pk, f"Update: {False}"
         
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
-    ls_method = "TR"
     def __init__(self, its, eps_H, max_memory,
                 cubic_TR: Cubic_TR,
                 num_batch_hvp=5,
@@ -212,6 +222,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         LS_TR_Opt.__init__(self, its, print_loss)
         self.set_SR1_update_type(SR1_type)
         self.name = "NCSR1"
+        self.ls_method = cubic_TR.name
         if SR1_type == "mod":
             self.name += "M"
 
