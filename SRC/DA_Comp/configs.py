@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from SRC.Vel_init.IC_init import IC_init
 
 @dataclass
 class KF_Opts:
@@ -23,7 +24,7 @@ class DA_Opts:
     num_particle_inits: int
     num_opt_inits: int
     num_seeds: int
-    int_pert_range: tuple
+    ic_init: IC_init
     optimizer_list: any
     crit_list: any
     T_list: any

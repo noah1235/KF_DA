@@ -32,6 +32,9 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
     plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, save_dir)
 
     #Vorticity plot
+    print(jnp.linalg.norm(init_guess_vel[0]-target_vel[0]))
+    plot_vort_comp(init_guess_vel[0], target_vel[0], omega_fn, os.path.join(save_dir, "IC_guess_comp.png"),
+                   l1="DA final vorticity", l2="Target final vorticity")
     plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison.png"),
                    l1="DA final vorticity", l2="Target final vorticity")
     plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison_init.png"),

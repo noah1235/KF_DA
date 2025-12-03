@@ -16,6 +16,7 @@ from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fn
 from SRC.DA_Comp.optimization.optax_logic import *
 from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
+from SRC.Vel_init.CS_init import CS_init
 
 # --- Stdlib / third-party imports ---
 import os
@@ -57,24 +58,6 @@ def get_max_seed_index(directory: str) -> int | None:
                     max_x = x
     return max_x
 
-def calc_attractor_size(attractor_snapshots: jnp.ndarray) -> jnp.ndarray:
-    """
-    Estimate a characteristic size of the attractor as the mean distance
-    of snapshots to their mean state (in the full-state Euclidean norm).
-
-    Parameters
-    ----------
-    attractor_snapshots : jnp.ndarray
-        Array of shape (Nsamples, Nstate) containing sampled states from the attractor.
-
-    Returns
-    -------
-    jnp.ndarray
-        Scalar mean distance (0-D array) representing an attractor "size" scale.
-    """
-    mean = jnp.mean(attractor_snapshots, axis=0)
-    dist = jnp.linalg.norm(attractor_snapshots - mean.reshape((1, -1)), axis=1)
-    return jnp.mean(dist)
 
 def append_to_parquet(df, parquet_path):
     """
@@ -125,15 +108,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
     # Load attractor snapshots and compute attractor size scale
     attractor_snapshots = load_data(kf_opts)
-    AS = calc_attractor_size(attractor_snapshots)
-    unused_IC_mask = np.ones(attractor_snapshots.shape[0], dtype=np.bool)
-
-    # Draw initial-distance multipliers from a uniform distribution
-    opt_init_dists = np.random.uniform(
-        low=DA_opts.int_pert_range[0],
-        high=DA_opts.int_pert_range[1],
-        size=DA_opts.num_opt_inits,
-    )
+    DA_opts.ic_init.get_attractor_snaps(attractor_snapshots)
 
     os.makedirs(root, exist_ok=True)
     parquet_path = os.path.join(root, "results.parquet")
@@ -149,7 +124,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
         * len(DA_opts.n_particles_list)
         * len(DA_opts.sampling_period_list)
         * DA_opts.num_particle_inits
-        * len(opt_init_dists)
+        * DA_opts.num_opt_inits
         * len(DA_opts.optimizer_list)
         * len(DA_opts.crit_list)
     )
@@ -170,8 +145,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
             ]
             np.save(U_0_path, U_0)
 
-        
-
         # Loop over time horizons
         for T in DA_opts.T_list:
             T_dir = os.path.join(seed_root, f"T={T}")
@@ -190,8 +163,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                     St=DA_opts.part_opts.St,
                 )
                 stepper = Particle_Stepper(RK4_Step(RHS, kf_opts.dt), npart)
-                
                 vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
+                if isinstance(DA_opts.ic_init, CS_init):
+                    DA_opts.ic_init.set_transform(stepper, vel_part_trans)
                 
                 for samp_period in DA_opts.sampling_period_list:
                     period_idx = int(samp_period/kf_opts.dt)
@@ -200,13 +174,13 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                     samp_p_root = os.path.join(npart_root, f"SP={samp_period}")
                     # Loop over particle initializations
+                    
                     for _ in range(DA_opts.num_particle_inits):
                         PI_root = os.path.join(samp_p_root, "PI")
                         os.makedirs(PI_root, exist_ok=True)
 
                         # Random particle ICs in the periodic domain
-                        
-                        
+                    
                         pIC = init_particles_vector(npart,vel_part_trans.reshape_flattened_vel(U_0), (0, RHS.KF_RHS.L), (0, RHS.KF_RHS.L), RHS.KF_RHS.L)
                         np.save(os.path.join(PI_root, "pIC.npy"), pIC)
 
@@ -219,46 +193,33 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T)
                         target_trj = trj_gen_fn(pIC, U_0)
 
-
-                        # Loop over initial-guess distances (relative to AS)
-                        for opt_init_dist in opt_init_dists:
-                            # Choose a guess U_0 at the requested distance from the true IC
-                            state_dist = AS * opt_init_dist
-                            True_IC_dist = jnp.linalg.norm(
-                                attractor_snapshots[unused_IC_mask, :] - U_0.reshape((1, -1)), axis=1
+                        for loss_crit in DA_opts.crit_list:
+                            loss_crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
+                            crit_dir = os.path.join(PI_root, f"{loss_crit}")
+                            loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn)
+                            loss_fn = create_loss_fn(
+                                loss_crit, stepper, target_trj, pIC, vel_part_trans
                             )
-                            IC_idx = jnp.argmin(jnp.abs(True_IC_dist - state_dist))
-                            U_0_guess = attractor_snapshots[
-                                IC_idx, :
-                            ]
-                            init_dist = jnp.linalg.norm(U_0_guess - U_0)/AS
-                            opt_init_dir = os.path.join(PI_root, "cases", f"{init_dist}")
 
-                            # Skip if this case directory already exists
-                            if os.path.isdir(opt_init_dir):
-                                print("skipping")
-                                continue
+                            # Loop over opt inits
+                            for _ in range(DA_opts.num_opt_inits):
+                                U_0_guess, actual_norm_dist = DA_opts.ic_init(U_0, pIC, loss_fn)
+                                opt_init_dir = os.path.join(crit_dir, "cases", f"{actual_norm_dist}")
 
-                            os.makedirs(opt_init_dir)
+                                # Skip if this case directory already exists
+                                if os.path.isdir(opt_init_dir):
+                                    print("skipping")
+                                    continue
 
-                            np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
-                            unused_IC_mask[IC_idx] = False
-                            # For each optimizer and loss criterion, run a DA case
-                            for optimizer in DA_opts.optimizer_list:
-                                opt_method_dir = os.path.join(
-                                    opt_init_dir, f"{optimizer}"
+                                os.makedirs(opt_init_dir)
+                                np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
+                    
+                                # For each optimizer and loss criterion, run a DA case
+                                for optimizer in DA_opts.optimizer_list:
+                                    opt_method_dir = os.path.join(
+                                        opt_init_dir, f"{optimizer}"
                                 )
-
-                                for loss_crit in DA_opts.crit_list:
-                                    loss_crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
-                                    crit_dir = os.path.join(opt_method_dir, f"{loss_crit}")
-                                    os.makedirs(crit_dir, exist_ok=True)
-
-                                    # Build the loss function from criterion and stepper
-                                    loss_fn = create_loss_fn(
-                                        loss_crit, stepper, target_trj, pIC, vel_part_trans
-                                    )
-                                    loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn)
+                                    os.makedirs(opt_method_dir)
 
 
                                     def omega_fn(U):
@@ -277,7 +238,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                 "T": [T],
                                                                 "n_part": [npart],
                                                                 "samp_period": [samp_period],
-                                                                "init_IC_distance": [opt_init_dist],
+                                                                "init_IC_distance": [float(actual_norm_dist)],
                                                                 "optimizer": [f"{optimizer}"],
                                                                 "loss_crit": [f"{loss_crit}"]
 
@@ -285,7 +246,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
             
 
-                                    _run_DA_case(target_trj, U_0_guess, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, crit_dir, kf_opts.dt,
+                                    _run_DA_case(target_trj, U_0_guess, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, opt_method_dir, kf_opts.dt,
                                                 omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
                                                 parquet_path)
                                     count += 1

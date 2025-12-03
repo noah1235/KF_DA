@@ -69,15 +69,14 @@ def build_hvp(f, x):
     return hvp
 
 
-def build_div_free_proj(stepper, vel_part_trans, return_type="2D"):
+def build_div_free_proj(stepper, vel_part_trans, M=None, return_type="2D"):
     NDOF = stepper.step.rhs.KF_RHS.N
     KX = stepper.step.rhs.KF_RHS.KX
     KY = stepper.step.rhs.KF_RHS.KY
     K2 = stepper.step.rhs.KF_RHS.K2
-    M = stepper.step.rhs.KF_RHS.M
-    
+    #M = stepper.step.rhs.KF_RHS.M
 
-    def transform_fn(U0_fourier):
+    def transform_fn(U0_fourier, M=None):
         U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U0_fourier)
         X_proj = project_divfree_rfft2(U_hat, KX, KY, K2, M, return_type)
         X = X_proj.reshape(-1)
@@ -87,10 +86,11 @@ def build_div_free_proj(stepper, vel_part_trans, return_type="2D"):
 
 def project_divfree_rfft2(U_hat, KX, KY, K2, M, return_type):
     # rFFT of components
-    #Ux = jnp.fft.rfft2(U[0]) * M
-    #Uy = jnp.fft.rfft2(U[1]) * M
-    Ux = U_hat[0] * M
-    Uy = U_hat[1] * M
+    Ux = U_hat[0]
+    Uy = U_hat[1]
+    if M is not None:
+        Ux = Ux * M
+        Uy = Uy * M
 
     # Longitudinal scale = (k·U)/|k|^2  (zero at DC)
     invK2 = jnp.where(K2 > 0.0, 1.0 / K2, 0.0)

@@ -310,9 +310,10 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, diag_string
         
 class NCSR1_and_BFGS:
-    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS):
+    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS, loops=1):
         self.NCSR1_opt = NCSR1_opt
         self.BFGS_opt = BFGS_opt
+        self.loops = loops
 
     def set_Bk_inv_for_BFGS(self):
         Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp(which="LM")
@@ -344,7 +345,7 @@ class NCSR1_and_BFGS:
     def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
         opt_data = None
         
-        for i in range(2):
+        for i in range(self.loops):
             U_0_DA_fourier, opt_data_1 = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
             self.set_Bk_inv_for_BFGS()
             U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
@@ -357,6 +358,6 @@ class NCSR1_and_BFGS:
         return U_0_DA_fourier, opt_data
     
     def __repr__(self):
-        name = f"{self.NCSR1_opt}__{self.BFGS_opt}"
+        name = f"{self.NCSR1_opt}__{self.BFGS_opt}__L={self.loops}"
         return name
 

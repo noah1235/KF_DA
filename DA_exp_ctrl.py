@@ -16,6 +16,8 @@ import os
 from create_results_dir import create_results_dir
 import pandas as pd
 from jax import config
+from SRC.Vel_init.AI import AI
+from SRC.Vel_init.CS_init import CS_init
 config.update("jax_enable_x64", True)
 
 def parquet_to_excel(parquet_path, excel_path=None):
@@ -58,17 +60,18 @@ def main():
         total_T=4000,
         min_samp_T=500,
         t_skip=1e-1
-
     )
+
     DA_opts = DA_Opts(
-        n_particles_list=[40],
+        n_particles_list=[50],
         sampling_period_list=[.1],
         part_opts=Particle_Opts(St=0, beta=0),
         num_particle_inits=1,
-        num_opt_inits=20,
+        num_opt_inits=1,
         num_seeds=1,
-        int_pert_range=(.1, 1),
-        T_list=[1.5],
+        #ic_init=AI(min_norm=.1, max_norm=1),
+        ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
+        T_list=[1],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
@@ -85,13 +88,13 @@ def main():
             #,
 
             NCSR1_and_BFGS(
-                NCSR1(its=2, eps_H=1e-6, max_memory=50,
+                NCSR1(its=5, eps_H=1e-6, max_memory=50,
                 cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
                 num_batch_hvp=2,
                 num_power_iters=1,
                 print_loss=True
                 ),
-                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, fallback_opt="eye", print_loss=True),
+                BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
             ),
 
             #NCSR1(its=4, eps_H=1e-6, max_memory=50,
@@ -101,7 +104,7 @@ def main():
             #print_loss=True
             #),
             #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
+            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=200, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),
@@ -113,7 +116,7 @@ def main():
         create_results_dir(),
         (
             f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}_NDOF={kf_opts.NDOF}"
-            f"-St={DA_opts.part_opts.St}_beta={DA_opts.part_opts.beta}"
+            f"-St={DA_opts.part_opts.St}_beta={DA_opts.part_opts.beta}_{DA_opts.ic_init}"
         ),
     )
 
