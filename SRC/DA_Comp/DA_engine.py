@@ -175,19 +175,53 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                     samp_p_root = os.path.join(npart_root, f"SP={samp_period}")
                     # Loop over particle initializations
                     
-                    for _ in range(DA_opts.num_particle_inits):
-                        PI_root = os.path.join(samp_p_root, "PI")
+                    PI_root_base = os.path.join(samp_p_root, "PI")
+                    base_seed = getattr(DA_opts, "particle_seed_base", 12345)
+                    for i in range(DA_opts.num_particle_inits):
+                        # ------------------------------------------------
+                        # 1) Choose a repeatable seed and folder name
+                        # ------------------------------------------------
+                        seed = base_seed + i
+                        PI_root = os.path.join(PI_root_base, f"seed_{seed}")
                         os.makedirs(PI_root, exist_ok=True)
 
-                        # Random particle ICs in the periodic domain
-                    
-                        pIC = init_particles_vector(npart,vel_part_trans.reshape_flattened_vel(U_0), (0, RHS.KF_RHS.L), (0, RHS.KF_RHS.L), RHS.KF_RHS.L)
-                        np.save(os.path.join(PI_root, "pIC.npy"), pIC)
+                        pIC_path = os.path.join(PI_root, "pIC.npy")
+                        fig_path = os.path.join(PI_root, "particle_IC.png")
 
-                        # Quick visualization of particle ICs
-                        fig, ax = plot_particles(pIC, RHS.KF_RHS.L, ax=None, s=20)
-                        fig.savefig(os.path.join(PI_root, "particle_IC.png"))
-                        plt.close()
+                        # ------------------------------------------------
+                        # 2) If pIC already exists, just load it
+                        # ------------------------------------------------
+                        if os.path.exists(pIC_path):
+                            print(f"[PI] Using existing pIC for seed {seed}")
+                            pIC = np.load(pIC_path)
+
+                        else:
+                            print(f"[PI] Generating new pIC for seed {seed}")
+
+                            # Make randomness repeatable for this init
+                            # Option A: if init_particles_vector uses np.random internally:
+                            np.random.seed(seed)
+
+                            # Option B (better): if init_particles_vector can take an rng argument:
+                            # rng = np.random.default_rng(seed)
+
+                            # Random particle ICs in the periodic domain
+                            pIC = init_particles_vector(
+                                npart,
+                                vel_part_trans.reshape_flattened_vel(U_0),
+                                (0, RHS.KF_RHS.L),
+                                (0, RHS.KF_RHS.L),
+                                RHS.KF_RHS.L,
+                                # rng=rng,  # uncomment if your function supports this
+                            )
+
+                            # Save pIC for reuse
+                            np.save(pIC_path, pIC)
+
+                            # Quick visualization of particle ICs (only when newly generated)
+                            fig, ax = plot_particles(pIC, RHS.KF_RHS.L, ax=None, s=20)
+                            fig.savefig(fig_path)
+                            plt.close(fig)
 
                         # Generate target trajectory by advecting particles with the true U_0
                         trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T)
