@@ -68,10 +68,10 @@ def main():
         part_opts=Particle_Opts(St=0, beta=0),
         num_particle_inits=2,
         num_opt_inits=1,
-        num_seeds=1,
+        num_seeds=5,
         #ic_init=AI(min_norm=.1, max_norm=1),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[1],
+        T_list=[1.5],
         optimizer_list=[
             #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
             #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
