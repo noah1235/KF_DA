@@ -76,7 +76,7 @@ def main():
         optimizer_list=[
 
             NCSR1_and_BFGS(
-                NCSR1(its=20, eps_H=1e-6, max_memory=50,
+                NCSR1(its=2, eps_H=1e-6, max_memory=50,
                 cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
                 num_batch_hvp=1,
                 num_power_iters=1,
@@ -84,11 +84,11 @@ def main():
                 ),
                 BFGS(
                     ls=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-                    its=100, fallback_opt="eye", print_loss=True),
+                    its=2, print_loss=True),
                 ),
 
 
-            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=300, fallback_opt="eye", print_loss=True),
+            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=4, print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),
@@ -104,7 +104,7 @@ def main():
         ),
     )
 
-    #DA_exp_main(kf_opts, DA_opts, root)
+    DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
     df = pd.read_parquet(os.path.join(root, "results.parquet"))
     global_post_main(df, root)

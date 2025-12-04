@@ -95,8 +95,8 @@ def equal_component_Q(g, k, key=None):
 
 class BFGS(LS_TR_Opt, BFGS_Update):
     name = "BFGS"
-    def __init__(self, ls, its, fallback_opt, print_loss=False):
-        BFGS_Update.__init__(self, fallback_opt)
+    def __init__(self, ls, its, print_loss=False):
+        BFGS_Update.__init__(self)
         self.ls = ls
         self.ls_method = ls.name
         self.its = its
@@ -105,11 +105,15 @@ class BFGS(LS_TR_Opt, BFGS_Update):
     def init_opt_params(self, N):
         if isinstance(self.ls, Cubic_TR):
             self.ls.init_opt()
-        super().init_opt_params(N)
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
         loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
+        loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
+
+        if iter == 0 and self.Bk_inv is None:
+            gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
+            curvature = gTHg / jnp.linalg.norm(grad)**2
+            self.Bk_inv = jnp.eye(grad.shape[0]) / jnp.abs(curvature)
 
         def jit_block(U_0_next):
             # Step and new loss/grad
@@ -134,6 +138,7 @@ class BFGS(LS_TR_Opt, BFGS_Update):
             pTHp = jnp.dot(pk, -grad)
             alpha = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
             debug_str = f"eta: {self.ls.eta}"
+
         U_0_next = self.step(U_0, alpha, pk, div_free_proj)
         alpha_pk = pk * alpha  # return value
         if last_iteration:
@@ -341,7 +346,7 @@ class NCSR1_and_BFGS:
         Bk_inv = (Bk_eig_vec_full * (1/Bk_eigs_full)) @ Bk_eig_vec_full.T
         Bk_inv = 0.5 * (Bk_inv + Bk_inv.T)
         Bk_inv = jnp.array(Bk_inv)
-        self.BFGS_opt.set_Bk_inv_init(Bk_inv)
+        self.BFGS_opt.Bk_inv = Bk_inv
 
     def set_Bk_for_SR1(self):
         n = self.NCSR1_opt._max_memory

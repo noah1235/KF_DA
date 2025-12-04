@@ -46,7 +46,6 @@ class Loss_and_Deriv_fns:
         self.loss_grad_evals += 1
 
         start = time.perf_counter()
-
         out = self.loss_grad_fn_jit(*args, **kwargs)
         out = jax.block_until_ready(out)
 
@@ -90,7 +89,6 @@ class Loss_and_Deriv_fns:
 
     def __repr__(self):
         return f"loss_evals: {self.loss_evals} | loss_grad_evals: {self.loss_grad_evals} | Hvp_evals: {self.Hvp_evals}"
-
 
 class Opt_Data:
     def __init__(self, its):
@@ -140,8 +138,6 @@ class Opt_Data:
 
         return out
         
-
-
 class LS_TR_Opt():
     def __init__(self, its, print_loss):
         self.its = its
@@ -170,7 +166,6 @@ class LS_TR_Opt():
 
         for i in range(self.its):
             if i == 0:
-                #loss, grad = loss_fn_and_derivs.loss_grad_fn(U_0)
                 loss, grad = loss_fn_and_derivs.loss_grad_adj_fn(U_0)
             loss_prev = loss
             grad_prev = grad

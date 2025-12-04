@@ -155,26 +155,9 @@ class L_SR1():
         self.Bk.append(u, gamma)
 
     
-
 class BFGS_Update():
-    def __init__(self, fallback_opt):
-        if fallback_opt == "eye":
-            self.fallback = self.eye_fallback
-        self.Bk_inv_init = None
-
-    def set_Bk_inv_init(self, mat):
-        self.Bk_inv_init = mat
-
-
-    @staticmethod
-    def eye_fallback(N):
-        return jnp.eye(N)
-    
-    def init_opt_params(self, N):
-        if self.Bk_inv_init is not None:
-            self.Bk_inv = self.Bk_inv_init
-        else:
-            self.Bk_inv = self.fallback(N)
+    def __init__(self,):
+        self.Bk_inv = None
 
     def Bk_inv_update(self, ys, sk, yk):
         I = jnp.eye(yk.shape[0], dtype=self.Bk_inv.dtype)

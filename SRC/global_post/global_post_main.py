@@ -51,7 +51,9 @@ def global_post_main(df: pd.DataFrame, root: str) -> None:
                     loss_eval_time = opt_df["loss_avg_eval_time"].to_numpy()
                     loss_grad_cost = opt_df["loss_grad_avg_eval_time"].to_numpy() / loss_eval_time
                     Hvp_cost = opt_df["Hvp_avg_eval_time"].to_numpy() / loss_eval_time
-
+                    
+                    avg_loss_grad_cost = np.mean(loss_grad_cost)
+                    avg_Hvp_cost = np.mean(Hvp_cost)
                     # Broadcast costs over iterations
                     total_cost = (
                         loss_evals_record
@@ -65,10 +67,10 @@ def global_post_main(df: pd.DataFrame, root: str) -> None:
                     # Loss vs cost for each run
                     fig, ax = plt.subplots(figsize=(10, 6))
                     ax.plot(total_cost.T, loss_traces.T)
-                    plt.axvline(avg_cost_trace[19])
                     ax.set_yscale("log")
                     ax.set_xlabel("cost")
                     ax.set_ylabel("loss")
+                    plt.title(f"avg loss grad cost: {avg_loss_grad_cost:.2f} | avg Hvp cost: {avg_Hvp_cost:.2f}")
                     fig.tight_layout()
                     fig.savefig(os.path.join(save_root, "loss_v_cost.png"))
                     plt.close(fig)
