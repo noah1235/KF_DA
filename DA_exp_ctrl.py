@@ -78,7 +78,7 @@ def main():
             NCSR1_and_BFGS(
                 NCSR1(its=20, eps_H=1e-6, max_memory=50,
                 cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-                num_batch_hvp=2,
+                num_batch_hvp=1,
                 num_power_iters=1,
                 print_loss=True
                 ),
@@ -88,7 +88,7 @@ def main():
                 ),
 
 
-            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
+            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=300, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),
@@ -107,9 +107,7 @@ def main():
     #DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
     df = pd.read_parquet(os.path.join(root, "results.parquet"))
-    for crit in DA_opts.crit_list:
-        for opt in DA_opts.optimizer_list:
-            global_post_main(df, opt, crit, root)
+    global_post_main(df, root)
 
 def adjoint_test():
     def hvp_many(loss_fn, x, V):
