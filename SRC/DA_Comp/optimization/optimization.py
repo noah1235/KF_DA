@@ -111,6 +111,10 @@ class BFGS(LS_TR_Opt, BFGS_Update):
         loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
 
         if iter == 0 and self.Bk_inv is None:
+            Q = equal_component_Q(grad, 5)
+            HQ = loss_fn_and_derivs.Hvp_adj_fn(Q)
+            qTHq = jnp.sum(Q * HQ, axis=0)
+
             gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
             curvature = gTHg / jnp.linalg.norm(grad)**2
             self.Bk_inv = jnp.eye(grad.shape[0]) / jnp.abs(curvature)
