@@ -292,7 +292,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 def _run_DA_case(
     target_trj: np.ndarray | jnp.ndarray,
     U_0_guess: np.ndarray | jnp.ndarray,
-    loss_fn_and_derivs,
+    loss_fn_and_derivs: Loss_and_Deriv_fns,
     optimizer: LS_TR_Opt,
     trj_gen_fn,
     pIC,
@@ -321,12 +321,9 @@ def _run_DA_case(
     optimizer : Hessian_Optimizer | LBFGS
         Optimizer configuration object (used to dispatch the optimization routine).
     """
-
+    loss_fn_and_derivs.reset_cost_count()
     U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
     U_0_DA_fourier, opt_data = optimizer.opt_loop(U_0_guess_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-    print(loss_fn_and_derivs)
-    print(opt_data.loss_evals_record[-1], opt_data.loss_grad_evals_record[-1], opt_data.Hvp_evals_record[-1])
-    print("----")
 
     #elif isinstance(optimizer, LBFGS) or isinstance(optimizer, ADAM):
     #    return
@@ -362,6 +359,14 @@ def _run_DA_case(
     results_df["loss_evals_record"] = [opt_data.loss_evals_record]
     results_df["loss_grad_evals_record"] = [opt_data.loss_grad_evals_record]
     results_df["Hvp_evals_record"] = [opt_data.Hvp_evals_record]
+
+    results_df["loss_avg_eval_time"] = [loss_fn_and_derivs.loss_time_total / loss_fn_and_derivs.loss_evals]
+    results_df["loss_grad_avg_eval_time"] = [loss_fn_and_derivs.loss_grad_time_total / loss_fn_and_derivs.loss_grad_evals]
+    if loss_fn_and_derivs.Hvp_evals > 0:
+        results_df["Hvp_avg_eval_time"] = [loss_fn_and_derivs.Hvp_time_total / loss_fn_and_derivs.Hvp_evals]
+    else:
+        results_df["Hvp_avg_eval_time"] = [0]
+
 
     #saving npy files
     np.save(os.path.join(save_dir, "DA_trj.npy"), np.array(DA_trj))

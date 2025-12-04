@@ -5,6 +5,7 @@ import functools
 from SRC.DA_Comp.adjoint import Adjoint_Solver
 from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
+import time
 
 class Loss_and_Deriv_fns:
     def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
@@ -19,25 +20,73 @@ class Loss_and_Deriv_fns:
         self.loss_fn_jit = jax.jit(loss_fn_base)
         self.loss_grad_fn_jit = jax.jit(loss_grad_fn_base)
 
+    def reset_cost_count(self):
         self.loss_evals = 0
         self.loss_grad_evals = 0
         self.Hvp_evals = 0
 
+        self.loss_time_total = 0
+        self.loss_grad_time_total = 0.0
+        self.Hvp_time_total = 0.0
+
+
     def loss_fn(self, *args, **kwargs):
         self.loss_evals += 1
-        return self.loss_fn_jit(*args, **kwargs)
-    
+
+        start = time.perf_counter()
+        out = self.loss_fn_jit(*args, **kwargs)
+        out = jax.block_until_ready(out)
+        dt = time.perf_counter() - start
+
+        self.loss_time_total += dt
+
+        return out
+        
     def loss_grad_fn(self, *args, **kwargs):
         self.loss_grad_evals += 1
-        return self.loss_grad_fn_jit(*args, **kwargs)
-    
+
+        start = time.perf_counter()
+
+        out = self.loss_grad_fn_jit(*args, **kwargs)
+        out = jax.block_until_ready(out)
+
+        end = time.perf_counter()
+        dt = end - start
+        self.loss_grad_time_total += dt
+
+        return out
+
+
     def loss_grad_adj_fn(self, *args, **kwargs):
         self.loss_grad_evals += 1
-        return self.adj_solver.compute_grad(*args, **kwargs)
-    
+
+        start = time.perf_counter()
+
+        out = self.adj_solver.compute_grad(*args, **kwargs)
+        out = jax.block_until_ready(out)
+
+        end = time.perf_counter()
+        dt = end - start
+        self.loss_grad_time_total += dt
+
+        return out
+
+
     def Hvp_adj_fn(self, Q):
-        self.Hvp_evals += Q.shape[1]
-        return self.adj_solver.compute_Hvp(Q)  
+        # If Q has k columns, one call = k HVPs
+        k = Q.shape[1]
+        self.Hvp_evals += k
+
+        start = time.perf_counter()
+
+        out = self.adj_solver.compute_Hvp(Q)
+        out = jax.block_until_ready(out)
+
+        end = time.perf_counter()
+        dt = end - start
+        self.Hvp_time_total += dt
+
+        return out 
 
     def __repr__(self):
         return f"loss_evals: {self.loss_evals} | loss_grad_evals: {self.loss_grad_evals} | Hvp_evals: {self.Hvp_evals}"
@@ -126,8 +175,6 @@ class LS_TR_Opt():
             loss_prev = loss
             grad_prev = grad
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals
-            Hvp_evals_prev = loss_fn_and_derivs.Hvp_evals
-
             #last iteration
             if i == (self.its-1):
                 U_0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, i, last_iteration=True)
@@ -141,6 +188,7 @@ class LS_TR_Opt():
                 opt_data.early_stop_update(i)
                 break
             loss_evals_prev = loss_fn_and_derivs.loss_evals
+            Hvp_evals_prev = loss_fn_and_derivs.Hvp_evals
             opt_data(i, loss_prev, grad_prev, alpha_pk, loss_evals_prev, loss_grad_evals_prev, Hvp_evals_prev)
 
             if self.print_loss:

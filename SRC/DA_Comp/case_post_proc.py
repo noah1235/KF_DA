@@ -178,5 +178,6 @@ def plot_convergence(opt_data, save_dir, y_min=1e-18):
 
     # --- keep your saving logic exactly ---
     fig.savefig(os.path.join(save_dir, "convergence.png"), dpi=200)
+    plt.close()
 
     return fig, ax

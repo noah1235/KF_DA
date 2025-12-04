@@ -18,6 +18,7 @@ import pandas as pd
 from jax import config
 from SRC.Vel_init.AI import AI
 from SRC.Vel_init.CS_init import CS_init
+from SRC.global_post.global_post_main import global_post_main
 config.update("jax_enable_x64", True)
 
 def parquet_to_excel(parquet_path, excel_path=None):
@@ -66,48 +67,28 @@ def main():
         n_particles_list=[50],
         sampling_period_list=[.1],
         part_opts=Particle_Opts(St=0, beta=0),
-        num_particle_inits=2,
+        num_particle_inits=1,
         num_opt_inits=1,
-        num_seeds=5,
+        num_seeds=1,
         #ic_init=AI(min_norm=.1, max_norm=1),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[1.5],
+        T_list=[2],
         optimizer_list=[
-            #NCN(ls_method="BT", its=10, cond_num_cutoff=1e4)
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=50, fallback_opt="eye", print_loss=True),
-            
-            #NCSR1(its=25, eps_H=1e-6, max_memory=20,
-            #       cubic_TR=Cubic_TR(rho=30, eta_min=1e-14, eta_0=1e-2, eta_max=1e6),
-            #       grad_prob=0.9, neg_curve_prob=0, num_hvp_iters=5, print_loss=True
-            #       ),
-
-            #NCSR1(its=5, eps_H=1e-6, max_memory=50,
-            #cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-            #grad_prob=0.9, neg_curve_prob=0, num_hvp_iters=5, psd_stop=False,
-            #print_loss=True
-            #,
 
             NCSR1_and_BFGS(
-                NCSR1(its=1, eps_H=1e-6, max_memory=50,
+                NCSR1(its=20, eps_H=1e-6, max_memory=50,
                 cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
                 num_batch_hvp=2,
                 num_power_iters=1,
                 print_loss=True
                 ),
                 BFGS(
-                    #ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
                     ls=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-                    its=1, fallback_opt="eye", print_loss=True),
-            ),
+                    its=100, fallback_opt="eye", print_loss=True),
+                ),
 
-            #NCSR1(its=4, eps_H=1e-6, max_memory=50,
-            #cubic_TR=Cubic_TR(rho_trg=.8, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e6),
-            #num_batch_hvp=5,
-            #num_power_iters=2,
-            #print_loss=True
-            #),
-            #PCGBFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=2, n_hvp=5, fallback_opt="eye", print_loss=True),
-            #BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=200, fallback_opt="eye", print_loss=True),
+
+            BFGS(ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), its=400, fallback_opt="eye", print_loss=True),
         ],
         crit_list=[
             #MSE_PP(),
@@ -123,8 +104,12 @@ def main():
         ),
     )
 
-    DA_exp_main(kf_opts, DA_opts, root)
+    #DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
+    df = pd.read_parquet(os.path.join(root, "results.parquet"))
+    for crit in DA_opts.crit_list:
+        for opt in DA_opts.optimizer_list:
+            global_post_main(df, opt, crit, root)
 
 def adjoint_test():
     def hvp_many(loss_fn, x, V):
