@@ -96,15 +96,17 @@ def equal_component_Q(g, k, key=None):
 class BFGS(LS_TR_Opt, BFGS_Update):
     name = "BFGS"
     def __init__(self, ls, its, print_loss=False):
-        BFGS_Update.__init__(self)
         self.ls = ls
         self.ls_method = ls.name
         self.its = its
         self.print_loss = print_loss
+        self.Bk_inv_init = None
 
     def init_opt_params(self, N):
         if isinstance(self.ls, Cubic_TR):
             self.ls.init_opt()
+        self.Bk = self.Bk_inv_init
+        self.Bk_inv_init = None
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
         loss_fn = loss_fn_and_derivs.loss_fn
@@ -273,8 +275,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             
 
         NCN_min_eig = self.eps_H
-        #Bk_eigs = jnp.array([self.Bk.Bk_scalars[0]])
-        #Bk_eig_vec = self.Bk.Bk_vecs[:, 0].reshape((-1, 1))
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
         if False and jnp.min(Bk_eigs) < -self.eps_H:
             step_type = "neg curve"
@@ -353,7 +353,7 @@ class NCSR1_and_BFGS:
         Bk_inv = (Bk_eig_vec_full * (1/Bk_eigs_full)) @ Bk_eig_vec_full.T
         Bk_inv = 0.5 * (Bk_inv + Bk_inv.T)
         Bk_inv = jnp.array(Bk_inv)
-        self.BFGS_opt.Bk_inv = Bk_inv
+        self.BFGS_opt.Bk_inv_init = Bk_inv
 
     def set_Bk_for_SR1(self):
         n = self.NCSR1_opt._max_memory

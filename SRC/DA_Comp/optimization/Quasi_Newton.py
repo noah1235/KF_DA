@@ -156,8 +156,6 @@ class L_SR1():
 
     
 class BFGS_Update():
-    def __init__(self,):
-        self.Bk_inv = None
 
     def Bk_inv_update(self, ys, sk, yk):
         I = jnp.eye(yk.shape[0], dtype=self.Bk_inv.dtype)
