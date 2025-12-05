@@ -254,24 +254,24 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if len(self.Bk) == 0:
             Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
         else:
-            _, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
-            g_proj = Q @ (Q.T @ grad)
-            r = grad - g_proj
-            u = r / jnp.linalg.norm(r)
-            Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
+            #_, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
+            #g_proj = Q @ (Q.T @ grad)
+            #r = grad - g_proj
+            #u = r / jnp.linalg.norm(r)
+            #Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
+            Q = (grad/jnp.linalg.norm(grad)).reshape((-1, 1))
 
 
-        for i in range(self.num_power_iters):
-            HQ = hvp(Q)
-            qTHq = jnp.sum(Q * HQ, axis=0)
-            self.HVP_Bk_update(qTHq, Q)
-            if False:
-                for i in range(qTHq.shape[0]):
-                    xi = Q[:, i]
-                    t = jnp.dot(xi, self.Bk @ xi)
-                    print(t, qTHq[i])
-                print("----")
-            Q, R = jnp.linalg.qr(HQ, mode="reduced")
+        HQ = hvp(Q)
+        qTHq = jnp.sum(Q * HQ, axis=0)
+        self.HVP_Bk_update(qTHq, Q)
+        if False:
+            for i in range(qTHq.shape[0]):
+                xi = Q[:, i]
+                t = jnp.dot(xi, self.Bk @ xi)
+                print(t, qTHq[i])
+            print("----")
+
             
 
         NCN_min_eig = self.eps_H
