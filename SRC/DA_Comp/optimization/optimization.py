@@ -105,7 +105,7 @@ class BFGS(LS_TR_Opt, BFGS_Update):
     def init_opt_params(self, N):
         if isinstance(self.ls, Cubic_TR):
             self.ls.init_opt()
-        self.Bk = self.Bk_inv_init
+        self.Bk_inv = self.Bk_inv_init
         self.Bk_inv_init = None
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
