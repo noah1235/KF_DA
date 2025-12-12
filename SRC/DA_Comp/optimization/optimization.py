@@ -12,7 +12,6 @@ from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, BFGS_Update
 import numpy as np
-
 def equal_component_Q(g, k, key=None):
     """
     Construct Q ∈ R^{k×n} with orthonormal rows such that:
@@ -184,9 +183,11 @@ class PCGBFGS(BFGS):
             return hvp_fn(v.reshape((-1, 1))).squeeze()
 
         def matvec(v):
-            S.append(v)
+            
             Hv = matvec_base(v)
-            Y.append(Hv)
+            if jnp.dot(v, Hv) > 0:
+                S.append(v)
+                Y.append(Hv)
             return Hv
 
 
@@ -195,7 +196,16 @@ class PCGBFGS(BFGS):
         S = jnp.vstack(S).T
         Y = jnp.vstack(Y).T
         R = S - self.Bk_inv @ Y
-        self.Bk_inv = self.Bk_inv + R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
+        k = Y.shape[0]
+    
+        M = Y.T @ R
+        eigs, eig_vecs = jnp.linalg.eigh(M)
+        mask = eigs > 0
+        #eigs = eigs[mask]
+        #eig_vecs = eig_vecs[:, mask]
+        update = R @ (eig_vecs @ jnp.diag(1/eigs) @ eig_vecs.T) @ R.T
+        #update = R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
+        self.Bk_inv = self.Bk_inv + update
         if info == "indef":
             neg_vec, neg_val = pk
             print(neg_val, S.shape)
@@ -203,25 +213,6 @@ class PCGBFGS(BFGS):
             pk = neg_vec
             if jnp.dot(pk, grad) > 0:
                 pk = -pk
-                
-            if isinstance(self.ls, ArmijoLineSearch):
-                alpha = self.ls(loss_fn, loss, U_0, pk, grad)
-                debug_str = ""
-            U_0_next = self.step(U_0, alpha, pk, div_free_proj)
-            alpha_pk = pk * alpha  # return value
-
-            #Bk_inv update
-            loss_next, grad_next = loss_grad_fn(U_0_next)
-            sk = U_0_next - U_0
-            yk = grad_next - grad
-            r = sk - self.Bk_inv @ yk
-            ryk = jnp.dot(r, yk)
-            if jnp.abs(ryk) > eps:
-                gamma = 1/ryk
-                self.Bk_inv = self.Bk_inv + gamma * jnp.outer(r, r)
-                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {True}"
-            else:
-                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {False}"
         else:
             if False:
                 for i in range(5):
@@ -232,7 +223,7 @@ class PCGBFGS(BFGS):
             #print(jnp.linalg.norm(matvec_base(pk) + grad) / jnp.linalg.norm(grad))
             #print(jnp.linalg.norm(matvec_base(pkt) + grad) / jnp.linalg.norm(grad))
             #print("---")
-            return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
+        return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
 
 
