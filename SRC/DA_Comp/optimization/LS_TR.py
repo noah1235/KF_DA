@@ -138,13 +138,14 @@ class Cubic_TR:
         # Solve aα² + bα + c = 0 → α = (-b + sqrt(b² - 4ac)) / (2a)
         disc = b * b - 4 * a * c
         if disc < 0 or a == 0:
-            alpha = self.BT_ls(loss_fn, x0, pk, g)
+            alpha = self.BT_ls(loss_fn, loss, x0, pk, g)
             return float(alpha)
+
 
         alpha = (-b + jnp.sqrt(disc)) / (2 * a)
         if jnp.isnan(alpha) or jnp.isinf(alpha) or alpha <= 0:
             print(f"alpha invalid | a={a}, b={b}, c={c}")
-            alpha = self.BT_ls(loss_fn, x0, pk, g)
+            alpha = self.BT_ls(loss_fn, loss, x0, pk, g)
             return float(alpha)
 
         try:

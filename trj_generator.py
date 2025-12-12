@@ -77,7 +77,7 @@ def _generate_single_trj(args):
 
 # ---- main dataset generator ----
 def generate_KF_dataset():
-    NDOF = 64
+    NDOF = 32
     Re = 200
     n  = 4
     dt = 1e-2

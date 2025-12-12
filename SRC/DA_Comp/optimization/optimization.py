@@ -228,7 +228,7 @@ class PCGBFGS(BFGS):
         
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
-                cubic_TR: Cubic_TR,
+                ls,
                 num_batch_hvp=5,
                 num_power_iters=2,
                 SR1_type="conv",
@@ -236,13 +236,13 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         LS_TR_Opt.__init__(self, its, print_loss)
         self.set_SR1_update_type(SR1_type)
         self.name = "NCSR1"
-        self.ls_method = cubic_TR.name
+        self.ls_method = ls.name
         if SR1_type == "mod":
             self.name += "M"
 
         self.eps_H = eps_H
         self._max_memory = max_memory
-        self.cubic_TR = cubic_TR
+        self.ls = ls
         
         self.num_batch_hvp = num_batch_hvp
         self.num_power_iters = num_power_iters
@@ -254,12 +254,12 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if len(self.Bk) == 0:
             Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
         else:
-            #_, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
-            #g_proj = Q @ (Q.T @ grad)
-            #r = grad - g_proj
-            #u = r / jnp.linalg.norm(r)
-            #Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
-            Q = (grad/jnp.linalg.norm(grad)).reshape((-1, 1))
+            _, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
+            g_proj = Q @ (Q.T @ grad)
+            r = grad - g_proj
+            u = r / jnp.linalg.norm(r)
+            Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
+            #Q = (grad/jnp.linalg.norm(grad)).reshape((-1, 1))
 
 
         HQ = hvp(Q)
@@ -306,7 +306,8 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.init_Bk = False
         self.Bk = L_BK(self._max_memory, N)
         self.current_memory = 0
-        self.cubic_TR.init_opt()
+        if isinstance(self.ls, Cubic_TR):
+            self.ls.init_opt()
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
         N = U_0.shape[0]
@@ -316,21 +317,27 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         hvp = loss_fn_and_derivs.Hvp_adj_fn
 
         pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
-        pTHp = jnp.dot(pk, self.Bk @ pk)
-        alpha = self.cubic_TR.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
+        if isinstance(self.ls, ArmijoLineSearch):
+            alpha = self.ls(loss_fn, loss, U_0, pk, grad)
+            debug_str = ""
+        elif isinstance(self.ls, Cubic_TR):
+            pTHp = jnp.dot(pk, -grad)
+            alpha = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
+            debug_str = f"eta: {self.ls.eta}"
+
         alpha_pk = pk * alpha
 
         # Step and new loss/grad
         U_0_next = self.step(U_0, alpha, pk, div_free_proj)
-        diag_string = f"step type: {step_type} | eta: {self.cubic_TR.eta:.2e}"
+        debug_str = f"step type: {step_type} | " + debug_str
         
         if last_iteration:
-            return U_0_next, np.nan, np.nan, alpha, alpha_pk, diag_string
+            return U_0_next, np.nan, np.nan, alpha, alpha_pk, debug_str
         else:
             loss_next, grad_next = loss_grad_fn(U_0_next)
             self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
 
-            return U_0_next, loss_next, grad_next, alpha, alpha_pk, diag_string
+            return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
         
 class NCSR1_and_BFGS:
     def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS, loops=1):
@@ -372,7 +379,7 @@ class NCSR1_and_BFGS:
             U_0_DA_fourier, opt_data_1 = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
             self.set_Bk_inv_for_BFGS()
             U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-            self.set_Bk_for_SR1()
+            #self.set_Bk_for_SR1()
             if opt_data is None:
                 opt_data = opt_data_1 + opt_data_2
             else:
