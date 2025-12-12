@@ -70,8 +70,8 @@ def main():
         num_particle_inits=3,
         num_opt_inits=1,
         num_seeds=1,
-        #ic_init=AI(min_norm=.1, max_norm=1),
-        ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
+        ic_init=AI(min_norm=.1, max_norm=1),
+        #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
         T_list=[1],
         optimizer_list=[
             NCSR1_and_BFGS(
