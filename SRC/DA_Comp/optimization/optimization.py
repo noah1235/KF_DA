@@ -12,6 +12,7 @@ from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, BFGS_Update
 import numpy as np
+from scipy.optimize import minimize
 def equal_component_Q(g, k, key=None):
     """
     Construct Q ∈ R^{k×n} with orthonormal rows such that:
@@ -91,6 +92,7 @@ def equal_component_Q(g, k, key=None):
     Q = R @ U  # shape (k, n)
 
     return Q
+
 
 class BFGS(LS_TR_Opt, BFGS_Update):
     name = "BFGS"
@@ -191,21 +193,26 @@ class PCGBFGS(BFGS):
             return Hv
 
 
-        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, max_iters=self.n_hvp)
-        pkt = self.Bk_inv @ -grad
+        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, max_iters=1)
         S = jnp.vstack(S).T
         Y = jnp.vstack(Y).T
-        R = S - self.Bk_inv @ Y
-        k = Y.shape[0]
-    
-        M = Y.T @ R
-        eigs, eig_vecs = jnp.linalg.eigh(M)
-        mask = eigs > 0
-        #eigs = eigs[mask]
-        #eig_vecs = eig_vecs[:, mask]
-        update = R @ (eig_vecs @ jnp.diag(1/eigs) @ eig_vecs.T) @ R.T
-        #update = R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
-        self.Bk_inv = self.Bk_inv + update
+        if S.shape[1] == 1:
+            print(4939439)
+            s = S.squeeze()
+            y = Y.squeeze()
+            ys = jnp.dot(y, s)
+            self.Bk_inv_update(ys, s, y)
+        if False:
+            R = S - self.Bk_inv @ Y    
+            M = Y.T @ R
+            eigs, eig_vecs = jnp.linalg.eigh(M)
+            #mask = eigs > 0
+            #eigs = eigs[mask]
+            #eig_vecs = eig_vecs[:, mask]
+            update = R @ (eig_vecs @ jnp.diag(1/eigs) @ eig_vecs.T) @ R.T
+            #update = R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
+            self.Bk_inv = self.Bk_inv + update
+
         if info == "indef":
             neg_vec, neg_val = pk
             print(neg_val, S.shape)
@@ -214,8 +221,8 @@ class PCGBFGS(BFGS):
             if jnp.dot(pk, grad) > 0:
                 pk = -pk
         else:
-            if False:
-                for i in range(5):
+            if True:
+                for i in range(1):
                     v = S[:, i]
                     Hv = Y[:, i]
                     print(jnp.linalg.norm(self.Bk_inv @ Hv - v) / jnp.linalg.norm(v), jnp.linalg.norm(v))
