@@ -179,11 +179,17 @@ class PCGBFGS(BFGS):
         S = []
         Y = []
         reg = jnp.eye(U_0.shape[0]) * 1e-10
+
+        def matvec_base(v):
+            return hvp_fn(v.reshape((-1, 1))).squeeze()
+
         def matvec(v):
             S.append(v)
-            Hv = hvp_fn(v.reshape((-1, 1))).squeeze()
+            Hv = matvec_base(v)
             Y.append(Hv)
-            return Hv + reg @ v
+            return Hv
+
+
 
         pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, max_iters=self.n_hvp)
         if info == "indef":
@@ -194,11 +200,14 @@ class PCGBFGS(BFGS):
             if jnp.dot(pk, grad) > 0:
                 pk = -pk
         else:
+            pkt = self.Bk_inv @ -grad
             S = jnp.vstack(S).T
             Y = jnp.vstack(Y).T
             R = S - self.Bk_inv @ Y
             self.Bk_inv = self.Bk_inv + R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
-            print(jnp.linalg.norm(hvp_fn(pk.reshape((-1, 1))).squeeze() + reg @ pk + grad) / jnp.linalg.norm(grad))
+            print(jnp.linalg.norm(matvec_base(pk) + grad) / jnp.linalg.norm(grad))
+            
+            print(jnp.linalg.norm(matvec_base(pkt) + grad) / jnp.linalg.norm(grad))
             print("---")
 
             if False:
