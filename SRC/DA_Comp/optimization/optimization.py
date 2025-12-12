@@ -203,6 +203,25 @@ class PCGBFGS(BFGS):
             pk = neg_vec
             if jnp.dot(pk, grad) > 0:
                 pk = -pk
+                
+            if isinstance(self.ls, ArmijoLineSearch):
+                alpha = self.ls(loss_fn, loss, U_0, pk, grad)
+                debug_str = ""
+            U_0_next = self.step(U_0, alpha, pk, div_free_proj)
+            alpha_pk = pk * alpha  # return value
+
+            #Bk_inv update
+            loss_next, grad_next = loss_grad_fn(U_0_next)
+            sk = U_0_next - U_0
+            yk = grad_next - grad
+            r = sk - self.Bk_inv @ yk
+            ryk = jnp.dot(r, yk)
+            if jnp.abs(ryk) > eps:
+                gamma = 1/ryk
+                self.Bk_inv = self.Bk_inv + gamma * jnp.outer(r, r)
+                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {True}"
+            else:
+                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {False}"
         else:
             if False:
                 for i in range(5):
@@ -210,28 +229,14 @@ class PCGBFGS(BFGS):
                     Hv = Y[:, i]
                     print(jnp.linalg.norm(self.Bk_inv @ Hv - v) / jnp.linalg.norm(v), jnp.linalg.norm(v))
                     print("-----")
-            print(jnp.linalg.norm(matvec_base(pk) + grad) / jnp.linalg.norm(grad))
-            print(jnp.linalg.norm(matvec_base(pkt) + grad) / jnp.linalg.norm(grad))
-            print("---")
-        if isinstance(self.ls, ArmijoLineSearch):
-            alpha = self.ls(loss_fn, loss, U_0, pk, grad)
-            debug_str = ""
-        U_0_next = self.step(U_0, alpha, pk, div_free_proj)
-        alpha_pk = pk * alpha  # return value
+            #print(jnp.linalg.norm(matvec_base(pk) + grad) / jnp.linalg.norm(grad))
+            #print(jnp.linalg.norm(matvec_base(pkt) + grad) / jnp.linalg.norm(grad))
+            #print("---")
+            return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
-        #Bk_inv update
-        loss_next, grad_next = loss_grad_fn(U_0_next)
-        sk = U_0_next - U_0
-        yk = grad_next - grad
-        r = sk - self.Bk_inv @ yk
-        gamma = 1/jnp.dot(r, yk)
-        if jnp.abs(gamma) > eps:
-            self.Bk_inv = self.Bk_inv + gamma * jnp.outer(r, r)
-            return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {True}"
-        else:
-            return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {False}"
 
-        #return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
+
+        
         
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
