@@ -77,7 +77,7 @@ def _generate_single_trj(args):
 
 # ---- main dataset generator ----
 def generate_KF_dataset():
-    NDOF = 32
+    NDOF = 64
     Re = 100
     n  = 4
     dt = 1e-2
@@ -86,7 +86,7 @@ def generate_KF_dataset():
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
     num_inits = 8
-    n_workers = 4
+    n_workers = 8
 
 
     # Build argument list for workers
