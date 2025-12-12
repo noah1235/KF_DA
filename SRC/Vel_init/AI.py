@@ -12,8 +12,10 @@ class AI(IC_init):
         self.unused_IC_mask = np.ones(attractor_snapshots.shape[0], dtype=np.bool)
         self.attractor_rad = self.calc_attractor_size(attractor_snapshots)
 
-
-    def __call__(self, U_0):
+    def __repr__(self):
+        return "AI"
+    
+    def __call__(self, U_0, pIC, DA_loss_fn_base):
         norm_dist = np.random.uniform(
                 low=self.min_norm,
                 high=self.max_norm,
