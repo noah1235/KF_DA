@@ -140,7 +140,7 @@ class L_SR1():
         
         self.Bk.append(r, 1/denom)
 
-    def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
+    def SR1_update_mod_dec(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
         s = U_0_next - U_0
         y = grad_next - grad
         theta = 6 * (loss - loss_next) + 3 * jnp.dot(((grad_next - grad)), s)
@@ -153,6 +153,27 @@ class L_SR1():
             removed_vec, removed_scalar = self.Bk.pop(0)
 
         self.Bk.append(u, gamma)
+
+    def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
+        print("BFGS update")
+        s = U_0_next - U_0
+        y = grad_next - grad
+        gamma_1 = -1/jnp.dot(s, self.Bk@s)
+        u1 = self.Bk @ s
+        maxed_mem = self.Bk.get_num_open_slots() == 0
+        if maxed_mem:
+            removed_vec, removed_scalar = self.Bk.pop(0)
+        self.Bk.append(u1, gamma_1)
+
+        gamma_2 = 1/jnp.dot(y, s)
+        u2 = y
+        maxed_mem = self.Bk.get_num_open_slots() == 0
+        if maxed_mem:
+            removed_vec, removed_scalar = self.Bk.pop(0)
+        self.Bk.append(u2, gamma_2)
+
+
+        
 
     
 class BFGS_Update():

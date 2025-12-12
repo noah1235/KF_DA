@@ -72,7 +72,7 @@ def main():
         num_seeds=3,
         #ic_init=AI(min_norm=.1, max_norm=1),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[3],
+        T_list=[1],
         optimizer_list=[
 
 
@@ -82,6 +82,7 @@ def main():
                 #ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10), 
                 num_batch_hvp=5,
                 num_power_iters=1,
+                SR1_type="mod",
                 print_loss=True
                 ),
                 BFGS(
