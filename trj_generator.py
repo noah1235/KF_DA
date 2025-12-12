@@ -86,7 +86,7 @@ def generate_KF_dataset():
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
     num_inits = 8
-    n_workers = 4
+    n_workers = 8
 
 
     # Build argument list for workers

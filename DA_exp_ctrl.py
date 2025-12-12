@@ -67,12 +67,12 @@ def main():
         n_particles_list=[25],
         sampling_period_list=[.01],
         part_opts=Particle_Opts(St=0, beta=0),
-        num_particle_inits=3,
+        num_particle_inits=5,
         num_opt_inits=1,
-        num_seeds=1,
-        ic_init=AI(min_norm=.1, max_norm=1),
-        #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[1],
+        num_seeds=5,
+        #ic_init=AI(min_norm=.1, max_norm=1),
+        ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
+        T_list=[2.5],
         optimizer_list=[
             NCSR1_and_BFGS(
                 NCSR1(its=10, eps_H=1e-8, max_memory=50,
