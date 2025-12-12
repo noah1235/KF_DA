@@ -77,8 +77,8 @@ def _generate_single_trj(args):
 
 # ---- main dataset generator ----
 def generate_KF_dataset():
-    NDOF = 32
-    Re = 100
+    NDOF = 64
+    Re = 200
     n  = 4
     dt = 1e-2
     T = 1e3
@@ -217,8 +217,8 @@ def generate_KF_energy_plots():
     print(f"Saved: {outpath}")
 
 def generate_sample_case_ani():
-    NDOF = 64
-    Re = 100
+    NDOF = 32
+    Re = 200
     beta = 0
     St = 0
     n  = 4

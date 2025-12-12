@@ -65,7 +65,7 @@ def main():
 
     DA_opts = DA_Opts(
         n_particles_list=[25],
-        sampling_period_list=[.05],
+        sampling_period_list=[.01],
         part_opts=Particle_Opts(St=0, beta=0),
         num_particle_inits=3,
         num_opt_inits=1,
@@ -75,19 +75,19 @@ def main():
         T_list=[1],
         optimizer_list=[
             NCSR1_and_BFGS(
-                NCSR1(its=10, eps_H=1e-6, max_memory=50,
-                cubic_TR=Cubic_TR(rho_trg=.5, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
+                NCSR1(its=10, eps_H=1e-8, max_memory=50,
+                cubic_TR=Cubic_TR(rho_trg=.5, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e0),
                 num_batch_hvp=3,
                 num_power_iters=1,
                 print_loss=True
                 ),
                 BFGS(
-                    ls=Cubic_TR(rho_trg=.5, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
+                    ls=Cubic_TR(rho_trg=.5, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e-4, eta_max=1e0),
                     its=100, print_loss=True),
                 ),
             BFGS(
-                #ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
-                Cubic_TR(rho_trg=1, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e2, eta_max=1e2),
+                ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
+                #Cubic_TR(rho_trg=1, eta_kp=0.7, eta_ki=.12, eta_kd=1, eta_min=1e-14, eta_0=1e2, eta_max=1e2),
                  its=100, print_loss=True),
         ],
         crit_list=[

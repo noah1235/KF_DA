@@ -11,9 +11,9 @@ def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, vel_part_tr
                     vel_part_trans
     )
     upsample_factor = stepper.step.rhs.r
-
+    M = stepper.step.rhs.KF_RHS.M
     def loss_fn(U0_fourier):
-        U0 = transform_fn(U0_fourier)
+        U0 = transform_fn(U0_fourier, M=M)
 
         X0 = jnp.concatenate([pIC, U0])
 

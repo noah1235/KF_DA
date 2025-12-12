@@ -141,7 +141,7 @@ def _single_lyapunov_run(args):
 
 def ly_exp_main():
     kf_opts = KF_Opts(
-        Re=100,
+        Re=200,
         n=4,
         NDOF=32,
         dt=1e-2,
