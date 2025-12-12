@@ -75,25 +75,31 @@ def main():
         T_list=[1],
         optimizer_list=[
 
-
-            NCSR1_and_BFGS(
-                NCSR1(its=20, eps_H=1e-8, max_memory=50,
-                ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
-                #ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10), 
-                num_batch_hvp=5,
-                num_power_iters=1,
-                SR1_type="mod",
+            PCGBFGS(
+                ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10),
+                #ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
+                its=50,
+                n_hvp=3,
                 print_loss=True
-                ),
-                BFGS(
-                    ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-4, eta_max=1e0),
-                    its=100, print_loss=True),
-                loops=1
-                ),
-            BFGS(
-                ls=ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10), 
+            )
+            #NCSR1_and_BFGS(
+            #    NCSR1(its=20, eps_H=1e-8, max_memory=50,
+            #    ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
+                #ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10), 
+            #    num_batch_hvp=5,
+            #    num_power_iters=1,
+            #    SR1_type="mod",
+            #    print_loss=True
+            #    ),
+            #    BFGS(
+            #        ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-4, eta_max=1e0),
+            #        its=100, print_loss=True),
+            #    loops=1
+            #    ),
+            #BFGS(
+            #    ls=ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10), 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                 its=200, print_loss=True),
+            #     its=200, print_loss=True),
 
 
         ],

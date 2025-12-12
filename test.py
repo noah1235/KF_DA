@@ -14,7 +14,7 @@ def test_pcg_curve_detection():
     # ----------------------------------------------------------
     print("\n[TEST 1] SPD matrix -> should converge")
 
-    n = 5
+    n = 20
     # Make a random SPD matrix: A = Q diag(λ) Qᵀ
     key = jax.random.PRNGKey(0)
     Q, _ = jnp.linalg.qr(jax.random.normal(key, (n, n)))
@@ -22,11 +22,11 @@ def test_pcg_curve_detection():
     A = Q @ (lam * Q.T)
 
     b = jnp.ones(n)
-
-    matvec = lambda v: A @ v
+    reg = jnp.eye(n) * 1e-8
+    matvec = lambda v: A @ v + reg@v
     M_inv = jnp.eye(n)   # identity preconditioner
 
-    p, flag = pcg_curve_detection(matvec, M_inv, b, max_iters=10)
+    p, flag = pcg_curve_detection(matvec, M_inv, b, max_iters=100)
     print("Flag:", flag)
     print("Solution:", p)
     print("Residual norm ‖A p − b‖ =", float(jnp.linalg.norm(A @ p - b)))
@@ -36,7 +36,6 @@ def test_pcg_curve_detection():
         print(" --> PASS")
     else:
         print(" --> FAIL")
-
     return
     # ----------------------------------------------------------
     # 2. Indefinite test (should detect negative curvature)

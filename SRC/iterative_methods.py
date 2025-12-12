@@ -104,9 +104,9 @@ def pcg_curve_detection(
     matvec,        # function: v -> H v
     M_inv,         # matrix: approximates H^{-1} (can be identity)
     b,             # right-hand side (usually -grad)
-    max_iters: int = 50,
+    max_iters: int = 3,
     tol: float = 1e-14,
-    curv_tol: float = 1e-14,  # small positive tolerance for "non-positive" curvature
+    curv_tol: float = -1e-12,  # small positive tolerance for "non-positive" curvature
 ):
     """
     Preconditioned Conjugate Gradient with negative curvature detection.
