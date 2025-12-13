@@ -104,7 +104,6 @@ def pcg_curve_detection(
     matvec,        # function: v -> H v
     M_inv,         # matrix: approximates H^{-1} (can be identity)
     b,             # right-hand side (usually -grad)
-    p,
     max_iters: int = 3,
     tol: float = 1e-14,
     curv_tol: float = -1e-12,  # small positive tolerance for "non-positive" curvature
@@ -144,7 +143,8 @@ def pcg_curve_detection(
 
 
     # Residual r = b - H p  (here p = 0, so r = b)
-    r = b - matvec(p)
+    p = jnp.zeros_like(b)
+    r = b
     z = M_inv @ r
     d = z                        # <- standard PCG: search dir = preconditioned residual
     rz_old = jnp.dot(r, z)

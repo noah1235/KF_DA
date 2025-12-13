@@ -179,49 +179,39 @@ class PCGBFGS(BFGS):
 
         S = []
         Y = []
-        reg = jnp.eye(U_0.shape[0]) * 1e-10
-
         def matvec_base(v):
             return hvp_fn(v.reshape((-1, 1))).squeeze()
 
         def matvec(v):
-            
             Hv = matvec_base(v)
             if jnp.dot(v, Hv) > 0:
                 S.append(v)
                 Y.append(Hv)
+                
             return Hv
 
         pk_guess = self.Bk_inv @ -grad
-        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, pk_guess, max_iters=self.n_hvp-1)
-        S = jnp.vstack(S).T
-        Y = jnp.vstack(Y).T
-        if S.shape[1] == 1:
-            s = S.squeeze()
-            y = Y.squeeze()
-            ys = jnp.dot(y, s)
-            self.Bk_inv_update(ys, s, y)
-        if True:
-            R = S - self.Bk_inv @ Y    
-            M = Y.T @ R
-            eigs, eig_vecs = jnp.linalg.eigh(M)
-            #mask = eigs > 0
-            #eigs = eigs[mask]
-            #eig_vecs = eig_vecs[:, mask]
-            update = R @ (eig_vecs @ jnp.diag(1/eigs) @ eig_vecs.T) @ R.T
-            #update = R @ jnp.linalg.pinv(Y.T @ R, rcond=self.pinv_cond) @ R.T
-            self.Bk_inv = self.Bk_inv + update
+        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, max_iters=self.n_hvp)
+        added_p_hvp = len(S) > 0
+        if added_p_hvp:
+            S = jnp.vstack(S).T
+            Y = jnp.vstack(Y).T
+            for i in range(S.shape[1]):
+                s = S[:, i]
+                y = Y[:, i]
+                ys = jnp.dot(y, s)
+                self.Bk_inv_update(ys, s, y)
 
         if info == "indef":
             neg_vec, neg_val = pk
-            print(neg_val, S.shape)
+            print(neg_val)
             print("---")
             pk = neg_vec
             if jnp.dot(pk, grad) > 0:
                 pk = -pk
         else:
-            if False:
-                for i in range(3):
+            if True and added_p_hvp:
+                for i in range(5):
                     v = S[:, i]
                     Hv = Y[:, i]
                     print(jnp.linalg.norm(self.Bk_inv @ Hv - v) / jnp.linalg.norm(v), jnp.linalg.norm(v))
@@ -229,9 +219,9 @@ class PCGBFGS(BFGS):
             def cos_sim(a, b, eps=1e-12):
                 return jnp.vdot(a, b) / (jnp.linalg.norm(a) * jnp.linalg.norm(b) + eps)
 
-            #print(cos_sim(matvec_base(pk), grad))
-            #print(cos_sim(matvec_base(pk_guess), grad))
-            #print("---")
+            print(cos_sim(matvec_base(pk), grad))
+            print(cos_sim(matvec_base(pk_guess), grad))
+            print("---")
         return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
 
