@@ -75,37 +75,39 @@ def _generate_single_trj(args):
     return trj
 
 
-# ---- main dataset generator ----
 def generate_KF_dataset():
-    NDOF = 32
-    Re = 200
+    NDOF = 8
+    Re = 40
     n  = 4
     dt = 1e-2
     T = 1e3
     T_samp = 500
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    num_inits = 8
-    n_workers = 8
+    use_cpu = True
+    num_inits = 4
+    n_workers = 4
 
-
-    # Build argument list for workers
     worker_args = [
         (i, NDOF, Re, n, dt, nsteps, sample_steps) for i in range(num_inits)
     ]
 
-    # Run in parallel
-    ctx = mp.get_context("spawn")
-    with ctx.Pool(processes=n_workers) as pool:
-        trj_list = pool.map(_generate_single_trj, worker_args)
 
-    # Stack trajectories into a single dataset
-    dataset = np.vstack(trj_list)  # shape (num_inits * nsteps, 2 * NDOF**2)
+    if use_cpu:
+        jax.config.update("jax_default_device", jax.devices("cpu")[0])
+        # CPU mode: parallel
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=n_workers) as pool:
+            trj_list = pool.map(_generate_single_trj, worker_args)
+    else:
+        jax.config.update("jax_default_device", jax.devices("gpu")[0])
+        # GPU (or mixed) mode: serial (no multiprocessing)
+        trj_list = [_generate_single_trj(args) for args in worker_args]
 
-    # Prepare output directory
+    dataset = np.vstack(trj_list)  # shape (num_inits * ?, 2 * NDOF**2)
+
     total_snaps = dataset.shape[0]
     total_T = int(total_snaps * dt)
-    print(dataset.shape)
 
     root = os.path.join(
         create_results_dir(),
