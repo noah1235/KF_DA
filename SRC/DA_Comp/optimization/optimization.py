@@ -224,10 +224,7 @@ class PCGBFGS(BFGS):
             print("---")
         return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
-
-
-        
-        
+   
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
@@ -340,7 +337,19 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
 
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
-        
+
+class BFGS_2_PCGBFGS:
+    def __init__(self, BFGS_opt: BFGS, PCGBFGS_opt: PCGBFGS):
+        self.BFGS_opt = BFGS_opt
+        self.PCGBFGS_opt = PCGBFGS_opt
+    
+    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
+        U_0_DA_fourier, opt_data_1 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+        self.PCGBFGS_opt.Bk_inv_init = self.BFGS_opt.Bk_inv
+        U_0_DA_fourier, opt_data_2 = self.PCGBFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+
+        return opt_data_1 + opt_data_2
+
 class NCSR1_and_BFGS:
     def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS, loops=1):
         self.NCSR1_opt = NCSR1_opt

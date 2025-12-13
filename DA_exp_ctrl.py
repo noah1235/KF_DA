@@ -2,7 +2,7 @@ from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, PCGBFGS, NCSR1_and_BFGS
+from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, PCGBFGS, NCSR1_and_BFGS, BFGS_2_PCGBFGS
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 from SRC.utils import load_data
 import numpy as np
@@ -74,13 +74,19 @@ def main():
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
         T_list=[1],
         optimizer_list=[
-
-            PCGBFGS(
-                ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10),
-                #ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
-                its=50,
-                n_hvp=5,
-                print_loss=True
+            BFGS_2_PCGBFGS(
+                BFGS(
+                    ls=ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10), 
+                    #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
+                    its=10, print_loss=True),
+                    
+                PCGBFGS(
+                        ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10),
+                        #ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
+                        its=30,
+                        n_hvp=5,
+                        print_loss=True
+                    )
             )
             #NCSR1_and_BFGS(
             #    NCSR1(its=20, eps_H=1e-8, max_memory=50,
