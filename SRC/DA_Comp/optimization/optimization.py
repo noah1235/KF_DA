@@ -192,17 +192,16 @@ class PCGBFGS(BFGS):
                 Y.append(Hv)
             return Hv
 
-
-        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, max_iters=1)
+        pk_guess = self.Bk_inv @ -grad
+        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, pk_guess, max_iters=self.n_hvp-1)
         S = jnp.vstack(S).T
         Y = jnp.vstack(Y).T
         if S.shape[1] == 1:
-            print(4939439)
             s = S.squeeze()
             y = Y.squeeze()
             ys = jnp.dot(y, s)
             self.Bk_inv_update(ys, s, y)
-        if False:
+        if True:
             R = S - self.Bk_inv @ Y    
             M = Y.T @ R
             eigs, eig_vecs = jnp.linalg.eigh(M)
@@ -221,14 +220,17 @@ class PCGBFGS(BFGS):
             if jnp.dot(pk, grad) > 0:
                 pk = -pk
         else:
-            if True:
-                for i in range(1):
+            if False:
+                for i in range(3):
                     v = S[:, i]
                     Hv = Y[:, i]
                     print(jnp.linalg.norm(self.Bk_inv @ Hv - v) / jnp.linalg.norm(v), jnp.linalg.norm(v))
                     print("-----")
-            #print(jnp.linalg.norm(matvec_base(pk) + grad) / jnp.linalg.norm(grad))
-            #print(jnp.linalg.norm(matvec_base(pkt) + grad) / jnp.linalg.norm(grad))
+            def cos_sim(a, b, eps=1e-12):
+                return jnp.vdot(a, b) / (jnp.linalg.norm(a) * jnp.linalg.norm(b) + eps)
+
+            #print(cos_sim(matvec_base(pk), grad))
+            #print(cos_sim(matvec_base(pk_guess), grad))
             #print("---")
         return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
