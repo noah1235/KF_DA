@@ -2,12 +2,13 @@ import jax.numpy as jnp
 from scipy.sparse.linalg import LinearOperator, eigsh
 import jax
 class L_BK:
-    def __init__(self, max_memory, N):
+    def __init__(self, max_memory, N, eta=0):
         self.N = N
         self.max_memory = max_memory
         self.cmem = 0
         self.Bk_vecs = jnp.zeros((N, self.max_memory))
         self.Bk_scalars = jnp.zeros(self.max_memory)
+        self.eta = eta
 
     def set_Bk(self, Bk_vecs, Bk_scalars):
         if Bk_vecs.shape[1] != Bk_scalars.shape[0]:
@@ -44,7 +45,7 @@ class L_BK:
 
         proj = X.T @ v                           # (cmem,)
         weights = alpha * proj                   # (cmem,)
-        return X @ weights                       # (n,)
+        return X @ weights + self.eta * v                       # (n,)
     
     def append(self, vec: jnp.ndarray, scalar: any):
         vec = vec.reshape((self.N, -1))
@@ -54,8 +55,8 @@ class L_BK:
         num_new = vec.shape[1]
         if num_new > 1:
             #appending multiple R1 matrices
-            if type(scalar) != jnp.ndarray:
-                raise TypeError("scalar list should be jnp array")
+            #if type(scalar) != jnp.ndarray:
+            #    raise TypeError("scalar list should be jnp array")
             
             if num_new != len(scalar):
                 raise ValueError("num vecs and num scalars must be the same")
@@ -171,11 +172,7 @@ class L_SR1():
         if maxed_mem:
             removed_vec, removed_scalar = self.Bk.pop(0)
         self.Bk.append(u2, gamma_2)
-
-
-        
-
-    
+   
 class BFGS_Update():
 
     def Bk_inv_update(self, ys, sk, yk):

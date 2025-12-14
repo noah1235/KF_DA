@@ -176,15 +176,14 @@ class PCGBFGS(BFGS):
     name = "PCGBFGS"
     def __init__(self, ls, its, n_hvp, print_loss=False):
         super().__init__(ls, its, print_loss)
-        self.n_hvp = n_hvp
-        self.pinv_cond = 1e-8
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
+
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-8):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
         hvp_fn = loss_fn_and_derivs.Hvp_adj_fn
 
-        if iter == 0 and self.Bk_inv is None:
+        if iter == 0:
             gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
             curvature = gTHg / jnp.linalg.norm(grad)**2
             self.Bk_inv = jnp.eye(grad.shape[0]) / jnp.abs(curvature)
@@ -194,16 +193,21 @@ class PCGBFGS(BFGS):
         def matvec_base(v):
             return hvp_fn(v.reshape((-1, 1))).squeeze()
 
-        def matvec(v):
-            Hv = matvec_base(v)
-            if jnp.dot(v, Hv) > 0:
-                S.append(v)
+        def Hvp_record_fn(v):
+            v_jax = jnp.array(v, dtype=jnp.float64)
+            Hv = matvec_base(v_jax) + v_jax*eps
+            if jnp.dot(v_jax, Hv) > 0:
+                S.append(v_jax)
                 Y.append(Hv)
                 
             return Hv
+        
+        M = np.array(self.Bk_inv)
+        Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
+        pk, info = minres(Aop, -grad, M=M, maxiter=3)
+        Hpk = matvec_base(pk)
+        error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
 
-        pk_guess = self.Bk_inv @ -grad
-        pk, info = pcg_curve_detection(matvec, self.Bk_inv, -grad, max_iters=self.n_hvp)
         added_p_hvp = len(S) > 0
         if added_p_hvp:
             S = jnp.vstack(S).T
@@ -212,31 +216,23 @@ class PCGBFGS(BFGS):
                 s = S[:, i]
                 y = Y[:, i]
                 ys = jnp.dot(y, s)
-                self.Bk_inv_update(ys, s, y)
+                if ys > 1e-12:
+                    self.Bk_inv_update(ys, s, y)
 
-        if info == "indef":
-            neg_vec, neg_val = pk
-            print(neg_val)
-            print("---")
-            pk = neg_vec
-            if jnp.dot(pk, grad) > 0:
-                pk = -pk
-        else:
-            if True and added_p_hvp:
-                for i in range(5):
-                    v = S[:, i]
-                    Hv = Y[:, i]
-                    print(jnp.linalg.norm(self.Bk_inv @ Hv - v) / jnp.linalg.norm(v), jnp.linalg.norm(v))
-                    print("-----")
-            def cos_sim(a, b, eps=1e-12):
-                return jnp.vdot(a, b) / (jnp.linalg.norm(a) * jnp.linalg.norm(b) + eps)
+        #debug
+        def Hvp_record_fn(v):
+            v_jax = jnp.array(v, dtype=jnp.float64)
+            Hv = matvec_base(v_jax)                
+            return np.array(Hv) + v*eps
+        Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
+        pk2, info = minres(Aop, -grad, maxiter=3)
+        Hpk2 = matvec_base(pk2)
+        error2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
+        print(f"MINRES error: {error} | error no precond: {error2}")
 
-            print(cos_sim(matvec_base(pk), grad))
-            print(cos_sim(matvec_base(pk_guess), grad))
-            print("---")
         return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
-   
+
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,

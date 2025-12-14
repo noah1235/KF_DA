@@ -88,13 +88,13 @@ def main():
             #            print_loss=True
             #        )
             #)
-            NCSR1(its=20, eps_H=1e-8, max_memory=50,
-            #s=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
-            ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10), 
-            num_batch_hvp=5,
-            num_power_iters=1,
-            print_loss=True
-            ),
+                PCGBFGS(
+                        ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10),
+                        #ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
+                        its=30,
+                        n_hvp=5,
+                        print_loss=True
+                    )
 
 
             #NCSR1_and_BFGS(
