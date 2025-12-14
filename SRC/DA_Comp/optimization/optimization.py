@@ -176,14 +176,11 @@ class PCGBFGS(BFGS):
     name = "PCGBFGS"
     def __init__(self, ls, its, n_hvp, print_loss=False):
         super().__init__(ls, its, print_loss)
-
+        self.n_hvp = n_hvp
         #end it, method, eps
         self.sch_idx = 0
         self.schedule = [
-            (5, "MINRES", 1e-7),
-            (10, "CG", 1e-7),
-            (15, "CG", 1e-8),
-            (20, "CG", 1e-10),
+            (its, "MINRES", 1e-8),
 
 
         ]
@@ -211,19 +208,19 @@ class PCGBFGS(BFGS):
 
         def Hvp_record_fn(v):
             v_jax = jnp.array(v, dtype=jnp.float64)
-            Hv = matvec_base(v_jax)
+            Hv = matvec_base(v_jax) + v_jax*eps
             if jnp.dot(v_jax, Hv) > 0:
                 S.append(v_jax)
                 Y.append(Hv)
                 
-            return Hv + v_jax*eps
+            return Hv
         
         M = np.array(self.Bk_inv)
         Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
         if method == "MINRES":
-            pk, info = minres(Aop, -grad, M=M, maxiter=3)
+            pk, info = minres(Aop, -grad, M=M, maxiter=self.n_hvp)
         else:
-            pk, info = cg(Aop, -grad, M=M, maxiter=3)
+            pk, info = cg(Aop, -grad, M=M, maxiter=self.n_hvp)
 
         added_p_hvp = len(S) > 0
         if added_p_hvp:
@@ -237,7 +234,7 @@ class PCGBFGS(BFGS):
                     self.Bk_inv_update(ys, s, y)
 
         #debug
-        if False:
+        if True:
             Hpk = matvec_base(pk)
             error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
 
@@ -246,10 +243,10 @@ class PCGBFGS(BFGS):
                 Hv = matvec_base(v_jax)                
                 return np.array(Hv) + v*eps
             Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-            pk2, info = minres(Aop, -grad, maxiter=3)
+            pk2, info = minres(Aop, -grad, maxiter=self.n_hvp)
             Hpk2 = matvec_base(pk2)
             error2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
-            print(f"MINRES error: {error} | error no precond: {error2}")
+            print(f"{method} error: {error} | error no precond: {error2}")
 
         return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
