@@ -177,13 +177,29 @@ class PCGBFGS(BFGS):
     def __init__(self, ls, its, n_hvp, print_loss=False):
         super().__init__(ls, its, print_loss)
 
+        #end it, method, eps
+        self.sch_idx = 0
+        self.schedule = [
+            (5, "MINRES", 1e-7),
+            (10, "CG", 1e-7),
+            (15, "CG", 1e-8),
+            (20, "CG", 1e-10),
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-8):
+
+        ]
+
+
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
+        opt_params = self.schedule[self.sch_idx]
+        if opt_params[0] - 1 == iter:
+             self.sch_idx += 1
+             opt_params = self.schedule[self.sch_idx]
+        _, method, eps = opt_params
+
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
         hvp_fn = loss_fn_and_derivs.Hvp_adj_fn
-
-        if iter == 0:
+        if iter == 0 and self.Bk_inv is None:
             gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
             curvature = gTHg / jnp.linalg.norm(grad)**2
             self.Bk_inv = jnp.eye(grad.shape[0]) / jnp.abs(curvature)
@@ -195,18 +211,19 @@ class PCGBFGS(BFGS):
 
         def Hvp_record_fn(v):
             v_jax = jnp.array(v, dtype=jnp.float64)
-            Hv = matvec_base(v_jax) + v_jax*eps
+            Hv = matvec_base(v_jax)
             if jnp.dot(v_jax, Hv) > 0:
                 S.append(v_jax)
                 Y.append(Hv)
                 
-            return Hv
+            return Hv + v_jax*eps
         
         M = np.array(self.Bk_inv)
         Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-        pk, info = minres(Aop, -grad, M=M, maxiter=3)
-        Hpk = matvec_base(pk)
-        error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
+        if method == "MINRES":
+            pk, info = minres(Aop, -grad, M=M, maxiter=3)
+        else:
+            pk, info = cg(Aop, -grad, M=M, maxiter=3)
 
         added_p_hvp = len(S) > 0
         if added_p_hvp:
@@ -220,15 +237,19 @@ class PCGBFGS(BFGS):
                     self.Bk_inv_update(ys, s, y)
 
         #debug
-        def Hvp_record_fn(v):
-            v_jax = jnp.array(v, dtype=jnp.float64)
-            Hv = matvec_base(v_jax)                
-            return np.array(Hv) + v*eps
-        Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-        pk2, info = minres(Aop, -grad, maxiter=3)
-        Hpk2 = matvec_base(pk2)
-        error2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
-        print(f"MINRES error: {error} | error no precond: {error2}")
+        if False:
+            Hpk = matvec_base(pk)
+            error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
+
+            def Hvp_record_fn(v):
+                v_jax = jnp.array(v, dtype=jnp.float64)
+                Hv = matvec_base(v_jax)                
+                return np.array(Hv) + v*eps
+            Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
+            pk2, info = minres(Aop, -grad, maxiter=3)
+            Hpk2 = matvec_base(pk2)
+            error2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
+            print(f"MINRES error: {error} | error no precond: {error2}")
 
         return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
