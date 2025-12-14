@@ -185,7 +185,6 @@ class PCGBFGS(BFGS):
 
         ]
 
-
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
         opt_params = self.schedule[self.sch_idx]
         if opt_params[0] - 1 == iter:
@@ -215,12 +214,13 @@ class PCGBFGS(BFGS):
                 
             return Hv
         
-        M = np.array(self.Bk_inv)
+        Lam, Q = eigsh(self.Bk_inv, k=10)
+        print(Lam)
         Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
         if method == "MINRES":
-            pk, info = minres(Aop, -grad, M=M, maxiter=self.n_hvp)
+            pk, info = minres(Aop, -grad, maxiter=self.n_hvp)
         else:
-            pk, info = cg(Aop, -grad, M=M, maxiter=self.n_hvp)
+            pk, info = cg(Aop, -grad, maxiter=self.n_hvp)
 
         added_p_hvp = len(S) > 0
         if added_p_hvp:
