@@ -265,13 +265,16 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         eps = 0
 
         if iter != 0:
-            Lam, Q = self.Bk.eig_decomp()
+            Q = equal_component_Q(grad, 5, key=jax.random.PRNGKey(iter)).T
+            HQ = hvp(Q)
+            Lam = jnp.sum(Q * HQ, axis=0)
+            #Lam, Q = self.Bk.eig_decomp()
             min_eig = 1e-10
-            print(Lam)
-            Lam = jnp.abs(Lam)
-            mask = Lam > min_eig
-            Lam = Lam[mask]
-            Q = Q[:, mask]
+            #print(Lam)
+            #Lam = jnp.abs(Lam)
+            #mask = Lam > min_eig
+            #Lam = Lam[mask]
+            #Q = Q[:, mask]
             Bk_inv = Q @ jnp.diag(1/(eps + Lam)) @ Q.T
             def precond(v):
                 null_comp = v - Q @ Q.T @ v
@@ -307,7 +310,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
             error_2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
             print(f"error: {error} | error precond: {error_2}")
-            print(error, error_2)
 
         return pk, "MINRES"
 
