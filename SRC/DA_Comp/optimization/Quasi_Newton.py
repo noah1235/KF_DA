@@ -34,6 +34,7 @@ class L_BK:
             return self @ v
 
         A_op = LinearOperator((self.N, self.N), matvec=matvec)
+        #ncv = min(3*num_eig+1, self.N)
         Bk_eigs, Bk_eig_vec = eigsh(A_op, k=num_eig, which=which)
         return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
     

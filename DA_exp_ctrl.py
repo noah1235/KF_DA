@@ -54,9 +54,9 @@ def parquet_to_excel(parquet_path, excel_path=None):
 
 def main():
     kf_opts = KF_Opts(
-        Re = 100,
+        Re = 100,   
         n = 4,
-        NDOF = 32,
+        NDOF = 128,
         dt = 1e-2,
         total_T=1000,
         min_samp_T=50,
@@ -70,14 +70,21 @@ def main():
         num_particle_inits=1,
         num_opt_inits=1,
         num_seeds=1,
-        #ic_init=AI(min_norm=.1, max_norm=1),
+        #ic_init=AI(min_norm=.4, max_norm=.6),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[1],
+        T_list=[10],
         optimizer_list=[
             L_BFGS(
                 ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                 its=10, max_mem=20, print_loss=True),
+                 its=20, max_mem=50, print_loss=True),
+            NCSR1(its=20, eps_H=1e-8, max_memory=40,
+                  ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
+                  #ls=Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
+                  num_batch_hvp=20,
+                  num_power_iters=1,
+                  print_loss=True
+                  )
 
 
         ],

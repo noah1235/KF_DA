@@ -153,7 +153,7 @@ class L_BFGS(LS_TR_Opt):
 
         if iter == 0:
             gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
-            curvature = gTHg / jnp.linalg.norm(grad)**2
+            curvature = jnp.abs(gTHg / jnp.linalg.norm(grad)**2)
             self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/curvature))
 
         pk = self.H.get_step_dir(grad)
@@ -237,7 +237,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         vTHv_list = jnp.array(vTHv_list)
         self.HVP_Bk_update(vTHv_list, v_list)
 
-        if iter != 0:
+        if iter != 0 and False:
             def Hvp_record_fn(v):
                 v = jnp.array(v, dtype=jnp.float64)
                 Hv = hvp(v.reshape((-1, 1))).squeeze()
@@ -257,30 +257,23 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
         
         if len(self.Bk) == 0:
+            #Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
+            #gTHg = jnp.dot(grad, hvp(grad.reshape((-1, 1))))
+            #curvature = gTHg / jnp.linalg.norm(grad)**2
+            #self.Bk.eta = curvature
+            #self.HVP_Bk_update(gTHg, grad.reshape((-1, 1)))
+            print("init w/ HVP")
             Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
-        else:
-            #_, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
-            #g_proj = Q @ (Q.T @ grad)
-            #r = grad - g_proj
-            #u = r / jnp.linalg.norm(r)
-            #Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
-            #Q = (grad/jnp.linalg.norm(grad)).reshape((-1, 1))
-            pass
-        Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
+            HQ = hvp(Q)
+            qTHq = jnp.sum(Q * HQ, axis=0)
+            self.HVP_Bk_update(qTHq, Q)
 
-
-        HQ = hvp(Q)
-        qTHq = jnp.sum(Q * HQ, axis=0)
-        self.HVP_Bk_update(qTHq, Q)
         if False:
             for i in range(qTHq.shape[0]):
                 xi = Q[:, i]
                 t = jnp.dot(xi, self.Bk @ xi)
                 print(t, qTHq[i])
             print("----")
-
-            
-
         NCN_min_eig = self.eps_H
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
         Lam_reg = jnp.abs(Bk_eigs)
