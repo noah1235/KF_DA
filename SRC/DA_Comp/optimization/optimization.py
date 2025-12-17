@@ -98,60 +98,27 @@ def equal_component_Q(g, k, key=None):
 
 
 class L_BFGS(LS_TR_Opt):
-    name = "_LBFGS"
+    name = "LBFGS"
     def __init__(self, ls, its, max_mem, print_loss=False):
         self.ls = ls
         self.ls_method = ls.name
         self.its = its
         self.print_loss = print_loss
         self.max_mem = max_mem
+        self.H_init = None
 
     def init_opt_params(self, N):
         if isinstance(self.ls, Cubic_TR):
             self.ls.init_opt()
-
-
-    def set_alpha_and_return(self, loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12):
-        def jit_block(U_0_next):
-            # Step and new loss/grad
-            loss_next, grad_next = loss_grad_fn(U_0_next)
-
-            # Quasi-Newton pair
-            sk = U_0_next - U_0
-            yk = grad_next - grad
-
-            # Curvature
-            ys = jnp.vdot(yk, sk).real
-            return loss_next, grad_next, ys, sk, yk
-
-
-        if isinstance(self.ls, ArmijoLineSearch):
-            alpha = self.ls(loss_fn, loss, U_0, pk, grad)
-            debug_str = ""
-        elif isinstance(self.ls, Cubic_TR):
-            pTHp = jnp.dot(pk, -grad)
-            alpha = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
-            debug_str = f"eta: {self.ls.eta}"
-
-        U_0_next = self.step(U_0, alpha, pk, div_free_proj)
-        alpha_pk = pk * alpha  # return value
-        if last_iteration:
-            return U_0_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
-        else:
-            loss_next, grad_next, ys, sk, yk = jit_block(U_0_next)
-
-            if ys > eps:
-                self.Bk_inv_update(ys, sk, yk)
-                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {True}"
-
-            else:
-                return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {False}"
+        self.H = self.H_init
+        self.H_init = None
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
 
-        if iter == 0:
+        if iter == 0 and self.H is None:
+            print("diag init BFGS")
             gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
             curvature = jnp.abs(gTHg / jnp.linalg.norm(grad)**2)
             self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/curvature))
@@ -253,15 +220,8 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         return pk, "MINRES"
 
-
     def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
-        
         if len(self.Bk) == 0:
-            #Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
-            #gTHg = jnp.dot(grad, hvp(grad.reshape((-1, 1))))
-            #curvature = gTHg / jnp.linalg.norm(grad)**2
-            #self.Bk.eta = curvature
-            #self.HVP_Bk_update(gTHg, grad.reshape((-1, 1)))
             print("init w/ HVP")
             Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
             HQ = hvp(Q)
@@ -333,14 +293,13 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
 
-class NCSR1_and_BFGS:
+class NCSR1_and_LBFGS:
     def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: L_BFGS, loops=1):
         self.NCSR1_opt = NCSR1_opt
         self.BFGS_opt = BFGS_opt
-        self.loops = loops
 
     def set_Bk_inv_for_BFGS(self):
-        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp(which="LM")
+        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp()
         n = self.NCSR1_opt.Bk.N        
         k = Bk_eig_vec.shape[1]
         min_eig = 1e-6
@@ -356,32 +315,18 @@ class NCSR1_and_BFGS:
         Bk_inv = jnp.array(Bk_inv)
         self.BFGS_opt.Bk_inv_init = Bk_inv
 
-    def set_Bk_for_SR1(self):
-        n = self.NCSR1_opt._max_memory
-        Bk_inv = self.BFGS_opt.Bk_inv
-        eigs, eig_vecs = jnp.linalg.eigh(Bk_inv)
-        idx = jnp.argsort(eigs, descending=False)[:n][::-1]
-        scalars = 1/eigs[idx]
-        vecs = eig_vecs[:, idx]
-        self.NCSR1_opt.Bk.set_Bk(vecs, scalars)
-
 
     def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
         opt_data = None
         
-        for i in range(self.loops):
-            U_0_DA_fourier, opt_data_1 = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-            self.set_Bk_inv_for_BFGS()
-            U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-            #self.set_Bk_for_SR1()
-            if opt_data is None:
-                opt_data = opt_data_1 + opt_data_2
-            else:
-                opt_data += opt_data_1 + opt_data_2
+        U_0_DA_fourier, opt_data = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+        #self.set_Bk_inv_for_BFGS()
+        U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+        opt_data += opt_data_2
 
         return U_0_DA_fourier, opt_data
     
     def __repr__(self):
-        name = f"{self.NCSR1_opt}__{self.BFGS_opt}__L={self.loops}"
+        name = f"{self.NCSR1_opt}__{self.BFGS_opt}"
         return name
 
