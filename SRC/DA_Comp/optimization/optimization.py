@@ -15,15 +15,6 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.sparse.linalg import minres, cg
 
-def to_writable_np(x, dtype=np.float64):
-    # Ensures a real NumPy array with writeable memory
-    arr = np.asarray(x, dtype=dtype)
-    if not arr.flags.writeable:
-        arr = arr.copy()
-    else:
-        # still a good idea to avoid weird views
-        arr = arr.copy()
-    return arr
 
 def equal_component_Q(g, k, key=None):
     """

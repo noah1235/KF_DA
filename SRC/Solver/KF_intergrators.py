@@ -180,9 +180,11 @@ class KF_PS_RHS:
             my_full = jnp.fft.fftfreq(self.N) * self.N
             MX, MY = jnp.meshgrid(mx_full, my_full, indexing=ord)
             M_full = (jnp.abs(MX) <= self.N/3) & (jnp.abs(MY) <= self.N/3)
-            self.M = M_full[:, :self.N//2 + 1].astype(jnp.complex128)  # (Ny, Nx_r)
+            #self.M = M_full[:, :self.N//2 + 1].astype(jnp.complex128)  # (Ny, Nx_r)
+            self.M = M_full[:, :self.N//2 + 1].astype(jnp.complex64)  # (Ny, Nx_r)
         else:
-            self.M = jnp.ones((self.N, self.N//2 + 1), dtype=jnp.complex128)
+            #self.M = jnp.ones((self.N, self.N//2 + 1), dtype=jnp.complex128)
+            self.M = jnp.ones((self.N, self.N//2 + 1), dtype=jnp.complex64)
 
         self.calc_mat_deriv = calc_mat_deriv
 

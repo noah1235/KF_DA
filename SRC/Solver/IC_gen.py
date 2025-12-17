@@ -16,7 +16,7 @@ def make_incompressible_ic(Nx, Ny, Lx=2*np.pi, Ly=2*np.pi, amp=1e-3, kmax=4, see
 
     # random complex streamfunction spectrum ψ_hat with bandlimit
     mask = (np.abs(KX) <= kmax) & (np.abs(KY) <= kmax) & (K2 > 0)
-    psi_hat = np.zeros((Ny, Nx), dtype=np.complex128)
+    psi_hat = np.zeros((Ny, Nx), dtype=np.complex64)
     coeffs = rng.normal(size=mask.sum()) + 1j*rng.normal(size=mask.sum())
     psi_hat[mask] = coeffs
 
