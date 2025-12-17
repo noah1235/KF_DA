@@ -119,6 +119,8 @@ class L_SR1():
         
         if self.SR1_type == "conv":
             self.SR1_update_conv(U_0_next, U_0, grad_next, grad)
+        elif self.SR1_type == "mod":
+            self.SR1_update_mod(U_0_next, U_0, grad_next, grad, loss_next, loss)
 
 
     def SR1_update_conv(self, U_0_next, U_0, grad_next, grad, eps=1e-12):
@@ -139,6 +141,24 @@ class L_SR1():
             if maxed_mem:
                 self.Bk.insert(removed_vec, removed_scalar, 0)
             return
+        
+        self.Bk.append(r, 1/denom)
+
+    def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
+        print("SR1 mod")
+        s = U_0_next - U_0
+        y = grad_next - grad
+        theta = 6 * (loss - loss_next) + 3 * jnp.dot(grad + grad_next, s)
+        y = (1 + theta/jnp.dot(s, y)) * y
+
+        maxed_mem = self.Bk.get_num_open_slots() == 0
+
+        if maxed_mem:
+            removed_vec, removed_scalar = self.Bk.pop(0)
+
+        r = y - self.Bk @ s
+        denom = jnp.vdot(r, s)
+
         
         self.Bk.append(r, 1/denom)
 
