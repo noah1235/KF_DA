@@ -177,8 +177,6 @@ class L_BFGS(LS_TR_Opt):
             did_update = self.H.update(sk, yk)
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {did_update}"
 
-
-
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
@@ -201,7 +199,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.num_power_iters = num_power_iters
 
 
-    def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
+    def second_order_logic_dec(self, grad, hvp, U_0, div_free_proj, iter):
         v_list = []
         vTHv_list = []
         eps = 0
@@ -256,17 +254,19 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         return pk, "MINRES"
 
 
-    def second_order_logic_dec(self, grad, hvp, U_0, div_free_proj, iter):
+    def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
         
         if len(self.Bk) == 0:
             Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
         else:
-            _, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
-            g_proj = Q @ (Q.T @ grad)
-            r = grad - g_proj
-            u = r / jnp.linalg.norm(r)
-            Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
+            #_, Q = self.Bk.eig_decomp(which="LM", num_eig=self.num_batch_hvp)
+            #g_proj = Q @ (Q.T @ grad)
+            #r = grad - g_proj
+            #u = r / jnp.linalg.norm(r)
+            #Q = jnp.concat([Q, u.reshape(-1, 1)], axis=1)
             #Q = (grad/jnp.linalg.norm(grad)).reshape((-1, 1))
+            pass
+        Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
 
 
         HQ = hvp(Q)
@@ -283,24 +283,19 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
         NCN_min_eig = self.eps_H
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
-        if False and jnp.min(Bk_eigs) < -self.eps_H:
-            step_type = "neg curve"
-            pk = Bk_eig_vec[:, jnp.argmin(Bk_eigs)]
-            if jnp.dot(pk, grad) > 0:
-                pk = -pk
-        else:
-            Lam_reg = jnp.abs(Bk_eigs)
-            Q = Bk_eig_vec
-            Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
+        Lam_reg = jnp.abs(Bk_eigs)
+        Q = Bk_eig_vec
+        Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
 
-            null_space_comp = (-grad) - Q @ (Q.T @ -grad)
-            pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
+        null_space_comp = (-grad) - Q @ (Q.T @ -grad)
+        pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
 
-            pk = div_free_proj(pk)
+        pk = div_free_proj(pk)
 
-            if jnp.any(jnp.isnan(pk)):
-                pk = -grad
-            step_type = "NCN"
+        if jnp.any(jnp.isnan(pk)):
+            pk = -grad
+        step_type = "NCN"
+
         return pk, step_type
 
 
