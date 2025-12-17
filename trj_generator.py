@@ -56,65 +56,48 @@ def generate_KF_flow():
 
     np.save(os.path.join(root, "trj.npy"), trj)
 
+def generate_KF_dataset():
+    NDOF = 16
+    Re = 100
+    n  = 4
+    dt = 1e-2
+    T = 100
+    T_samp = 50
+    nsteps = int(T / dt)
+    sample_steps = int(T_samp / dt)
+    use_cpu = True
+    chunk_size = 20
 
-def _generate_single_trj(args):
-    """
-    Worker to generate a single trajectory for one initial condition.
-    Returns an array of shape (nsteps, 2 * NDOF**2).
-    """
-    i, NDOF, Re, n, dt, nsteps, sample_steps = args
+    if use_cpu:
+        jax.config.update("jax_default_device", jax.devices("cpu")[0])
+    else:
+        jax.config.update("jax_default_device", jax.devices("gpu")[0])
+
 
     rhs = KF_PS_RHS(NDOF, Re, n)
     L = rhs.L
     U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=5e-1).reshape(-1)
     integrator = Time_Stepper(rhs, dt, method="RK4")
 
-    trj = integrator.integrate_scan(U_0, nsteps)  # assume shape (nsteps+1, dim)
-    trj = np.asarray(trj[sample_steps:, :])                  # drop initial state → (nsteps, dim)
-
-    return trj
-
-
-def generate_KF_dataset():
-    NDOF = 32
-    Re = 100
-    n  = 4
-    dt = 1e-2
-    T = 1e3
-    T_samp = 500
-    nsteps = int(T / dt)
-    sample_steps = int(T_samp / dt)
-    use_cpu = True
-    num_inits = 4
-    n_workers = 8
-
-    worker_args = [
-        (i, NDOF, Re, n, dt, nsteps, sample_steps) for i in range(num_inits)
-    ]
-
-
-    if use_cpu:
-        jax.config.update("jax_default_device", jax.devices("cpu")[0])
-        # CPU mode: parallel
-        ctx = mp.get_context("spawn")
-        with ctx.Pool(processes=n_workers) as pool:
-            trj_list = pool.map(_generate_single_trj, worker_args)
-    else:
-        jax.config.update("jax_default_device", jax.devices("gpu")[0])
-        # GPU (or mixed) mode: serial (no multiprocessing)
-        trj_list = [_generate_single_trj(args) for args in worker_args]
-
-    dataset = np.vstack(trj_list)  # shape (num_inits * ?, 2 * NDOF**2)
-
-    total_snaps = dataset.shape[0]
-    total_T = int(total_snaps * dt)
-
     root = os.path.join(
         create_results_dir(),
         "Trjs",
         "KF_datasets",
-        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={total_T}"
+        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={T-T_samp}"
     )
+    os.makedirs(root, exist_ok=True)
+    integrator.integrate_scan_checkpoint(U_0, nsteps, chunk_size, os.path.join(root, "dataset.npy"))  # assume shape (nsteps+1, dim)
+    trj = np.load(os.path.join(root, "dataset.npy"))
+    print(trj.shape)
+    snap = trj[0]
+    print(snap.shape)
+    print(snap)
+    return
+
+    total_snaps = dataset.shape[0]
+    total_T = int(total_snaps * dt)
+
+
     os.makedirs(root, exist_ok=True)
 
     np.save(os.path.join(root, "dataset.npy"), dataset)

@@ -4,8 +4,8 @@ import jax.numpy as jnp
 from jax import lax
 from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling, Vel_Part_Transformations, Vel_Reshaper
 from dataclasses import dataclass
-
-
+import numpy as np
+from functools import partial
 
 def run_particle_advection(U_hat_0, part_IC, rhs, dt, T):
     nsteps = int(T/dt)
@@ -102,6 +102,45 @@ class Time_Stepper:
         _, trj = lax.scan(body, U0, xs=None, length=nsteps)
         trj = jnp.concatenate([U0[None, ...], trj], axis=0)
         return trj
+    
+    def integrate_scan_checkpoint(self, U0, nsteps, chunk_size, path, dtype=np.float32):
+        U0 = jnp.asarray(U0)
+
+
+        nsteps = int(nsteps)
+        chunk_size = int(chunk_size)
+        ndof = int(U0.shape[0])
+
+        mm = np.lib.format.open_memmap(
+            path, mode="w+", dtype=dtype, shape=(nsteps + 1, ndof)
+        )
+
+        @partial(jax.jit, static_argnums=(1,))
+        def run_checkpoint(U, L):
+            def body(carry, _):
+                U_next = self.step(carry)
+                return U_next, U_next
+            U_end, trj = lax.scan(body, U, xs=None, length=L)  # trj: (L, ndof)
+            return U_end, trj
+
+        remaining = nsteps
+        U = U0
+        write_idx = 0
+
+        while remaining > 0:
+            U, trj = run_checkpoint(U, chunk_size)
+
+            trj_np = np.asarray(jax.device_get(trj), dtype=dtype)  # shape (L, ndof)
+            mm[write_idx:write_idx + chunk_size] = trj_np
+
+            write_idx += chunk_size
+            remaining -= chunk_size
+
+            # Optional: flush less often for speed; keep as-is if you want safety
+            mm.flush()
+
+        return path
+
     
     def integrate_scan_with_sens(self, U0, nsteps, V=None):
         """
@@ -256,7 +295,6 @@ class Maxey_Riley_RHS:
         vp_dot_rhs = self.alpha * vp + hy
 
         return up_dot_rhs, vp_dot_rhs
-
 
 class KF_LPT_PS_RHS:
     def __init__(self, NDOF, Re, n, n_particles, beta, St, vel_fine_NDOF=512):
