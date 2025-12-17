@@ -10,7 +10,7 @@ import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
-from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, BFGS_Update
+from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS_Update
 import numpy as np
 from scipy.optimize import minimize
 from scipy.sparse.linalg import minres, cg
@@ -97,20 +97,19 @@ def equal_component_Q(g, k, key=None):
     return Q
 
 
-class BFGS(LS_TR_Opt, BFGS_Update):
-    name = "BFGS"
-    def __init__(self, ls, its, print_loss=False):
+class L_BFGS(LS_TR_Opt):
+    name = "_LBFGS"
+    def __init__(self, ls, its, max_mem, print_loss=False):
         self.ls = ls
         self.ls_method = ls.name
         self.its = its
         self.print_loss = print_loss
-        self.Bk_inv_init = None
+        self.max_mem = max_mem
 
     def init_opt_params(self, N):
         if isinstance(self.ls, Cubic_TR):
             self.ls.init_opt()
-        self.Bk_inv = self.Bk_inv_init
-        self.Bk_inv_init = None
+
 
     def set_alpha_and_return(self, loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12):
         def jit_block(U_0_next):
@@ -148,98 +147,36 @@ class BFGS(LS_TR_Opt, BFGS_Update):
             else:
                 return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {False}"
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration, eps=1e-12):
-        loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
-
-        if iter == 0 and self.Bk_inv is None:
-            gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
-            curvature = gTHg / jnp.linalg.norm(grad)**2
-            self.Bk_inv = jnp.eye(grad.shape[0]) / jnp.abs(curvature)
-
-
-        # Search direction and line search
-        pk = -self.Bk_inv @ grad
-        return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
-
-
-class PCGBFGS(BFGS):
-    name = "PCGBFGS"
-    def __init__(self, ls, its, n_hvp, print_loss=False):
-        super().__init__(ls, its, print_loss)
-        self.n_hvp = n_hvp
-        #end it, method, eps
-        self.sch_idx = 0
-        self.schedule = [
-            (its, "MINRES", 1e-8),
-
-
-        ]
-
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
-        opt_params = self.schedule[self.sch_idx]
-        if opt_params[0] - 1 == iter:
-             self.sch_idx += 1
-             opt_params = self.schedule[self.sch_idx]
-        _, method, eps = opt_params
-
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
-        hvp_fn = loss_fn_and_derivs.Hvp_adj_fn
-        if iter == 0 and self.Bk_inv is None:
+
+        if iter == 0:
             gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
             curvature = gTHg / jnp.linalg.norm(grad)**2
-            self.Bk_inv = jnp.eye(grad.shape[0]) / jnp.abs(curvature)
+            self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/curvature))
 
-        S = []
-        Y = []
-        def matvec_base(v):
-            return hvp_fn(v.reshape((-1, 1))).squeeze()
+        pk = self.H.get_step_dir(grad)
 
-        def Hvp_record_fn(v):
-            v_jax = jnp.array(v, dtype=jnp.float64)
-            Hv = matvec_base(v_jax) + v_jax*eps
-            if jnp.dot(v_jax, Hv) > 0:
-                S.append(v_jax)
-                Y.append(Hv)
-                
-            return Hv
-        
-        Lam, Q = eigsh(self.Bk_inv, k=10)
-        print(Lam)
-        Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-        if method == "MINRES":
-            pk, info = minres(Aop, -grad, maxiter=self.n_hvp)
+        if isinstance(self.ls, ArmijoLineSearch):
+            alpha = self.ls(loss_fn, loss, U_0, pk, grad)
+            debug_str = ""
+        elif isinstance(self.ls, Cubic_TR):
+            pTHp = jnp.dot(pk, -grad)
+            alpha = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss)
+            debug_str = f"eta: {self.ls.eta}"
+
+        U_0_next = self.step(U_0, alpha, pk, div_free_proj)
+        alpha_pk = pk * alpha  # return value
+        if last_iteration:
+            return U_0_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
         else:
-            pk, info = cg(Aop, -grad, maxiter=self.n_hvp)
+            loss_next, grad_next = loss_grad_fn(U_0_next)
+            sk = U_0_next - U_0
+            yk = grad_next - grad
+            did_update = self.H.update(sk, yk)
+            return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {did_update}"
 
-        added_p_hvp = len(S) > 0
-        if added_p_hvp:
-            S = jnp.vstack(S).T
-            Y = jnp.vstack(Y).T
-            for i in range(S.shape[1]):
-                s = S[:, i]
-                y = Y[:, i]
-                ys = jnp.dot(y, s)
-                if ys > 1e-12:
-                    self.Bk_inv_update(ys, s, y)
-
-        #debug
-        if True:
-            Hpk = matvec_base(pk)
-            error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
-
-            def Hvp_record_fn(v):
-                v_jax = jnp.array(v, dtype=jnp.float64)
-                Hv = matvec_base(v_jax)                
-                return np.array(Hv) + v*eps
-            Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-            pk2, info = minres(Aop, -grad, maxiter=self.n_hvp)
-            Hpk2 = matvec_base(pk2)
-            error2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
-            print(f"{method} error: {error} | error no precond: {error2}")
-
-        return self.set_alpha_and_return(loss_fn, loss, U_0, pk, grad, div_free_proj, last_iteration, loss_grad_fn, eps=1e-12)
 
 
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
@@ -408,20 +345,8 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
 
-class BFGS_2_PCGBFGS:
-    def __init__(self, BFGS_opt: BFGS, PCGBFGS_opt: PCGBFGS):
-        self.BFGS_opt = BFGS_opt
-        self.PCGBFGS_opt = PCGBFGS_opt
-    
-    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
-        U_0_DA_fourier, opt_data_1 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-        self.PCGBFGS_opt.Bk_inv_init = self.BFGS_opt.Bk_inv
-        U_0_DA_fourier, opt_data_2 = self.PCGBFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-
-        return opt_data_1 + opt_data_2
-
 class NCSR1_and_BFGS:
-    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS, loops=1):
+    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: L_BFGS, loops=1):
         self.NCSR1_opt = NCSR1_opt
         self.BFGS_opt = BFGS_opt
         self.loops = loops

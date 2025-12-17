@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 from scipy.sparse.linalg import LinearOperator, eigsh
 import jax
+import numpy as np
 class L_BK:
     def __init__(self, max_memory, N, eta=0):
         self.N = N
@@ -117,8 +118,7 @@ class L_SR1():
         
         if self.SR1_type == "conv":
             self.SR1_update_conv(U_0_next, U_0, grad_next, grad)
-        elif self.SR1_type == "mod":
-            self.SR1_update_mod(U_0_next, U_0, grad_next, grad, loss_next, loss)
+
 
     def SR1_update_conv(self, U_0_next, U_0, grad_next, grad, eps=1e-12):
         s = U_0_next - U_0
@@ -141,38 +141,116 @@ class L_SR1():
         
         self.Bk.append(r, 1/denom)
 
-    def SR1_update_mod_dec(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
-        s = U_0_next - U_0
-        y = grad_next - grad
-        theta = 6 * (loss - loss_next) + 3 * jnp.dot(((grad_next - grad)), s)
-        delta = jnp.dot(y, s) + theta - jnp.dot(s, self.Bk @ s)
-        u = y - self.Bk @ s
-        gamma = delta / (jnp.dot(u, s)**2)
+class LBFGS_Update:
+    """
+    L-BFGS inverse-Hessian application: p = -H_k g using two-loop recursion.
 
-        maxed_mem = self.Bk.get_num_open_slots() == 0
-        if maxed_mem:
-            removed_vec, removed_scalar = self.Bk.pop(0)
+    Usage pattern:
+        lbfgs = LBFGS_Update(N, max_mem=10)
+        p = lbfgs(grad)                   # direction at current iterate
+        ... take step x_new = x + a*p ...
+        lbfgs.update(x_new - x, g_new - g)  # provide s, y after step
+    """
+    def __init__(self, N, max_mem=10, curvature_tol=1e-12, init_gamma=1.0):
+        self.N = N
+        self.max_mem = max_mem
+        self.curvature_tol = curvature_tol
+        self.init_gamma = init_gamma
 
-        self.Bk.append(u, gamma)
+        # columns store s_i, y_i
+        self.s_list = jnp.zeros((self.N, self.max_mem))
+        self.y_list = jnp.zeros((self.N, self.max_mem))
+        self.rho_list = jnp.zeros((self.max_mem,))
 
-    def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
-        print("BFGS update")
-        s = U_0_next - U_0
-        y = grad_next - grad
-        gamma_1 = -1/jnp.dot(s, self.Bk@s)
-        u1 = self.Bk @ s
-        maxed_mem = self.Bk.get_num_open_slots() == 0
-        if maxed_mem:
-            removed_vec, removed_scalar = self.Bk.pop(0)
-        self.Bk.append(u1, gamma_1)
+        self.cmem = 0       # number of stored pairs (<= max_mem)
+        self.head = 0       # next write index (ring buffer)
+        self.gamma = self.init_gamma  # scaling for H0 = gamma I
 
-        gamma_2 = 1/jnp.dot(y, s)
-        u2 = y
-        maxed_mem = self.Bk.get_num_open_slots() == 0
-        if maxed_mem:
-            removed_vec, removed_scalar = self.Bk.pop(0)
-        self.Bk.append(u2, gamma_2)
-   
+    def reset(self):
+        self.s_list = jnp.zeros((self.N, self.max_mem))
+        self.y_list = jnp.zeros((self.N, self.max_mem))
+        self.rho_list = jnp.zeros((self.max_mem,))
+        self.cmem = 0
+        self.head = 0
+        self.gamma = self.init_gamma
+
+    def update(self, s, y):
+        """
+        Add a new (s, y) curvature pair.
+        s = x_{k+1} - x_k
+        y = g_{k+1} - g_k
+        """
+
+        ys = jnp.dot(y, s)
+        ss = jnp.dot(s, s)
+
+        # Curvature condition: y^T s > 0 (with tolerance)
+        if ys <= self.curvature_tol * (1.0 + ss):
+            # skip update if curvature is bad (keeps PD-ness)
+            return False
+
+        rho = 1.0 / ys
+
+        # Write into ring buffer
+        idx = self.head
+        self.s_list = self.s_list.at[:, idx].set(s)
+        self.y_list = self.y_list.at[:, idx].set(y)
+        self.rho_list = self.rho_list.at[idx].set(rho)
+
+        # Update scaling gamma = (s^T y)/(y^T y)
+        yy = jnp.dot(y, y)
+        self.gamma = jnp.where(yy > 0.0, ys / yy, self.gamma)
+
+        # Advance head / memory count
+        self.head = (self.head + 1) % self.max_mem
+        self.cmem = min(self.cmem + 1, self.max_mem)
+        return True
+
+    def get_step_dir(self, grad):
+        """
+        Compute p = -H_k grad via two-loop recursion.
+        """
+        g = jnp.asarray(grad).reshape(-1)
+        q = g
+
+        # If no memory yet, fall back to scaled gradient
+        if self.cmem == 0:
+            return -self.gamma * q
+
+        # Helper: map "recency order" -> actual ring index
+        # i=0 oldest, i=cmem-1 newest
+        def ring_index(i):
+            # oldest element index in ring:
+            oldest = (self.head - self.cmem) % self.max_mem
+            return (oldest + i) % self.max_mem
+
+        # First loop: go from newest -> oldest
+        alpha = [0.0] * self.cmem
+        for j in range(self.cmem - 1, -1, -1):
+            idx = ring_index(j)
+            s = self.s_list[:, idx]
+            y = self.y_list[:, idx]
+            rho = self.rho_list[idx]
+            a = rho * jnp.dot(s, q)
+            alpha[j] = a
+            q = q - a * y
+
+        # Apply initial inverse Hessian approximation H0 = gamma I
+        r = self.gamma * q
+
+        # Second loop: oldest -> newest
+        for j in range(self.cmem):
+            idx = ring_index(j)
+            s = self.s_list[:, idx]
+            y = self.y_list[:, idx]
+            rho = self.rho_list[idx]
+            beta = rho * jnp.dot(y, r)
+            r = r + s * (alpha[j] - beta)
+
+        return -r
+            
+
+
 class BFGS_Update():
 
     def Bk_inv_update(self, ys, sk, yk):

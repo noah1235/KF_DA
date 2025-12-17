@@ -57,7 +57,7 @@ def generate_KF_flow():
     np.save(os.path.join(root, "trj.npy"), trj)
 
 def generate_KF_dataset():
-    NDOF = 128
+    NDOF = 32
     Re = 100
     n  = 4
     dt = 1e-2
@@ -65,8 +65,8 @@ def generate_KF_dataset():
     T_samp = 50
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    use_cpu = False
-    chunk_size = 50
+    use_cpu = True
+    chunk_size = 200
 
     if use_cpu:
         jax.config.update("jax_default_device", jax.devices("cpu")[0])

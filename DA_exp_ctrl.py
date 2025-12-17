@@ -2,7 +2,7 @@ from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, PCGBFGS, NCSR1_and_BFGS, BFGS_2_PCGBFGS
+from SRC.DA_Comp.optimization.optimization import L_BFGS, NCSR1, NCSR1_and_BFGS
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 from SRC.utils import load_data
 import numpy as np
@@ -56,7 +56,7 @@ def main():
     kf_opts = KF_Opts(
         Re = 100,
         n = 4,
-        NDOF = 128,
+        NDOF = 32,
         dt = 1e-2,
         total_T=1000,
         min_samp_T=50,
@@ -72,12 +72,12 @@ def main():
         num_seeds=1,
         #ic_init=AI(min_norm=.1, max_norm=1),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[10],
+        T_list=[1],
         optimizer_list=[
-            BFGS(
+            L_BFGS(
                 ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                 its=10, print_loss=True),
+                 its=10, max_mem=20, print_loss=True),
 
 
         ],
