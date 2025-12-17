@@ -57,16 +57,16 @@ def generate_KF_flow():
     np.save(os.path.join(root, "trj.npy"), trj)
 
 def generate_KF_dataset():
-    NDOF = 16
+    NDOF = 128
     Re = 100
     n  = 4
     dt = 1e-2
-    T = 100
+    T = 1e3
     T_samp = 50
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    use_cpu = True
-    chunk_size = 20
+    use_cpu = False
+    chunk_size = 50
 
     if use_cpu:
         jax.config.update("jax_default_device", jax.devices("cpu")[0])
@@ -78,30 +78,16 @@ def generate_KF_dataset():
     L = rhs.L
     U_0 = make_incompressible_ic(NDOF, NDOF, L, L, amp=5e-1).reshape(-1)
     integrator = Time_Stepper(rhs, dt, method="RK4")
+    U_0 = integrator.integrate_scan(U_0, sample_steps)[-1]
 
     root = os.path.join(
         create_results_dir(),
         "Trjs",
         "KF_datasets",
-        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={T-T_samp}"
+        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={int(T)}"
     )
     os.makedirs(root, exist_ok=True)
     integrator.integrate_scan_checkpoint(U_0, nsteps, chunk_size, os.path.join(root, "dataset.npy"))  # assume shape (nsteps+1, dim)
-    trj = np.load(os.path.join(root, "dataset.npy"))
-    print(trj.shape)
-    snap = trj[0]
-    print(snap.shape)
-    print(snap)
-    return
-
-    total_snaps = dataset.shape[0]
-    total_T = int(total_snaps * dt)
-
-
-    os.makedirs(root, exist_ok=True)
-
-    np.save(os.path.join(root, "dataset.npy"), dataset)
-    return dataset
 
 def generate_KF_energy_plots():
     NDOF   = 32
@@ -202,13 +188,13 @@ def generate_KF_energy_plots():
     print(f"Saved: {outpath}")
 
 def generate_sample_case_ani():
-    NDOF = 32
-    Re = 200
+    NDOF = 128
+    Re = 100
     beta = 0
     St = 0
     n  = 4
-    dt = 2e-2
-    T = 50
+    dt = 1e-2
+    T = 5
     vort=False
 
     n_particles = 100
@@ -230,7 +216,9 @@ def generate_sample_case_ani():
                     repeat=True, blit=True, dpi=120, ax=None,
                     title="Particles + Velocity Field", skip=1
                 )
-    anim.save(os.path.join(root, "particles.mp4"), writer="ffmpeg", fps=60, dpi=150)
+    #anim.save(os.path.join(root, "particles.mp4"), writer="ffmpeg", fps=60, dpi=150)
+    anim.save(os.path.join(root, "particles.gif"), writer="pillow", fps=60, dpi=150)
+
 
     if vort:
         vel_hat_trj = trj[:, n_particles*4:]

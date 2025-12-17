@@ -6,7 +6,7 @@ from SRC.DA_Comp.configs import KF_Opts
 import random
 import multiprocessing as mp
 #jax.config.update("jax_enable_x64", True)
-jax.config.update("jax_default_device", jax.devices("cpu")[0])
+#jax.config.update("jax_default_device", jax.devices("cpu")[0])
 
 import jax.numpy as jnp
 
@@ -48,7 +48,6 @@ def kaplan_yorke_dimension(lyap: jnp.ndarray) -> jnp.ndarray:
         lambda _: jax.lax.cond(k == n, case_kn, case_mid, operand=None),
         operand=None,
     )
-
 
 def push_orthonormal_matrix_variation(stepper, u_0, Y_0, n, k: int):
     """
@@ -141,13 +140,24 @@ def push_orthonormal_matrix(stepper, u_0, Y_0, n):
 
     return growth_trj
 
+# ------------- main function -----------------
+def ly_exp_main():
+    kf_opts = KF_Opts(
+        Re=100,
+        n=4,
+        NDOF=128,
+        dt=1e-2,
+        total_T=1000,
+        min_samp_T=50,
+        t_skip=1e-1,
+    )
+    seed = 0
+    r = 10
+    T = 1000
+    T_skip = .1
+    repeats = 4
 
-def _single_lyapunov_run(args):
-    """
-    One Monte Carlo run for the Lyapunov spectrum.
-    This will be run in a separate process.
-    """
-    (seed, attractor_snapshots, kf_opts, r, T, T_skip) = args
+    attractor_snapshots = load_data(kf_opts)
 
     # Python RNG for picking U_0
     rng = random.Random(seed)
@@ -173,49 +183,12 @@ def _single_lyapunov_run(args):
     growth_trj = push_orthonormal_matrix_variation(
         stepper, U_0, Y_0, n_steps, n_skip
     )
-    # return as a regular ndarray so multiprocessing pickles cleanly
-    return jnp.array(growth_trj)
-
-
-# ------------- main function -----------------
-
-def ly_exp_main():
-    kf_opts = KF_Opts(
-        Re=100,
-        n=4,
-        NDOF=16,
-        dt=1e-2,
-        total_T=2000,
-        min_samp_T=500,
-        t_skip=1e-1,
-    )
-
-    r = 600
-    T = 10
-    T_skip = .1
-    repeats = 4
-
-    attractor_snapshots = load_data(kf_opts)
-
-    # build argument list for workers
-    # different seed per repeat
-    worker_args = [
-        (seed, attractor_snapshots, kf_opts, r, T, T_skip)
-        for seed in range(repeats)
-    ]
-
-    # run in parallel
-    # you can choose processes=min(repeats, mp.cpu_count()) if you like
-    with mp.Pool(processes=repeats) as pool:
-        results = pool.map(_single_lyapunov_run, worker_args)
-
-    # stack results
-    growth_trj_all = jnp.vstack([jnp.array(g) for g in results])
 
     lyapunov_spectrum = (
-        jnp.sum(jnp.log(jnp.abs(growth_trj_all)), axis=0) / (T * repeats)
+        jnp.sum(jnp.log(jnp.abs(growth_trj)), axis=0) / (T * repeats)
     )
     print(lyapunov_spectrum)
+    print(f"LLE: {jnp.max(lyapunov_spectrum)}")
     KY_dim = kaplan_yorke_dimension(lyapunov_spectrum)
     print(KY_dim)
 

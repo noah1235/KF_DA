@@ -56,23 +56,23 @@ def main():
     kf_opts = KF_Opts(
         Re = 100,
         n = 4,
-        NDOF = 32,
+        NDOF = 128,
         dt = 1e-2,
-        total_T=4000,
-        min_samp_T=500,
+        total_T=1000,
+        min_samp_T=50,
         t_skip=1e-1
     )
 
     DA_opts = DA_Opts(
         n_particles_list=[25],
-        sampling_period_list=[.01],
+        sampling_period_list=[1],
         part_opts=Particle_Opts(St=0, beta=0),
         num_particle_inits=1,
         num_opt_inits=1,
         num_seeds=1,
         #ic_init=AI(min_norm=.1, max_norm=1),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[1],
+        T_list=[10],
         optimizer_list=[
             BFGS(
                 ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
@@ -82,8 +82,8 @@ def main():
 
         ],
         crit_list=[
-            MSE_PP(),
-            #MSE_Vel()
+            #MSE_PP(),
+            MSE_Vel()
         ]
     )
 
