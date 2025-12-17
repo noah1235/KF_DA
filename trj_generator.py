@@ -76,8 +76,8 @@ def _generate_single_trj(args):
 
 
 def generate_KF_dataset():
-    NDOF = 8
-    Re = 40
+    NDOF = 32
+    Re = 100
     n  = 4
     dt = 1e-2
     T = 1e3
@@ -86,7 +86,7 @@ def generate_KF_dataset():
     sample_steps = int(T_samp / dt)
     use_cpu = True
     num_inits = 4
-    n_workers = 4
+    n_workers = 8
 
     worker_args = [
         (i, NDOF, Re, n, dt, nsteps, sample_steps) for i in range(num_inits)
@@ -121,7 +121,7 @@ def generate_KF_dataset():
     return dataset
 
 def generate_KF_energy_plots():
-    NDOF   = 16
+    NDOF   = 32
     Re_list = [8, 22, 40, 100]
     n      = 4
     dt     = 1e-2
@@ -129,7 +129,7 @@ def generate_KF_energy_plots():
     T_trans = 100.0
     nsteps_trans = int(T_trans / dt)
     nsteps = int(T / dt)
-    r      = 2  # upsample factor for gradient evaluation
+    r      = 4  # upsample factor for gradient evaluation
 
     def run_one_re(Re):
         # Reference laminar scalings

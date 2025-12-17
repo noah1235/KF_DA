@@ -8,6 +8,48 @@ import multiprocessing as mp
 jax.config.update("jax_enable_x64", True)
 jax.config.update("jax_default_device", jax.devices("cpu")[0])
 
+import jax.numpy as jnp
+
+def kaplan_yorke_dimension(lyap: jnp.ndarray) -> jnp.ndarray:
+    """
+    Compute Kaplan–Yorke (Lyapunov) dimension from a 1D array of Lyapunov exponents.
+
+    - Accepts exponents in any order (will sort descending).
+    - Returns a scalar jnp.ndarray (float).
+    """
+    lyap = jnp.asarray(lyap).reshape(-1)
+    # sort λ1 >= λ2 >= ... >= λn
+    lam = jnp.sort(lyap)[::-1]
+
+    csum = jnp.cumsum(lam)
+    pos = csum > 0.0
+    k = jnp.sum(pos).astype(jnp.int32)  # k in {0,...,n}
+
+    n = lam.shape[0]
+
+    # Cases:
+    # 1) k == 0 -> D_KY = 0
+    # 2) 0 < k < n -> D_KY = k + S_k / |λ_{k+1}|
+    # 3) k == n -> D_KY = n (all partial sums positive)
+    def case_k0(_):
+        return jnp.array(0.0, dtype=lam.dtype)
+
+    def case_kn(_):
+        return jnp.array(n, dtype=lam.dtype)
+
+    def case_mid(_):
+        Sk = csum[k - 1]          # sum_{i=1}^k λ_i  (positive)
+        lam_next = lam[k]         # λ_{k+1}
+        return k + Sk / jnp.abs(lam_next)
+
+    return jax.lax.cond(
+        k == 0,
+        case_k0,
+        lambda _: jax.lax.cond(k == n, case_kn, case_mid, operand=None),
+        operand=None,
+    )
+
+
 def push_orthonormal_matrix_variation(stepper, u_0, Y_0, n, k: int):
     """
     Propagate orthonormal columns Y under the linearized dynamics of `stepper`,
@@ -100,8 +142,6 @@ def push_orthonormal_matrix(stepper, u_0, Y_0, n):
     return growth_trj
 
 
-
-
 def _single_lyapunov_run(args):
     """
     One Monte Carlo run for the Lyapunov spectrum.
@@ -141,18 +181,18 @@ def _single_lyapunov_run(args):
 
 def ly_exp_main():
     kf_opts = KF_Opts(
-        Re=200,
+        Re=100,
         n=4,
-        NDOF=32,
+        NDOF=16,
         dt=1e-2,
-        total_T=4000,
+        total_T=2000,
         min_samp_T=500,
         t_skip=1e-1,
     )
 
-    r = 150
-    T = 1e2
-    T_skip = 1
+    r = 600
+    T = 10
+    T_skip = .1
     repeats = 4
 
     attractor_snapshots = load_data(kf_opts)
@@ -176,7 +216,8 @@ def ly_exp_main():
         jnp.sum(jnp.log(jnp.abs(growth_trj_all)), axis=0) / (T * repeats)
     )
     print(lyapunov_spectrum)
-
+    KY_dim = kaplan_yorke_dimension(lyapunov_spectrum)
+    print(KY_dim)
 
 if __name__ == "__main__":
     ly_exp_main()

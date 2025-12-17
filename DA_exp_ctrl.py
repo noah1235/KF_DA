@@ -67,59 +67,23 @@ def main():
         n_particles_list=[25],
         sampling_period_list=[.01],
         part_opts=Particle_Opts(St=0, beta=0),
-        num_particle_inits=3,
+        num_particle_inits=1,
         num_opt_inits=1,
-        num_seeds=3,
+        num_seeds=1,
         #ic_init=AI(min_norm=.1, max_norm=1),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
         T_list=[1],
         optimizer_list=[
-            BFGS_2_PCGBFGS(
-                BFGS(
-                    ls=ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10), 
-                   #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                     its=20, print_loss=True),
-                    
-                PCGBFGS(
-                        ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10),
-                        #ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
-                        its=30,
-                        n_hvp=2,
-                        print_loss=True
-                    )
-            ),
-            #PCGBFGS(
-            #        ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10),
-                    #ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
-            #        its=30,
-            #        n_hvp=5,
-            #        print_loss=True
-            #    ),
-
-
-            #NCSR1_and_BFGS(
-            #    NCSR1(its=20, eps_H=1e-8, max_memory=50,
-            #    ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-6, eta_max=1e0),
-               #ls=ArmijoLineSearch(alpha_init=1, rho=0.25, c=1e-4, max_iters=10), 
-            #    num_batch_hvp=5,
-            #    num_power_iters=1,
-            #    print_loss=True
-            #    ),
-            #    BFGS(
-            #        ls=Cubic_TR(rho_trg=1.0, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1e-4, eta_max=1e0),
-            #        its=100, print_loss=True),
-            #    loops=1
-            #    ),
             BFGS(
-                ls=ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10), 
+                ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                 its=200, print_loss=True),
+                 its=10, print_loss=True),
 
 
         ],
         crit_list=[
-            #MSE_PP(),
-            MSE_Vel()
+            MSE_PP(),
+            #MSE_Vel()
         ]
     )
 
