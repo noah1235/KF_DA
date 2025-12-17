@@ -105,14 +105,15 @@ class Time_Stepper:
     
     def integrate_scan_checkpoint(self, U0, nsteps, chunk_size, path, dtype=np.float32):
         U0 = jnp.asarray(U0)
-
+        if nsteps % chunk_size != 0:
+            raise ValueError("nsteps must be divisible by chunk size")
 
         nsteps = int(nsteps)
         chunk_size = int(chunk_size)
         ndof = int(U0.shape[0])
 
         mm = np.lib.format.open_memmap(
-            path, mode="w+", dtype=dtype, shape=(nsteps + 1, ndof)
+            path, mode="w+", dtype=dtype, shape=(nsteps, ndof)
         )
 
         @partial(jax.jit, static_argnums=(1,))
