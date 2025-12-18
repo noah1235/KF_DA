@@ -138,7 +138,6 @@ class L_BFGS(LS_TR_Opt):
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
-                num_batch_hvp=1,
                 SR1_type="conv",
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
@@ -152,8 +151,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self._max_memory = max_memory
         self.ls = ls
         
-
-
 
     def NCN_dir(self, Lam, Q, grad, div_free_proj):
         Lam_reg = jnp.abs(Lam)

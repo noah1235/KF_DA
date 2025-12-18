@@ -46,14 +46,13 @@ class ArmijoLineSearch:
             loss_next, grad_next = loss_grad_fn(x_next)
             return alpha, x_next, loss_next, grad_next
 
-
 class Armijo_TR:
     name = "ATR"
-    def __init__(self):
+    def __init__(self, p):
         self.alpha_init = 1
         self.alpha_max = 1
         self.c = 1e-4
-        self.p = 1
+        self.p = p
 
     def init_opt(self):
         self.alpha = self.alpha_init
