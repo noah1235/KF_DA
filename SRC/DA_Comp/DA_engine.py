@@ -359,8 +359,11 @@ def _run_DA_case(
     results_df["loss_evals_record"] = [opt_data.loss_evals_record]
     results_df["loss_grad_evals_record"] = [opt_data.loss_grad_evals_record]
     results_df["Hvp_evals_record"] = [opt_data.Hvp_evals_record]
+    if loss_fn_and_derivs.loss_evals > 0:
+        results_df["loss_avg_eval_time"] = [loss_fn_and_derivs.loss_time_total / loss_fn_and_derivs.loss_evals]
+    else:
+        results_df["loss_avg_eval_time"] = [0]
 
-    results_df["loss_avg_eval_time"] = [loss_fn_and_derivs.loss_time_total / loss_fn_and_derivs.loss_evals]
     results_df["loss_grad_avg_eval_time"] = [loss_fn_and_derivs.loss_grad_time_total / loss_fn_and_derivs.loss_grad_evals]
     if loss_fn_and_derivs.Hvp_evals > 0:
         results_df["Hvp_avg_eval_time"] = [loss_fn_and_derivs.Hvp_time_total / loss_fn_and_derivs.Hvp_evals]

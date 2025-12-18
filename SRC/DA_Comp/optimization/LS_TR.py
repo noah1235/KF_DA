@@ -26,6 +26,8 @@ class ArmijoLineSearch:
         x: jnp.ndarray,
         p: jnp.ndarray,
         grad: jnp.ndarray,
+        loss_grad_fn,
+        last_iter
     ) -> float:
         alpha  = self.alpha_init
         g0 = jnp.dot(grad, p)
@@ -36,7 +38,13 @@ class ArmijoLineSearch:
             if new_loss <= max_loss:
                 break
             alpha *= self.rho
-        return alpha
+
+        x_next = x + alpha * p
+        if last_iter:
+            return alpha, x_next, jnp.nan, jnp.nan
+        else:
+            loss_next, grad_next = loss_grad_fn(x_next)
+            return alpha, x_next, loss_next, grad_next
 
 class Cubic_TR:
     name = "TR"
@@ -57,13 +65,12 @@ class Cubic_TR:
     def init_opt(self):
         self.eta = self.eta_0
 
-    def get_alpha(self, pk, g, pTHp, loss_fn, x0, loss, num_repeats=0):
+    def get_alpha(self, pk, g, pTHp, loss_fn, x0, loss, loss_grad_fn, last_iter):
         """
         Cubic regularized trust-region step solver.
         Solves for step length α in m(α) = loss + αc + ½α²b + (a/3)α³
         where a = (η/2)||p||³.
         """
-        retry = False
 
         c = jnp.dot(pk, g)
         b = pTHp
@@ -84,67 +91,46 @@ class Cubic_TR:
             alpha = self.BT_ls(loss_fn, loss, x0, pk, g)
             return float(alpha)
 
-        try:
-            # Evaluate model and new loss
-            model = loss + (alpha * c) + (0.5 * alpha**2 * b) + ((a / 3) * alpha**3)
-            new_loss = loss_fn(x0 + alpha * pk)
-            if jnp.isnan(new_loss) or jnp.isnan(model):
-                raise ValueError("NaN encountered in model or new_loss")
-        except Exception as e:
-            print("Exception in loss/model eval:", e)
-            retry = True
+        model = loss + (alpha * c) + (0.5 * alpha**2 * b) + ((a / 3) * alpha**3)
+        x_next = x0 + alpha * pk
+        if not last_iter:
+            loss_next, grad_next = loss_grad_fn(x_next)
 
-        # Compute trust-region ratio
-        pred_red = loss - model
-        act_red = loss - new_loss
-        rho = act_red / (pred_red + eps)
-        if act_red < 0:
-            retry = True
+            # Compute trust-region ratio
+            pred_red = loss - model
+            act_red = loss - loss_next
+            rho = act_red / (pred_red + eps)
+            print(f"rho: {rho}")
 
-        # --- Retry / reset logic (unchanged, but also reset integral term) ---
-        if retry:
-            # integral reset on catastrophic mismatch
-            self.eta_int = 0.0
-            self.eta_prev_err = 0.0
+            # --- PI-style update for eta (no more if/else jumps) ---
+            # Error: want rho ≈ rho_target
+            e = float(rho - self.rho_target)
 
-            if num_repeats == 2:
-                return 0.0
-            elif num_repeats == 1:
-                self.eta = self.eta_max
-                return self.get_alpha(pk, g, pTHp, loss_fn, x0, loss,
-                                    num_repeats=num_repeats+1)
-            elif num_repeats == 0:
-                self.eta = self.eta_0
-                return self.get_alpha(pk, g, pTHp, loss_fn, x0, loss,
-                                    num_repeats=num_repeats+1)
+            # Update integral (with anti-windup)
+            self.eta_int += e
+            self.eta_int = float(jnp.clip(self.eta_int, -self.eta_int_max, self.eta_int_max))
 
-        # --- PI-style update for eta (no more if/else jumps) ---
-        # Error: want rho ≈ rho_target
-        e = float(rho - self.rho_target)
+            de = e - self.eta_prev_err
+            self.eta_prev_err = e  # store for next iteration
+            #print(f"rho: {rho:.2e} | e: {e:.2e} | e_int: {self.eta_int:.2e} | de: {de:.2e}")
 
-        # Update integral (with anti-windup)
-        self.eta_int += e
-        self.eta_int = float(jnp.clip(self.eta_int, -self.eta_int_max, self.eta_int_max))
+            # Work in log(eta) space → multiplicative updates but smooth
+            log_eta = jnp.log(self.eta)
 
-        de = e - self.eta_prev_err
-        self.eta_prev_err = e  # store for next iteration
-        #print(f"rho: {rho:.2e} | e: {e:.2e} | e_int: {self.eta_int:.2e} | de: {de:.2e}")
+            delta_log_eta = -(
+                self.eta_kp * e +
+                self.eta_ki * self.eta_int +
+                self.eta_kd * de
+            )
 
-        # Work in log(eta) space → multiplicative updates but smooth
-        log_eta = jnp.log(self.eta)
+        
+            log_eta_new = log_eta + delta_log_eta
+            eta_new = jnp.exp(log_eta_new)
 
-        delta_log_eta = -(
-            self.eta_kp * e +
-            self.eta_ki * self.eta_int +
-            self.eta_kd * de
-        )
+            # Clamp eta to [eta_min, eta_max]
+            eta_new = jnp.clip(eta_new, self.eta_min, self.eta_max)
+            self.eta = float(eta_new)
 
-    
-        log_eta_new = log_eta + delta_log_eta
-        eta_new = jnp.exp(log_eta_new)
-
-        # Clamp eta to [eta_min, eta_max]
-        eta_new = jnp.clip(eta_new, self.eta_min, self.eta_max)
-        self.eta = float(eta_new)
-
-        return float(alpha)
+            return float(alpha), x_next, loss_next, grad_next
+        else:
+            return float(alpha), x_next, jnp.nan, jnp.nan

@@ -49,6 +49,8 @@ def global_post_main(df: pd.DataFrame, root: str) -> None:
 
                     # Per-run timings
                     loss_eval_time = opt_df["loss_avg_eval_time"].to_numpy()
+                    if loss_eval_time == 0:
+                        loss_eval_time = opt_df["loss_grad_avg_eval_time"].to_numpy()/2
                     loss_grad_cost = opt_df["loss_grad_avg_eval_time"].to_numpy() / loss_eval_time
                     Hvp_cost = opt_df["Hvp_avg_eval_time"].to_numpy() / loss_eval_time
                     

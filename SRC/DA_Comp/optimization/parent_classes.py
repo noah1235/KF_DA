@@ -6,7 +6,7 @@ from SRC.DA_Comp.adjoint import Adjoint_Solver
 from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
 import time
-
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
 class Loss_and_Deriv_fns:
     def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
         loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, vel_part_trans)
@@ -149,15 +149,15 @@ class LS_TR_Opt():
     def inner_loop(self):
         pass
 
-    def step(
-        self,
-        x: jnp.ndarray,      # current x, shape (m,)
-        alpha: float,
-        p: jnp.ndarray,       # search direction, shape (m,)
-        div_free_proj
-    ) -> jnp.ndarray:
-        
-        return div_free_proj(x + alpha * p)
+    def ls_choice_logic(self, loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration):
+        if isinstance(self.ls, ArmijoLineSearch):
+            alpha, U_0_next, loss_next, grad_next = self.ls(loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration)
+            debug_str = ""
+        elif isinstance(self.ls, Cubic_TR):
+            pTHp = jnp.dot(pk, -grad)
+            alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss, loss_grad_fn, last_iteration)
+            debug_str = f"eta: {self.ls.eta}"
+        return alpha, U_0_next, loss_next, grad_next, debug_str
     
     def opt_loop(self, U_0, loss_fn_and_derivs: Loss_and_Deriv_fns, div_check, div_free_proj):
         opt_data = Opt_Data(self.its)
