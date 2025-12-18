@@ -3,13 +3,13 @@ from scipy.sparse.linalg import LinearOperator, eigsh
 import jax
 import numpy as np
 class L_BK:
-    def __init__(self, max_memory, N, eta=0):
+    def __init__(self, max_memory, N, eps=0):
         self.N = N
         self.max_memory = max_memory
         self.cmem = 0
         self.Bk_vecs = jnp.zeros((N, self.max_memory))
         self.Bk_scalars = jnp.zeros(self.max_memory)
-        self.eta = eta
+        self.eps = eps
 
     def set_Bk(self, Bk_vecs, Bk_scalars):
         if Bk_vecs.shape[1] != Bk_scalars.shape[0]:
@@ -18,6 +18,15 @@ class L_BK:
         self.Bk_scalars = Bk_scalars
         self.cmem = Bk_scalars.shape[0]
         
+    def compute_fro_norm(self):
+        norm = 0
+        A = self.Bk_vecs[:, :self.cmem]
+        G = A.T @ A
+        for i in range(self.cmem):
+            for j in range(self.cmem):
+                norm += self.Bk_scalars[i]*self.Bk_scalars[j]*G[i, j]**2
+        norm = jnp.sqrt(norm)
+        return norm
 
     def build_Bk(self):
         result = jnp.zeros((self.N, self.N))
@@ -29,6 +38,7 @@ class L_BK:
     def eig_decomp(self, which="LM", num_eig=None):
         if num_eig is None or num_eig > len(self):
             num_eig = len(self)
+
         def matvec(v):
             v = jnp.asarray(v)
             return self @ v
@@ -37,7 +47,7 @@ class L_BK:
         #ncv = min(3*num_eig+1, self.N)
         Bk_eigs, Bk_eig_vec = eigsh(A_op, k=num_eig, which=which)
         return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
-    
+
     def __len__(self):
         return self.cmem
 
@@ -47,7 +57,7 @@ class L_BK:
 
         proj = X.T @ v                           # (cmem,)
         weights = alpha * proj                   # (cmem,)
-        return X @ weights + self.eta * v                       # (n,)
+        return X @ weights + self.eps * v                       # (n,)
     
     def append(self, vec: jnp.ndarray, scalar: any):
         vec = vec.reshape((self.N, -1))

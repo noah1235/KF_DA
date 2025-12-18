@@ -147,8 +147,7 @@ class L_BFGS(LS_TR_Opt):
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
-                num_batch_hvp=5,
-                num_power_iters=2,
+                num_batch_hvp=1,
                 SR1_type="conv",
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
@@ -157,72 +156,26 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.ls_method = ls.name
         if SR1_type == "mod":
             self.name += "M"
-
+        
         self.eps_H = eps_H
         self._max_memory = max_memory
         self.ls = ls
-        
         self.num_batch_hvp = num_batch_hvp
-        self.num_power_iters = num_power_iters
-
-
-    def second_order_logic_dec(self, grad, hvp, U_0, div_free_proj, iter):
-        v_list = []
-        vTHv_list = []
-        eps = 0
-
-        if iter != 0:
-            Q = equal_component_Q(grad, 5, key=jax.random.PRNGKey(iter)).T
-            HQ = hvp(Q)
-            Lam = jnp.sum(Q * HQ, axis=0)
-            #Lam, Q = self.Bk.eig_decomp()
-            min_eig = 1e-10
-            #print(Lam)
-            #Lam = jnp.abs(Lam)
-            #mask = Lam > min_eig
-            #Lam = Lam[mask]
-            #Q = Q[:, mask]
-            Bk_inv = Q @ jnp.diag(1/(eps + Lam)) @ Q.T
-            def precond(v):
-                null_comp = v - Q @ Q.T @ v
-                return Bk_inv @ v + (1/min_eig) * null_comp
-            M = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=precond)
-
-        print(f"eps: {eps}")
-        def Hvp_record_fn(v):
-            v = jnp.array(v, dtype=jnp.float64)
-            Hv = hvp(v.reshape((-1, 1))).squeeze()
-            vTHv = jnp.dot(v, Hv)
-            if jnp.abs(vTHv) > 1e-8:
-                v_list.append(v)
-                vTHv_list.append(vTHv)
-            return np.array(Hv) + np.array(v) * eps
         
-        Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-        pk, info = minres(Aop, -grad, maxiter=3)
-        v_list = jnp.vstack(v_list).T
-        vTHv_list = jnp.array(vTHv_list)
-        self.HVP_Bk_update(vTHv_list, v_list)
 
-        if iter != 0 and False:
-            def Hvp_record_fn(v):
-                v = jnp.array(v, dtype=jnp.float64)
-                Hv = hvp(v.reshape((-1, 1))).squeeze()
-                return np.array(Hv) + np.array(v) * eps
-            Aop = LinearOperator((U_0.shape[0], U_0.shape[0]), matvec=Hvp_record_fn)
-            pk2, info = minres(Aop, -grad, M=M, maxiter=3)
-            Hpk = hvp(pk.reshape((-1, 1))).squeeze() + pk*eps
-            Hpk2 = hvp(pk2.reshape((-1, 1))).squeeze() + pk2*eps
 
-            error = jnp.dot(Hpk, -grad) / (jnp.linalg.norm(Hpk) * jnp.linalg.norm(grad))
-            error_2 = jnp.dot(Hpk2, -grad) / (jnp.linalg.norm(Hpk2) * jnp.linalg.norm(grad))
-            print(f"error: {error} | error precond: {error_2}")
 
-        return pk, "MINRES"
+    def NCN_dir(self, Lam, Q, grad, div_free_proj):
+        Lam_reg = jnp.abs(Lam)
+        Lam_reg = jnp.where(Lam_reg > self.eps_H, Lam_reg, self.eps_H)
+        null_space_comp = (-grad) - Q @ (Q.T @ -grad)
+        pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
+        return div_free_proj(pk)
 
     def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
         if len(self.Bk) == 0:
             print("init w/ HVP")
+            self.Bk.eps = self.eps_H
             Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
             HQ = hvp(Q)
             qTHq = jnp.sum(Q * HQ, axis=0)
@@ -234,17 +187,9 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
                 t = jnp.dot(xi, self.Bk @ xi)
                 print(t, qTHq[i])
             print("----")
-        NCN_min_eig = self.eps_H
+
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
-        Lam_reg = jnp.abs(Bk_eigs)
-        Q = Bk_eig_vec
-        Lam_reg = jnp.where(Lam_reg > NCN_min_eig, Lam_reg, NCN_min_eig)
-
-        null_space_comp = (-grad) - Q @ (Q.T @ -grad)
-        pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
-
-        pk = div_free_proj(pk)
-
+        pk = self.NCN_dir(Bk_eigs, Bk_eig_vec, grad, div_free_proj)
         if jnp.any(jnp.isnan(pk)):
             pk = -grad
         step_type = "NCN"

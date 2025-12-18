@@ -1,84 +1,77 @@
-from SRC.iterative_methods import pcg_curve_detection, cg_curve_detection
-import numpy as np
-
-
-import jax
 import jax.numpy as jnp
 
+def abs_eig_decomp(Bk_vecs, Bk_scalars):
+    r = Bk_scalars.shape[0]
+    H = Bk_vecs @ jnp.diag(Bk_scalars) @ Bk_vecs.T
 
-def test_pcg_curve_detection():
-    print("\n================ PCG NEG-CURVE DETECTION TEST ================")
+    eigt, eig_vect = jnp.linalg.eigh(H)
+    pd_H = eig_vect @ jnp.diag(jnp.abs(eigt)) @ eig_vect.T
+    # Rank-1 shortcut
+    if r == 1:
+        v = Bk_vecs[:, 0]
+        v_norm = jnp.linalg.norm(v)
+        eig = (v_norm**2) * jnp.abs(Bk_scalars[0])
+        eigvec = v / v_norm
+        return jnp.array([eig]), eigvec.reshape((-1, 1))
 
-    # ----------------------------------------------------------
-    # 1. SPD test (should converge)
-    # ----------------------------------------------------------
-    print("\n[TEST 1] SPD matrix -> should converge")
+    A = Bk_vecs[:, :r]
+    lam = jnp.abs(Bk_scalars[:r])
+    B = A * jnp.sqrt(lam)[None, :]
+    print(jnp.linalg.norm(pd_H - B @ B.T) / jnp.linalg.norm(pd_H))
 
-    n = 20
-    # Make a random SPD matrix: A = Q diag(λ) Qᵀ
-    key = jax.random.PRNGKey(0)
-    Q, _ = jnp.linalg.qr(jax.random.normal(key, (n, n)))
-    lam = jnp.linspace(1.0, 5.0, n)
-    A = Q @ (lam * Q.T)
+    U, S, _ = jnp.linalg.svd(B, full_matrices=False)
 
-    b = jnp.ones(n)
-    reg = jnp.eye(n) * 1e-8
-    matvec = lambda v: A @ v + reg@v
-    M_inv = jnp.eye(n)   # identity preconditioner
+    eigs = S**2
+    eigvecs = U
 
-    p, flag = pcg_curve_detection(matvec, M_inv, b, max_iters=100)
-    print("Flag:", flag)
-    print("Solution:", p)
-    print("Residual norm ‖A p − b‖ =", float(jnp.linalg.norm(A @ p - b)))
+    return eigs, eigvecs
 
-    # Assert we are close
-    if flag == "converged" and jnp.linalg.norm(A @ p - b) < 1e-5:
-        print(" --> PASS")
-    else:
-        print(" --> FAIL")
-    return
-    # ----------------------------------------------------------
-    # 2. Indefinite test (should detect negative curvature)
-    # ----------------------------------------------------------
-    print("\n[TEST 2] Indefinite matrix -> should detect NC")
+def test_abs_eig_decomp(Bk_vecs, Bk_scalars, tol=1e-10):
+    """
+    Tests abs_eig_decomp on an indefinite low-rank symmetric matrix.
+    """
 
-    # Make an indefinite matrix: A = Q diag(λ_pos..., λ_neg...) Qᵀ
-    lam_indef = jnp.array([5.0, 4.0, -1.0, 2.0, -0.5])
-    A2 = Q @ (lam_indef * Q.T)
+    N, r = Bk_vecs.shape
 
-    matvec2 = lambda v: A2 @ v
-    b2 = jnp.ones(n)
+    # --- construct dense Bk ---
+    Bk = jnp.zeros((N, N))
+    for i in range(r):
+        Bk += Bk_scalars[i] * jnp.outer(Bk_vecs[:, i], Bk_vecs[:, i])
 
-    p2, flag2 = pcg_curve_detection(matvec2, M_inv, b2, max_iters=50)
+    # --- reference |Bk| via dense eigendecomposition ---
+    Lam, Q = jnp.linalg.eigh(Bk)
+    Bk_abs_ref = Q @ jnp.diag(jnp.abs(Lam)) @ Q.T
 
-    print("Flag:", flag2)
-    print("Returned direction / curvature:", p2)
+    # --- method under test ---
+    eigs_abs, eigvecs = abs_eig_decomp(Bk_vecs, Bk_scalars)
+    Bk_abs_test = eigvecs @ jnp.diag(eigs_abs) @ eigvecs.T
 
-    if flag2 == "indef":
-        print(" --> PASS")
-    else:
-        print(" --> FAIL")
+    # --- errors ---
+    fro_err = jnp.linalg.norm(Bk_abs_test - Bk_abs_ref, ord="fro")
+    fro_ref = jnp.linalg.norm(Bk_abs_ref, ord="fro")
+    rel_err = fro_err / fro_ref
 
+    print("Relative Frobenius error:", rel_err)
 
-    # ----------------------------------------------------------
-    # 3. Max-iter test (matrix extremely ill-conditioned)
-    # ----------------------------------------------------------
-    print("\n[TEST 3] Ill-conditioned SPD -> expect max_iter")
+    # --- eigenvalue sanity check ---
+    ref_eigs = jnp.sort(jnp.abs(Lam))[::-1][:r]
+    test_eigs = jnp.sort(eigs_abs)[::-1]
 
-    lam_bad = jnp.array([1e-6, 1e-3, 1e-2, 1, 5])
-    A3 = Q @ (lam_bad * Q.T)
+    print("Reference |eigs|:", ref_eigs)
+    print("Computed eigs :", test_eigs)
 
-    matvec3 = lambda v: A3 @ v
-    b3 = jnp.ones(n)
+    print(rel_err)
+    assert rel_err < tol, "❌ abs_eig_decomp failed"
+    print("✅ abs_eig_decomp PASSED")
 
-    p3, flag3 = pcg_curve_detection(matvec3, M_inv, b3, max_iters=3)
-    print("Flag:", flag3)
+import numpy as np
 
-    if flag3 == "max_iter":
-        print(" --> PASS")
-    else:
-        print(" --> FAIL")
+key = np.random.default_rng(1)
 
-    print("\n==============================================================\n")
+N = 200
+r = 8
 
-test_pcg_curve_detection()
+Bk_vecs = jnp.array(key.normal(size=(N, r)))
+Bk_scalars = jnp.array(key.normal(size=r))  # includes negative values
+
+test_abs_eig_decomp(Bk_vecs, Bk_scalars)
