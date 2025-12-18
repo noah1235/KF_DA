@@ -143,7 +143,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
         self.set_SR1_update_type(SR1_type)
-        self.name = "NCSR1"
+        self.name = "NCNSR1"
         self.ls_method = ls.name
         if SR1_type == "mod":
             self.name += "M"

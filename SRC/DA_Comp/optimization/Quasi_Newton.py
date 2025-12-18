@@ -132,11 +132,7 @@ class L_SR1():
         elif self.SR1_type == "mod":
             self.SR1_update_mod(U_0_next, U_0, grad_next, grad, loss_next, loss)
 
-
-    def SR1_update_conv(self, U_0_next, U_0, grad_next, grad, eps=1e-12):
-        s = U_0_next - U_0
-        y = grad_next - grad
-
+    def R1_update(self, s, y, eps=1e-12):
         maxed_mem = self.Bk.get_num_open_slots() == 0
 
         if maxed_mem:
@@ -154,6 +150,12 @@ class L_SR1():
         
         self.Bk.append(r, 1/denom)
 
+    def SR1_update_conv(self, U_0_next, U_0, grad_next, grad, eps=1e-12):
+        s = U_0_next - U_0
+        y = grad_next - grad
+
+        self.R1_update(s, y)
+
     def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
         print("SR1 mod")
         s = U_0_next - U_0
@@ -161,16 +163,7 @@ class L_SR1():
         theta = 6 * (loss - loss_next) + 3 * jnp.dot(grad + grad_next, s)
         y = (1 + theta/jnp.dot(s, y)) * y
 
-        maxed_mem = self.Bk.get_num_open_slots() == 0
-
-        if maxed_mem:
-            removed_vec, removed_scalar = self.Bk.pop(0)
-
-        r = y - self.Bk @ s
-        denom = jnp.vdot(r, s)
-
-        
-        self.Bk.append(r, 1/denom)
+        self.R1_update(s, y)
 
 class LBFGS_Update:
     """
@@ -216,7 +209,7 @@ class LBFGS_Update:
         ss = jnp.dot(s, s)
 
         # Curvature condition: y^T s > 0 (with tolerance)
-        if ys <= self.curvature_tol * (1.0 + ss):
+        if ys <= self.curvature_tol * ss:
             # skip update if curvature is bad (keeps PD-ness)
             return False
 

@@ -65,6 +65,20 @@ class Cubic_TR:
     def init_opt(self):
         self.eta = self.eta_0
 
+    def solve_alpha(self, pk, g, loss_fn, loss, x0, pTHp):
+        c = jnp.dot(pk, g)
+        b = pTHp
+        p_norm = jnp.linalg.norm(pk)
+        a = 0.5 * self.eta * (p_norm ** 3)
+
+
+        # Solve aα² + bα + c = 0 → α = (-b + sqrt(b² - 4ac)) / (2a)
+        disc = b * b - 4 * a * c
+
+        alpha = (-b + jnp.sqrt(disc)) / (2 * a)
+        model = loss + (alpha * c) + (0.5 * alpha**2 * b) + ((a / 3) * alpha**3)
+        return alpha, model
+
     def get_alpha(self, pk, g, pTHp, loss_fn, x0, loss, loss_grad_fn, last_iter):
         """
         Cubic regularized trust-region step solver.
@@ -72,26 +86,8 @@ class Cubic_TR:
         where a = (η/2)||p||³.
         """
 
-        c = jnp.dot(pk, g)
-        b = pTHp
-        p_norm = jnp.linalg.norm(pk)
-        a = 0.5 * self.eta * (p_norm ** 3)
-        eps = 1e-12
+        alpha, model = self.solve_alpha(pk, g, loss_fn, loss, x0, pTHp)
 
-        # Solve aα² + bα + c = 0 → α = (-b + sqrt(b² - 4ac)) / (2a)
-        disc = b * b - 4 * a * c
-        if disc < 0 or a == 0:
-            alpha = self.BT_ls(loss_fn, loss, x0, pk, g)
-            return float(alpha)
-
-
-        alpha = (-b + jnp.sqrt(disc)) / (2 * a)
-        if jnp.isnan(alpha) or jnp.isinf(alpha) or alpha <= 0:
-            print(f"alpha invalid | a={a}, b={b}, c={c}")
-            alpha = self.BT_ls(loss_fn, loss, x0, pk, g)
-            return float(alpha)
-
-        model = loss + (alpha * c) + (0.5 * alpha**2 * b) + ((a / 3) * alpha**3)
         x_next = x0 + alpha * pk
         if not last_iter:
             loss_next, grad_next = loss_grad_fn(x_next)
@@ -99,7 +95,19 @@ class Cubic_TR:
             # Compute trust-region ratio
             pred_red = loss - model
             act_red = loss - loss_next
-            rho = act_red / (pred_red + eps)
+            print(f"pred: {pred_red:.2e} | act: {act_red:.2e}")
+
+            if act_red < 0:
+                self.eta = self.eta_0
+                alpha, model = self.solve_alpha(pk, g, loss_fn, loss, x0, pTHp)
+                x_next = x0 + alpha * pk
+                loss_next, grad_next = loss_grad_fn(x_next)
+                pred_red = loss - model
+                act_red = loss - loss_next
+                self.eta_int = 0
+
+
+            rho = act_red / (pred_red + 1e-12)
             print(f"rho: {rho}")
 
             # --- PI-style update for eta (no more if/else jumps) ---
