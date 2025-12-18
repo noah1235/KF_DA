@@ -157,7 +157,6 @@ class L_SR1():
         self.R1_update(s, y)
 
     def SR1_update_mod(self, U_0_next, U_0, grad_next, grad, loss_next, loss):
-        print("SR1 mod")
         s = U_0_next - U_0
         y = grad_next - grad
         theta = 6 * (loss - loss_next) + 3 * jnp.dot(grad + grad_next, s)

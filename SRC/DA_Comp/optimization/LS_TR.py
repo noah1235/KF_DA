@@ -54,6 +54,8 @@ class Armijo_TR:
         self.c = 1e-4
         self.p = p
 
+        self.BT_ls = ArmijoLineSearch()
+
     def init_opt(self):
         self.alpha = self.alpha_init
 
@@ -67,16 +69,16 @@ class Armijo_TR:
     def __call__(self, pk, grad, loss_fn, x0, loss, loss_grad_fn, last_iter):
         g0 = jnp.dot(grad, pk)
         max_loss = loss + self.c*self.alpha*g0
-        x_next = x0 + self.alpha * pk
-        loss_next = loss_fn(x_next)
-        self.PD_update(max_loss, loss_next)
 
         x_next = x0 + self.alpha * pk
         alpha_old = self.alpha
         loss_next, grad_next = loss_grad_fn(x_next)
         self.PD_update(max_loss, loss_next)
-
-
+        if loss - loss_next < 0:
+            self.BT_ls.alpha_init = self.alpha
+            alpha, x_next, loss_next, grad_next = self.BT_ls(loss_fn, loss, x0, pk, grad, loss_grad_fn, last_iter)
+            self.alpha = alpha
+            return alpha, x_next, loss_next, grad_next
 
         if last_iter:
             return alpha_old, x_next, jnp.nan, jnp.nan
