@@ -6,19 +6,37 @@ from SRC.DA_Comp.adjoint import Adjoint_Solver
 from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
 import time
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 class Loss_and_Deriv_fns:
     def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
         loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, vel_part_trans)
-        adj_transform = build_div_free_proj(stepper, vel_part_trans)
+        #adj_transform = build_div_free_proj(stepper, vel_part_trans)
 
         loss_grad_fn_base = jax.value_and_grad(loss_fn_base)
-        self.adj_solver = Adjoint_Solver(pIC, loss_crit, target_trj, stepper, adj_transform,
-                        vel_part_trans, trj_gen_fn)
+        #self.adj_solver = Adjoint_Solver(pIC, loss_crit, target_trj, stepper, adj_transform,
+        #                vel_part_trans, trj_gen_fn)
 
         
         self.loss_fn_jit = jax.jit(loss_fn_base)
         self.loss_grad_fn_jit = jax.jit(loss_grad_fn_base)
+        self.hvp_fn_jit = jax.jit(self.make_hvp(loss_fn_base))
+
+    @staticmethod
+    def make_hvp(loss_fn):
+        """
+        Create a Hessian-vector product (HVP) function for a scalar loss.
+
+        loss_fn(params, *args, **kwargs) -> scalar
+        Returns:
+            hvp_fn(params, v, *args, **kwargs) -> same shape as params
+        """
+        grad_fn = jax.grad(loss_fn)
+
+        def hvp_fn(params, v):
+            # H(params) @ v = d/dε grad(loss)(params + ε v) |_{ε=0}
+            return jax.jvp(lambda p: grad_fn(p), (params,), (v,))[1]
+
+        return hvp_fn
 
     def reset_cost_count(self):
         self.loss_evals = 0
@@ -57,6 +75,7 @@ class Loss_and_Deriv_fns:
 
 
     def loss_grad_adj_fn(self, *args, **kwargs):
+        raise ValueError("Adjoint needs update")
         self.loss_grad_evals += 1
 
         start = time.perf_counter()
@@ -70,8 +89,21 @@ class Loss_and_Deriv_fns:
 
         return out
 
+    def HVP_fn(self, u, v):
+        self.Hvp_evals += 1
+        start = time.perf_counter()
+
+        out = self.hvp_fn_jit(u, v)
+        out = jax.block_until_ready(out)
+
+        end = time.perf_counter()
+        dt = end - start
+        self.Hvp_time_total += dt
+
+        return out
 
     def Hvp_adj_fn(self, Q):
+        raise ValueError("adjoint needs update")
         # If Q has k columns, one call = k HVPs
         k = Q.shape[1]
         self.Hvp_evals += k
@@ -157,6 +189,9 @@ class LS_TR_Opt():
             pTHp = jnp.dot(pk, -grad)
             alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss, loss_grad_fn, last_iteration)
             debug_str = f"eta: {self.ls.eta}"
+        elif isinstance(self.ls, Armijo_TR):
+            alpha, U_0_next, loss_next, grad_next = self.ls(pk, grad, loss_fn, U_0, loss, loss_grad_fn, last_iteration)
+            debug_str = ""
         return alpha, U_0_next, loss_next, grad_next, debug_str
     
     def opt_loop(self, U_0, loss_fn_and_derivs: Loss_and_Deriv_fns, div_check, div_free_proj):
@@ -166,7 +201,7 @@ class LS_TR_Opt():
 
         for i in range(self.its):
             if i == 0:
-                loss, grad = loss_fn_and_derivs.loss_grad_adj_fn(U_0)
+                loss, grad = loss_fn_and_derivs.loss_grad_fn(U_0)
             loss_prev = loss
             grad_prev = grad
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals

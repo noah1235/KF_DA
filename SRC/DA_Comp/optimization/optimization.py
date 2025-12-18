@@ -9,7 +9,7 @@ from scipy.sparse.linalg import eigsh
 import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS_Update
 import numpy as np
 from scipy.optimize import minimize
@@ -151,7 +151,6 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.eps_H = eps_H
         self._max_memory = max_memory
         self.ls = ls
-        self.num_batch_hvp = num_batch_hvp
         
 
 
@@ -167,10 +166,8 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if len(self.Bk) == 0:
             print("init w/ HVP")
             self.Bk.eps = self.eps_H
-            Q = equal_component_Q(grad, self.num_batch_hvp, key=jax.random.PRNGKey(iter)).T
-            HQ = hvp(Q)
-            qTHq = jnp.sum(Q * HQ, axis=0)
-            self.HVP_Bk_update(qTHq, Q)
+            gTHg = jnp.dot(grad, hvp(U_0, grad))
+            self.HVP_Bk_update(gTHg, grad.reshape((-1, 1)))
 
         if False:
             for i in range(qTHq.shape[0]):
@@ -197,13 +194,13 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.init_Bk = False
         self.Bk = L_BK(self._max_memory, N)
         self.current_memory = 0
-        if isinstance(self.ls, Cubic_TR):
+        if isinstance(self.ls, Cubic_TR) or isinstance(self.ls, Armijo_TR):
             self.ls.init_opt()
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
-        hvp = loss_fn_and_derivs.Hvp_adj_fn
+        loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
+        hvp = loss_fn_and_derivs.HVP_fn
 
         pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
         alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration)

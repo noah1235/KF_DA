@@ -46,6 +46,44 @@ class ArmijoLineSearch:
             loss_next, grad_next = loss_grad_fn(x_next)
             return alpha, x_next, loss_next, grad_next
 
+
+class Armijo_TR:
+    name = "ATR"
+    def __init__(self):
+        self.alpha_init = 1
+        self.alpha_max = 1
+        self.c = 1e-4
+        self.p = 1
+
+    def init_opt(self):
+        self.alpha = self.alpha_init
+
+    def PD_update(self, max_loss, loss_next):
+        error = (max_loss - loss_next)/max_loss
+        log_alpha = jnp.log(self.alpha)
+        log_alpha += error * self.p
+        self.alpha = jnp.exp(log_alpha)
+        self.alpha = min(self.alpha_max, self.alpha)
+
+    def __call__(self, pk, grad, loss_fn, x0, loss, loss_grad_fn, last_iter):
+        g0 = jnp.dot(grad, pk)
+        max_loss = loss + self.c*self.alpha*g0
+        x_next = x0 + self.alpha * pk
+        loss_next = loss_fn(x_next)
+        self.PD_update(max_loss, loss_next)
+
+        x_next = x0 + self.alpha * pk
+        alpha_old = self.alpha
+        loss_next, grad_next = loss_grad_fn(x_next)
+        self.PD_update(max_loss, loss_next)
+
+
+
+        if last_iter:
+            return alpha_old, x_next, jnp.nan, jnp.nan
+        else:
+            return alpha_old, x_next, loss_next, grad_next
+
 class Cubic_TR:
     name = "TR"
     def __init__(self, rho_trg, eta_kp, eta_ki, eta_kd, eta_min=1e-12, eta_0=1, eta_max=1e6):
