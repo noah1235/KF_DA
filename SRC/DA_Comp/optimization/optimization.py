@@ -120,9 +120,9 @@ class L_BFGS(LS_TR_Opt):
 
         if iter == 0 and self.H is None:
             print("diag init BFGS")
-            gTHg = jnp.dot(grad, loss_fn_and_derivs.HVP_fn(U_0, grad))
-            curvature = jnp.abs(gTHg / jnp.linalg.norm(grad)**2)
-            self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/curvature))
+            Hg = loss_fn_and_derivs.HVP_fn(U_0, grad)
+            self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/self.eps_H))
+            self.H.update(grad, Hg)
 
         pk = self.H.get_step_dir(grad)
 

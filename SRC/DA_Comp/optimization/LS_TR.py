@@ -32,7 +32,6 @@ class ArmijoLineSearch:
         g0 = jnp.dot(grad, p)
 
         for i in range(self.max_iters):
-            #new_loss = f(x + alpha*p)
             if i == self.max_iters-1:
                 x_next = x + alpha*p
                 loss_next, grad_next, active = loss_grad_cond_fn(jnp.inf, x_next)
