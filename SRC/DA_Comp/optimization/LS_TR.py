@@ -54,27 +54,41 @@ class Armijo_TR:
         self.c = 1e-4
         self.p = p
 
+
         self.BT_ls = ArmijoLineSearch()
 
     def init_opt(self):
         self.alpha = self.alpha_init
 
     def PD_update(self, max_loss, loss_next):
-        error = (max_loss - loss_next)/max_loss
-        log_alpha = jnp.log(self.alpha)
-        log_alpha += error * self.p
+        # safer denom
+        denom = jnp.maximum(jnp.abs(max_loss), 1e-12)
+
+        #positive satisfys armijo
+        error = (max_loss - loss_next) / denom
+
+
+        log_alpha = jnp.log(jnp.maximum(self.alpha, 1e-12))
+        log_alpha = log_alpha + error * self.p
+
         self.alpha = jnp.exp(log_alpha)
-        self.alpha = min(self.alpha_max, self.alpha)
+        self.alpha = jnp.minimum(self.alpha, self.alpha_max)
 
     def __call__(self, pk, grad, loss_fn, x0, loss, loss_grad_fn, last_iter):
         g0 = jnp.dot(grad, pk)
         max_loss = loss + self.c*self.alpha*g0
-
         x_next = x0 + self.alpha * pk
+        #loss_next = loss_fn(x_next)
+        #self.PD_update(max_loss, loss_next)
+
+
+        #x_next = x0 + self.alpha * pk
         alpha_old = self.alpha
         loss_next, grad_next = loss_grad_fn(x_next)
         self.PD_update(max_loss, loss_next)
         if loss - loss_next < 0:
+            print("doing BT")
+            self.int = 0
             self.BT_ls.alpha_init = self.alpha
             alpha, x_next, loss_next, grad_next = self.BT_ls(loss_fn, loss, x0, pk, grad, loss_grad_fn, last_iter)
             self.alpha = alpha

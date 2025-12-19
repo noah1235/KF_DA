@@ -115,11 +115,11 @@ class L_BFGS(LS_TR_Opt):
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_adj_fn
+        loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
 
         if iter == 0 and self.H is None:
             print("diag init BFGS")
-            gTHg = jnp.dot(grad, loss_fn_and_derivs.Hvp_adj_fn(grad.reshape((-1, 1))))
+            gTHg = jnp.dot(grad, loss_fn_and_derivs.HVP_fn(U_0, grad))
             curvature = jnp.abs(gTHg / jnp.linalg.norm(grad)**2)
             self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/curvature))
 
@@ -138,6 +138,7 @@ class L_BFGS(LS_TR_Opt):
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
+
                 SR1_type="conv",
                 print_loss=False):
         LS_TR_Opt.__init__(self, its, print_loss)
