@@ -10,6 +10,7 @@ from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 class Loss_and_Deriv_fns:
     def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
         loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, vel_part_trans)
+        self.loss_fn_base = loss_fn_base
         #adj_transform = build_div_free_proj(stepper, vel_part_trans)
 
         loss_grad_fn_base = jax.value_and_grad(loss_fn_base)
@@ -119,6 +120,24 @@ class Loss_and_Deriv_fns:
 
         return out 
 
+    @functools.partial(jax.jit, static_argnums=0)
+    def conditional_loss_grad_fn(self, loss_ub, U):
+        loss, pullback = jax.vjp(self.loss_fn_base, U)  # forward happens here (always)
+
+        def do_pullback(_):
+            # pullback returns a tuple of cotangents (one per primal input)
+            (g,) = pullback(1.0)  # assuming loss is scalar
+            self.loss_grad_evals += 1
+            return g, True
+
+        def no_grad(_):
+            g0 = jnp.ones_like(U)
+            self.loss_evals += 1
+            return g0, False
+
+        grad, active = jax.lax.cond(loss < loss_ub, do_pullback, no_grad, operand=None)
+        return loss, grad, active
+
     def __repr__(self):
         return f"loss_evals: {self.loss_evals} | loss_grad_evals: {self.loss_grad_evals} | Hvp_evals: {self.Hvp_evals}"
 
@@ -181,16 +200,16 @@ class LS_TR_Opt():
     def inner_loop(self):
         pass
 
-    def ls_choice_logic(self, loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration):
+    def ls_choice_logic(self, loss_fn, loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration):
         if isinstance(self.ls, ArmijoLineSearch):
-            alpha, U_0_next, loss_next, grad_next = self.ls(loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration)
+            alpha, U_0_next, loss_next, grad_next = self.ls(loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration)
             debug_str = ""
         elif isinstance(self.ls, Cubic_TR):
             pTHp = jnp.dot(pk, -grad)
-            alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss, loss_grad_fn, last_iteration)
+            alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss, loss_grad_cond_fn, last_iteration)
             debug_str = f"eta: {self.ls.eta}"
         elif isinstance(self.ls, Armijo_TR):
-            alpha, U_0_next, loss_next, grad_next = self.ls(pk, grad, loss_fn, U_0, loss, loss_grad_fn, last_iteration)
+            alpha, U_0_next, loss_next, grad_next = self.ls(pk, grad, loss_fn, U_0, loss, loss_grad_cond_fn, last_iteration)
             debug_str = ""
         return alpha, U_0_next, loss_next, grad_next, debug_str
     

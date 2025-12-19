@@ -21,30 +21,38 @@ class ArmijoLineSearch:
 
     def __call__(
         self,
-        f,
         f0,
         x: jnp.ndarray,
         p: jnp.ndarray,
         grad: jnp.ndarray,
-        loss_grad_fn,
+        loss_grad_cond_fn,
         last_iter
     ) -> float:
         alpha  = self.alpha_init
         g0 = jnp.dot(grad, p)
 
-        for _ in range(self.max_iters):
-            new_loss = f(x + alpha*p)
-            max_loss = f0 + self.c*alpha*g0
-            if new_loss <= max_loss:
-                break
+        for i in range(self.max_iters):
+            #new_loss = f(x + alpha*p)
+            if i == self.max_iters-1:
+                x_next = x + alpha*p
+                loss_next, grad_next, active = loss_grad_cond_fn(jnp.inf, x_next)
+                return alpha, x_next, loss_next, grad_next
+            
+            if last_iter:
+                max_loss = -jnp.inf
+            else:
+                max_loss = f0 + self.c*alpha*g0
+            x_next = x + alpha * p
+            loss_next, grad_next, active = loss_grad_cond_fn(max_loss, x_next)
+            if active:
+                if last_iter:
+                    return alpha, x_next, jnp.nan, jnp.nan
+                else:
+                    return alpha, x_next, loss_next, grad_next
+
             alpha *= self.rho
 
-        x_next = x + alpha * p
-        if last_iter:
-            return alpha, x_next, jnp.nan, jnp.nan
-        else:
-            loss_next, grad_next = loss_grad_fn(x_next)
-            return alpha, x_next, loss_next, grad_next
+
 
 class Armijo_TR:
     name = "ATR"
@@ -74,7 +82,7 @@ class Armijo_TR:
         self.alpha = jnp.exp(log_alpha)
         self.alpha = jnp.minimum(self.alpha, self.alpha_max)
 
-    def __call__(self, pk, grad, loss_fn, x0, loss, loss_grad_fn, last_iter):
+    def __call__(self, pk, grad, loss_fn, x0, loss, loss_grad_cond_fn, last_iter):
         g0 = jnp.dot(grad, pk)
         max_loss = loss + self.c*self.alpha*g0
         x_next = x0 + self.alpha * pk
@@ -84,13 +92,11 @@ class Armijo_TR:
 
         #x_next = x0 + self.alpha * pk
         alpha_old = self.alpha
-        loss_next, grad_next = loss_grad_fn(x_next)
+        loss_next, grad_next, loss_decrease = loss_grad_cond_fn(max_loss, x_next)
         self.PD_update(max_loss, loss_next)
-        if loss - loss_next < 0:
-            print("doing BT")
-            self.int = 0
+        if not loss_decrease:
             self.BT_ls.alpha_init = self.alpha
-            alpha, x_next, loss_next, grad_next = self.BT_ls(loss_fn, loss, x0, pk, grad, loss_grad_fn, last_iter)
+            alpha, x_next, loss_next, grad_next = self.BT_ls(loss, x0, pk, grad, loss_grad_cond_fn, last_iter)
             self.alpha = alpha
             return alpha, x_next, loss_next, grad_next
 

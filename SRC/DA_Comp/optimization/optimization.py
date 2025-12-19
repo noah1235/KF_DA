@@ -99,13 +99,14 @@ def equal_component_Q(g, k, key=None):
 
 class L_BFGS(LS_TR_Opt):
     name = "LBFGS"
-    def __init__(self, ls, its, max_mem, print_loss=False):
+    def __init__(self, ls, its, max_mem, eps_H, print_loss=False):
         self.ls = ls
         self.ls_method = ls.name
         self.its = its
         self.print_loss = print_loss
         self.max_mem = max_mem
         self.H_init = None
+        self.eps_H = eps_H
 
     def init_opt_params(self, N):
         if isinstance(self.ls, Cubic_TR):
@@ -115,7 +116,7 @@ class L_BFGS(LS_TR_Opt):
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
+        loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
         if iter == 0 and self.H is None:
             print("diag init BFGS")
@@ -125,7 +126,7 @@ class L_BFGS(LS_TR_Opt):
 
         pk = self.H.get_step_dir(grad)
 
-        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration)
+        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration)
         alpha_pk = pk * alpha
         if last_iteration:
             return U_0_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
@@ -197,11 +198,13 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
 
     def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
-        loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
+        #loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
         hvp = loss_fn_and_derivs.HVP_fn
+        loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
+
 
         pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
-        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_fn, last_iteration)
+        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration)
 
         alpha_pk = pk * alpha
         debug_str = f"step type: {step_type} | " + debug_str
@@ -218,27 +221,22 @@ class NCSR1_and_LBFGS:
         self.BFGS_opt = BFGS_opt
 
     def set_Bk_inv_for_BFGS(self):
-        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp()
-        n = self.NCSR1_opt.Bk.N        
-        k = Bk_eig_vec.shape[1]
-        min_eig = 1e-6
-        Bk_eigs_clipped = np.maximum(Bk_eigs, min_eig)
-        pad = np.full(n - k, min_eig, dtype=Bk_eigs.dtype)
-        Bk_eigs_full = np.concatenate([Bk_eigs_clipped, pad], axis=0)
-        U, _, _ = np.linalg.svd(Bk_eig_vec, full_matrices=True)
-        Q_perp = U[:, k:]
-        Bk_eig_vec_full = np.concatenate([Bk_eig_vec, Q_perp], axis=1)
-
-        Bk_inv = (Bk_eig_vec_full * (1/Bk_eigs_full)) @ Bk_eig_vec_full.T
-        Bk_inv = 0.5 * (Bk_inv + Bk_inv.T)
-        Bk_inv = jnp.array(Bk_inv)
-        self.BFGS_opt.Bk_inv_init = Bk_inv
+        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp(which="LA", num_eig=min(len(self.NCSR1_opt.Bk), self.BFGS_opt.max_mem))
+        Bk_eigs = jnp.abs(Bk_eigs)
+        H = LBFGS_Update(self.NCSR1_opt.Bk.N, self.BFGS_opt.max_mem, init_gamma=(self.NCSR1_opt.eps_H))
+        for i in range(Bk_eigs.shape[0]):
+            eig = Bk_eigs[i]
+            vec = Bk_eig_vec[:, i]
+            s = vec
+            y = vec * eig
+            H.update(s, y)
+        self.BFGS_opt.H_init = H
 
     def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
         opt_data = None
         
         U_0_DA_fourier, opt_data = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-        #self.set_Bk_inv_for_BFGS()
+        self.set_Bk_inv_for_BFGS()
         U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
         opt_data += opt_data_2
 
