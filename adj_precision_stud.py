@@ -25,7 +25,7 @@ def adjoint_test():
     kf_opts = KF_Opts(
         Re = 100,   
         n = 4,
-        NDOF = 32,
+        NDOF = 128,
         dt = 1e-2,
         total_T=1000,
         min_samp_T=50,
@@ -33,8 +33,8 @@ def adjoint_test():
     )
 
     npart = 30
-    T = 2
-    adj_dtype = jnp.float16
+    T = 3
+    adj_dtype = jnp.float8_e4m3
 
     attractor_snapshots = load_data(kf_opts)
     #print(jnp.mean(attractor_snapshots), jnp.max(attractor_snapshots), jnp.min(attractor_snapshots))

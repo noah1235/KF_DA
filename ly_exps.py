@@ -152,10 +152,9 @@ def ly_exp_main():
         t_skip=1e-1,
     )
     seed = 0
-    r = 10
+    r = 50
     T = 1000
-    T_skip = .1
-    repeats = 4
+    T_skip = 1
 
     attractor_snapshots = load_data(kf_opts)
 
@@ -185,7 +184,7 @@ def ly_exp_main():
     )
 
     lyapunov_spectrum = (
-        jnp.sum(jnp.log(jnp.abs(growth_trj)), axis=0) / (T * repeats)
+        jnp.sum(jnp.log(jnp.abs(growth_trj)), axis=0) / T
     )
     print(lyapunov_spectrum)
     print(f"LLE: {jnp.max(lyapunov_spectrum)}")
