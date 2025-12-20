@@ -259,6 +259,56 @@ def second_term_apply_to_matrix(Jt_fn, x, grad_f_t, V):
 #          |__/                                                             
 
 
+def get_loss_grad_fn(pIC, crit, target_trj, stepper, transform_fn,
+                    vel_part_trans, trj_gen_fn):
+    p_idx = pIC.shape[0]
+    adj_step_1 = Adjoint_Stepper_1(
+            p_idx, crit, target_trj, stepper, vel_part_trans
+        )
+
+    def get_loss_grad_fn(u_0_vel_raw):
+        """
+        Pure core: given u_0_vel_raw, compute (loss, grad_x, aux)
+        without mutating self. aux is used later for HVPs.
+        """
+        dtype = u_0_vel_raw.dtype
+        # 1) Transform IC and get linearization
+        u_0_vel, lin = jax.linearize(transform_fn, u_0_vel_raw)
+
+        # 2) Forward trajectory
+        DA_trj = trj_gen_fn(pIC, u_0_vel)   # (N, state_dim)
+        N = DA_trj.shape[0]
+        # 3) First-order adjoint sweep
+        U_N = DA_trj[-1].astype(dtype)
+        loss0, lam_N = adj_step_1.loss_dg__du_fn(U_N, N - 1)
+        xs = (DA_trj[:-1], jnp.arange(N - 1))
+
+        def grad_step(carry, x):
+            lam, loss_acc = carry
+            U_i, i = x        # U_i is DA_trj[i]
+            U_i = U_i.astype(dtype)
+            lam, g_val = adj_step_1(lam, U_i, i)
+            return (lam, loss_acc + g_val), None
+
+        (carry_final, _) = lax.scan(
+            grad_step,
+            (lam_N, loss0),
+            xs,
+            reverse=True,
+        )
+
+        lam_0, loss = carry_final
+        # Gradient in transformed coordinates: only velocity block at time 0
+        grad_t = lam_0[p_idx:]          # (n_vel,)
+
+        # Transpose of lin: transformed vel-cotangent -> raw vel-cotangent
+        lin_T = jax.linear_transpose(lin, u_0_vel_raw)
+        (grad_x,) = lin_T(grad_t)            # (dim(u_0_vel_raw),)
+
+
+        return loss, grad_x
+
+    return get_loss_grad_fn
 
 class Adjoint_Solver:
     def __init__(self, pIC, crit, target_trj, stepper, transform_fn,

@@ -6,13 +6,8 @@ from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling, Vel_Part_T
 from dataclasses import dataclass
 import numpy as np
 from functools import partial
+from ml_dtypes import float6_e2m3fn, float8_e3m4
 
-def run_particle_advection(U_hat_0, part_IC, rhs, dt, T):
-    nsteps = int(T/dt)
-    X0 = jnp.concat([part_IC, U_hat_0.reshape(-1)])
-    integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=rhs.n_particles)
-    trj = integrator.integrate_scan(X0, nsteps)
-    return trj
 
 def run_particle_advection_with_sens(U_hat_0, part_IC, rhs, dt, T, V):
     nsteps = int(T/dt)
@@ -26,10 +21,15 @@ def create_trj_sens_generator(rhs, dt, T):
         return run_particle_advection_with_sens(U_hat_0, pIC, rhs, dt, T, V)
     return trj_gen
 
-def create_trj_generator(rhs, dt, T):
+def create_trj_generator(rhs, dt, T, dtype=jnp.float64):
     def trj_gen(pIC, U_hat_0):
-        return run_particle_advection(U_hat_0, pIC, rhs, dt, T)
+        nsteps = int(T/dt)
+        X0 = jnp.concat([pIC, U_hat_0.reshape(-1)])
+        integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=rhs.n_particles)
+        trj = integrator.integrate_scan(X0, nsteps, dtype=dtype)
+        return trj
     return trj_gen
+
 
 class RK4_Step:
     def __init__(self, rhs, dt):
@@ -89,7 +89,7 @@ class Time_Stepper:
                 callback(n, U)
         return U
 
-    def integrate_scan(self, U0, nsteps):
+    def integrate_scan(self, U0, nsteps, dtype=jnp.float64):
         """
         Returns (U_final, traj) where
         traj has shape (nsteps, *U0.shape) and stores U at each step.
@@ -97,12 +97,12 @@ class Time_Stepper:
         def body(U, _):
             U_next = self.step(U)
             
-            return U_next, U_next  # carry, y
+            return U_next, U_next.astype(dtype)  # carry, y
 
-        _, trj = lax.scan(body, U0, xs=None, length=nsteps)
-        trj = jnp.concatenate([U0[None, ...], trj], axis=0)
+        U_f, trj = lax.scan(body, U0, xs=None, length=nsteps)
+        trj = jnp.concatenate([U0[None, ...].astype(dtype), trj], axis=0)
         return trj
-    
+  
     def integrate_scan_checkpoint(self, U0, nsteps, chunk_size, path, dtype=np.float32):
         U0 = jnp.asarray(U0)
         if nsteps % chunk_size != 0:
