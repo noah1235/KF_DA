@@ -48,19 +48,27 @@ def global_post_main(df: pd.DataFrame, root: str) -> None:
                     Hvp_evals_record = np.vstack(opt_df["Hvp_evals_record"].to_numpy())
 
                     # Per-run timings
-                    loss_eval_time = opt_df["loss_avg_eval_time"].to_numpy()
-                    if loss_eval_time == 0:
-                        loss_eval_time = opt_df["loss_grad_avg_eval_time"].to_numpy()/2
-                    loss_grad_cost = opt_df["loss_grad_avg_eval_time"].to_numpy() / loss_eval_time
-                    Hvp_cost = opt_df["Hvp_avg_eval_time"].to_numpy() / loss_eval_time
+                    #loss_eval_time = opt_df["loss_avg_eval_time"].to_numpy()
+                    #loss_eval_time = np.where(
+                    #    loss_eval_time == 0,
+                    #    opt_df["loss_grad_avg_eval_time"].to_numpy() / 2,
+                    #    loss_eval_time
+                    #)
+
+                    #loss_grad_cost = opt_df["loss_grad_avg_eval_time"].to_numpy() / loss_eval_time
+                    #Hvp_cost = opt_df["Hvp_avg_eval_time"].to_numpy() / loss_eval_time
+                    #loss_grad_cost = 2
+                    #Hvp_cost = 5
                     
-                    avg_loss_grad_cost = np.mean(loss_grad_cost)
-                    avg_Hvp_cost = np.mean(Hvp_cost)
+                    #avg_loss_grad_cost = np.mean(loss_grad_cost)
+                    #avg_Hvp_cost = np.mean(Hvp_cost)
+                    avg_loss_grad_cost = 2
+                    avg_Hvp_cost = 5
                     # Broadcast costs over iterations
                     total_cost = (
                         loss_evals_record
-                        + loss_grad_cost.reshape(-1, 1) * loss_grad_evals_record
-                        + Hvp_cost.reshape(-1, 1) * Hvp_evals_record
+                        + avg_Hvp_cost * loss_grad_evals_record
+                        + avg_Hvp_cost * Hvp_evals_record
                     )
                     # Average performance across runs for this optimizer
                     avg_loss_trace = np.mean(loss_traces, axis=0)
