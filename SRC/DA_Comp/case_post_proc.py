@@ -21,7 +21,9 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
     init_guess_vel = init_guess_trj[:, n_particles * 4 :]
 
     trj_cos_sim = jnp.vdot(target_vel.reshape(-1), DA_vel.reshape(-1)) / (jnp.linalg.norm(target_vel) * jnp.linalg.norm(DA_vel))
+    final_snap_cos_sim = jnp.vdot(target_vel[0], DA_vel[0])/(jnp.linalg.norm(target_vel[0]) * jnp.linalg.norm(DA_vel[0]))
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
+    results_df["final_snap_cos_sim"] = [float(final_snap_cos_sim)]
 
     # Time axis length should match the number of timesteps
     nsteps = target_trj.shape[0]

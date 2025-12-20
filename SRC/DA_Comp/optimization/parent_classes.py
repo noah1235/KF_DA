@@ -120,19 +120,27 @@ class Loss_and_Deriv_fns:
 
         return out 
 
-    @functools.partial(jax.jit, static_argnums=0)
     def conditional_loss_grad_fn(self, loss_ub, U):
-        loss, pullback = jax.vjp(self.loss_fn_base, U)  # forward happens here (always)
+        loss, grad, active = self._conditional_loss_grad_fn_helper(loss_ub, U, self.loss_fn_base)
+        if active:
+            self.loss_grad_evals += 1
+        else:
+            self.loss_evals += 1
+        
+        return loss, grad, active
+    
+    @staticmethod
+    @functools.partial(jax.jit, static_argnums=2)
+    def _conditional_loss_grad_fn_helper(loss_ub, U, loss_fn_base):
+        loss, pullback = jax.vjp(loss_fn_base, U)  # forward happens here (always)
 
         def do_pullback(_):
             # pullback returns a tuple of cotangents (one per primal input)
             (g,) = pullback(1.0)  # assuming loss is scalar
-            self.loss_grad_evals += 1
             return g, True
 
         def no_grad(_):
             g0 = jnp.ones_like(U)
-            self.loss_evals += 1
             return g0, False
 
         grad, active = jax.lax.cond(loss < loss_ub, do_pullback, no_grad, operand=None)
