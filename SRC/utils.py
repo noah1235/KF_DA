@@ -52,6 +52,7 @@ class Vel_Part_Transformations(Vel_Reshaper):
         U_flat = X[self.n_particles * 4:]
         return part, U_flat
     
+    
     @staticmethod
     def get_part_pos_and_vel(part):
         xp = part[0::4]

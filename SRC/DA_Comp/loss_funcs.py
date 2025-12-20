@@ -26,7 +26,15 @@ def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, vel_part_tr
             trg_particles, trg_U_flat = vel_part_trans.split_part_and_vel(target_snapshot)
             trg_xp, trg_yp, trg_up, trg_vp = vel_part_trans.get_part_pos_and_vel(trg_particles)
 
-            loss_t = crit.g(xp, yp, trg_xp, trg_yp, U_flat, trg_U_flat, upsample_factor, i)
+            def have_measurment(_):
+                return jnp.concatenate([trg_particles, U_flat], axis=0), crit.g(xp, yp, trg_xp, trg_yp, U_flat, trg_U_flat, upsample_factor, i)
+
+            def no_measurment(_):
+                return jnp.concatenate([particles, U_flat], axis=0), jnp.array(0.0, dtype=X.dtype)
+
+            X, loss_t = lax.cond(crit.t_mask[i] != 0, have_measurment, no_measurment, operand=None)
+
+
             
             X_next = stepper(X)
             return X_next, loss_t
