@@ -3,11 +3,12 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling, Vel_Part_Transformations, Vel_Reshaper
+from SRC.vp_floats.vp_py_utils import calc_output_shape
 from dataclasses import dataclass
 import numpy as np
 from functools import partial
-from ml_dtypes import float6_e2m3fn, float8_e3m4
-
+import vpfloat
+from jax import ShapeDtypeStruct
 
 def run_particle_advection_with_sens(U_hat_0, part_IC, rhs, dt, T, V):
     nsteps = int(T/dt)
@@ -30,6 +31,21 @@ def create_trj_generator(rhs, dt, T, dtype=jnp.float64):
         return trj
     return trj_gen
 
+def create_trj_generator_vpfloat(rhs, dt, T, exp_bits, exp_bias, mbits):
+    def trj_gen(pIC, U_hat_0):
+        nsteps = int(T/dt)
+        X0 = jnp.concat([pIC, U_hat_0.reshape(-1)])
+        integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=rhs.n_particles)
+        sign_trj, exp_trj, mant_trj = integrator.integrate_scan_vp_save(X0, nsteps, exp_bits, exp_bias, mbits)
+        return sign_trj, exp_trj, mant_trj
+    return trj_gen
+
+def split_f64_cb(U, exp_bits, exp_bias, mbits):
+    # runs on host (Python)
+    sign, exp, mant, _ = vpfloat.split_f64(
+        U, exp_bits, exp_bias, mbits
+    )
+    return sign, exp, mant
 
 class RK4_Step:
     def __init__(self, rhs, dt):
@@ -102,6 +118,51 @@ class Time_Stepper:
         U_f, trj = lax.scan(body, U0, xs=None, length=nsteps)
         trj = jnp.concatenate([U0[None, ...].astype(dtype), trj], axis=0)
         return trj
+    
+    def integrate_scan_vp_save(self, U0, nsteps, exp_bits, exp_bias, mbits):
+        sign_shape, exp_shape, m_shape = calc_output_shape(len(U0), mbits, exp_bits)
+        # output specs (must match vpfloat output exactly)
+        sign_spec = ShapeDtypeStruct(
+            shape=sign_shape, dtype=jnp.uint8
+        )
+        exp_spec = ShapeDtypeStruct(
+            shape=exp_shape, dtype=jnp.uint8
+        )
+        if mbits == 16:
+            mant_spec = ShapeDtypeStruct(
+                shape=m_shape, dtype=jnp.uint16
+            )
+        else:
+            mant_spec = ShapeDtypeStruct(
+                shape=m_shape, dtype=jnp.uint8
+            )
+
+        def body(U, _):
+            # host callback
+            U_next = self.step(U)
+            sign, exp, mant = jax.pure_callback(
+                split_f64_cb,
+                (sign_spec, exp_spec, mant_spec),
+                U_next, exp_bits, exp_bias, mbits
+            )
+            return U_next, (sign, exp, mant)
+
+        U_f, (sign_trj, exp_trj, mant_trj) = lax.scan(
+            body, U0, xs=None, length=nsteps
+        )
+
+        # also save t = 0
+        sign0, exp0, mant0 = jax.pure_callback(
+            split_f64_cb,
+            (sign_spec, exp_spec, mant_spec),
+            U0, exp_bits, exp_bias, mbits
+        )
+
+        sign_trj = jnp.concatenate([sign0[None, ...], sign_trj], axis=0)
+        exp_trj  = jnp.concatenate([exp0[None, ...],  exp_trj],  axis=0)
+        mant_trj = jnp.concatenate([mant0[None, ...], mant_trj], axis=0)
+
+        return sign_trj, exp_trj, mant_trj
   
     def integrate_scan_checkpoint(self, U0, nsteps, chunk_size, path, dtype=np.float32):
         U0 = jnp.asarray(U0)

@@ -1,7 +1,7 @@
 import numpy as np
 import jax.numpy as jnp
 import vpfloat
-from SRC.vp_floats.vp_py_utils import choose_exponent_format, calc_output_shape, float_pos_range
+from SRC.vp_floats.vp_py_utils import choose_exponent_format
 
 def test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True):
     # generate random values
@@ -12,12 +12,13 @@ def test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True):
 
     s = np.random.choice([-1, 1], size=N)
     x = x * s
-    x = x.astype(np.float64)
+    #x = x.astype(np.float64)
     st_mem = x.nbytes
-    sign, exp, mant, shape = vpfloat.split_f64(x, exp_bits, exp_bias, mbits)
-    print(sign.dtype, exp.dtype, mant.dtype)
+    print(exp_bits)
+    sign, exp, mant, shape = vpfloat.split_f32(x, exp_bits, exp_bias, mbits)
+    print(sign.shape, exp.shape, mant.shape)
     vp_mem = sign.nbytes + exp.nbytes + mant.nbytes
-    y = vpfloat.join_f64(sign, exp, mant, shape, exp_bits, exp_bias, mbits)
+    y = vpfloat.join_f32(sign, exp, mant, shape, exp_bits, exp_bias, mbits)
     
     # relative error (safe)
     rel_pct_error = np.abs((x - y) / x) * 100
@@ -31,20 +32,14 @@ def test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True):
 
 
 def main():
-    mbits = 12
-    N = 10024324
+    mbits = 6
+    N = 64
     minv = 1e-3
-    maxv = 10
-    exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=4)
-    total_bits = 1+exp_bits+mbits
-    print(f"total bits: {total_bits}")
-    mint, maxt = float_pos_range(exp_bits, exp_bias, mbits)
-    print(f"{mint:.2e} | {maxt:.2e}")
+    maxv = 1e2
 
+    exp_bits, exp_bias = choose_exponent_format(minv, maxv)
+    print(exp_bits, exp_bias)
 
-
-
-    print(calc_output_shape(N, mbits, exp_bits))
     test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True)
 
 

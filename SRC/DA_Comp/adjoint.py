@@ -2,7 +2,11 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 import functools
-
+from SRC.Solver.KF_intergrators import create_trj_generator_vpfloat, create_trj_generator
+from vp_py_utils import choose_exponent_format, calc_output_shape
+import vpfloat
+import numpy as np
+from jax import ShapeDtypeStruct
 # ---------- Small utilities ----------
 
 def symmetric_error(A):
@@ -249,15 +253,99 @@ def second_term_apply_to_matrix(Jt_fn, x, grad_f_t, V):
     return jax.vmap(mv, in_axes=1, out_axes=1)(V)
 
 
-#  _____       _           _           _      _           _   _             
-# |  __ \     (_)         | |         | |    | |         | | (_)            
-# | |  | | ___ _  ___  ___| |_ ___  __| | ___| |__   __ _| |_ _  ___  _ __  
-# | |  | |/ _ \ |/ _ \/ __| __/ _ \/ _` |/ _ \ '_ \ / _` | __| |/ _ \| '_ \ 
-# | |__| |  __/ |  __/ (__| ||  __/ (_| |  __/ | | | (_| | |_| | (_) | | | |
-# |_____/ \___| |\___|\___|\__\___|\__,_|\___|_| |_|\__,_|\__|_|\___/|_| |_|
-#           _/ |                                                            
-#          |__/                                                             
+def join_f64_via_callback(sign, exp, mant, shape, exp_bits, exp_bias, mbits):
+    """
+    Calls vpfloat.join_f64(sign, exp, mant, shape, exp_bits, exp_bias, mbits)
+    from inside JAX using a host pure_callback.
 
+    Args
+      sign, exp, mant: JAX arrays (will be transferred to host for callback)
+      shape: tuple / sequence of ints (Python shape of the output)
+      exp_bits, exp_bias, mbits: ints
+
+    Returns
+      U: JAX array of dtype float64 with `shape`.
+    """
+    shape = tuple(shape)
+
+    # Host callback: receives NumPy arrays, returns NumPy array
+    def _join_cb(sign, exp, mant):
+        sign_np = np.asarray(sign)
+        exp_np = np.asarray(exp)
+        mant_np = np.asarray(mant)
+        return vpfloat.join_f64(sign_np, exp_np, mant_np, shape, exp_bits, exp_bias, mbits)
+
+    out_spec = ShapeDtypeStruct(shape=shape, dtype=jnp.float64)
+
+    return jax.pure_callback(_join_cb, out_spec, sign, exp, mant)
+
+
+def get_loss_grad_vp_fn(pIC, crit, target_trj, stepper, transform_fn,
+                    vel_part_trans, dt, T, mbits, exp_bits, exp_bias):
+    p_idx = pIC.shape[0]
+    adj_step_1 = Adjoint_Stepper_1(
+            p_idx, crit, target_trj, stepper, vel_part_trans
+        )
+
+    #trj_gen_fn = create_trj_generator(stepper.step.rhs, dt, T)
+    trj_gen_fn = create_trj_generator_vpfloat(stepper.step.rhs, dt, T, exp_bits, exp_bias, mbits)
+    def get_loss_grad_vp_fn(u_0_vel_raw):
+        """
+        Pure core: given u_0_vel_raw, compute (loss, grad_x, aux)
+        without mutating self. aux is used later for HVPs.
+        """
+        # 1) Transform IC and get linearization
+        u_0_vel, lin = jax.linearize(transform_fn, u_0_vel_raw)
+
+        # 2) Forward trajectory
+        sign_trj, exp_trj, mant_trj = trj_gen_fn(pIC, u_0_vel)   # (N, state_dim)
+
+        N = sign_trj.shape[0]
+        sign_N = sign_trj[-1]
+        exp_N = exp_trj[-1]
+        mant_N = mant_trj[-1]
+        state_shape = (u_0_vel.shape[0]+pIC.shape[0],)
+        U_N = join_f64_via_callback(
+            sign_N, exp_N, mant_N,
+            state_shape,
+            exp_bits, exp_bias, mbits
+        )
+
+        # 3) First-order adjoint sweep
+        loss0, lam_N = adj_step_1.loss_dg__du_fn(U_N, N - 1)
+        xs = (sign_trj[:-1], exp_trj[:-1], mant_trj[:-1], jnp.arange(N - 1))
+
+        def grad_step(carry, x):
+            lam, loss_acc = carry
+            sign_i, exp_i, mant_i, i = x        # U_i is DA_trj[i]
+            U_i = join_f64_via_callback(
+                    sign_i, exp_i, mant_i,
+                    state_shape,
+                    exp_bits, exp_bias, mbits
+                )
+            lam, g_val = adj_step_1(lam, U_i, i)
+            return (lam, loss_acc + g_val), None
+
+        (carry_final, _) = lax.scan(
+            grad_step,
+            (lam_N, loss0),
+            xs,
+            reverse=True,
+        )
+
+        lam_0, loss = carry_final
+        # Gradient in transformed coordinates: only velocity block at time 0
+        grad_t = lam_0[p_idx:]          # (n_vel,)
+
+        # Transpose of lin: transformed vel-cotangent -> raw vel-cotangent
+        lin_T = jax.linear_transpose(lin, u_0_vel_raw)
+        (grad_x,) = lin_T(grad_t)            # (dim(u_0_vel_raw),)
+
+
+        return loss, grad_x
+
+    return get_loss_grad_vp_fn
+                                                    
 
 def get_loss_grad_fn(pIC, crit, target_trj, stepper, transform_fn,
                     vel_part_trans, trj_gen_fn):
