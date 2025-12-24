@@ -2,26 +2,36 @@ import jax.numpy as jnp
 import jax
 import numpy as np
 import functools
-from SRC.DA_Comp.adjoint import Adjoint_Solver
+from SRC.DA_Comp.adjoint import Adjoint_Solver, get_loss_grad_vp_fn, get_loss_grad_conditional_vp_fn
 from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
 import time
 import os
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 class Loss_and_Deriv_fns:
-    def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
+    def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, dt, T, vfloat):
         loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, vel_part_trans)
-        self.loss_fn_base = loss_fn_base
-        #adj_transform = build_div_free_proj(stepper, vel_part_trans)
+        self.hvp_fn_jit = jax.jit(self.make_hvp(loss_fn_base))
 
-        loss_grad_fn_base = jax.value_and_grad(loss_fn_base)
-        #self.adj_solver = Adjoint_Solver(pIC, loss_crit, target_trj, stepper, adj_transform,
-        #                vel_part_trans, trj_gen_fn)
+        if vfloat is None:
+            loss_grad_fn_base = jax.value_and_grad(loss_fn_base)
+            self.loss_grad_fn_jit = jax.jit(loss_grad_fn_base)
+            self.conditional_loss_grad_fn_jit = jax.jit(lambda ub, x: self._conditional_loss_grad_fn_helper(ub, x, loss_fn_base))
+
+            
+        else:
+            adj_transform = build_div_free_proj(stepper, vel_part_trans)
+            loss_grad_conditional_vp_fn_adj_jit = get_loss_grad_conditional_vp_fn(
+                    pIC, loss_crit, target_trj, stepper, adj_transform,
+                    vel_part_trans, dt, T,
+                    mbits=vfloat.mbits, exp_bits=vfloat.exp_bits, exp_bias=vfloat.exp_bias,
+                )
+            self.conditional_loss_grad_fn_jit = jax.jit(loss_grad_conditional_vp_fn_adj_jit)
+            self.loss_grad_fn_jit = lambda x: self.conditional_loss_grad_fn_jit(jnp.inf, x)[:-1]
 
         
         self.loss_fn_jit = jax.jit(loss_fn_base)
-        self.loss_grad_fn_jit = jax.jit(loss_grad_fn_base)
-        self.hvp_fn_jit = jax.jit(self.make_hvp(loss_fn_base))
+        self.reset_cost_count()
 
     @staticmethod
     def make_hvp(loss_fn):
@@ -45,7 +55,6 @@ class Loss_and_Deriv_fns:
         self.loss_grad_evals = 0
         self.Hvp_evals = 0
 
-
     def loss_fn(self, *args, **kwargs):
         self.loss_evals += 1
         out = self.loss_fn_jit(*args, **kwargs)
@@ -58,21 +67,6 @@ class Loss_and_Deriv_fns:
 
         return out
 
-
-    def loss_grad_adj_fn(self, *args, **kwargs):
-        raise ValueError("Adjoint needs update")
-        self.loss_grad_evals += 1
-
-        start = time.perf_counter()
-
-        out = self.adj_solver.compute_grad(*args, **kwargs)
-        out = jax.block_until_ready(out)
-
-        end = time.perf_counter()
-        dt = end - start
-        self.loss_grad_time_total += dt
-
-        return out
 
     def HVP_fn(self, u, v):
         self.Hvp_evals += 1
@@ -98,7 +92,7 @@ class Loss_and_Deriv_fns:
         return out 
 
     def conditional_loss_grad_fn(self, loss_ub, U):
-        loss, grad, active = self._conditional_loss_grad_fn_helper(loss_ub, U, self.loss_fn_base)
+        loss, grad, active = self.conditional_loss_grad_fn_jit(loss_ub, U)
         if active:
             self.loss_grad_evals += 1
         else:
@@ -107,10 +101,8 @@ class Loss_and_Deriv_fns:
         return loss, grad, active
     
     @staticmethod
-    @functools.partial(jax.jit, static_argnums=2)
     def _conditional_loss_grad_fn_helper(loss_ub, U, loss_fn_base):
         loss, pullback = jax.vjp(loss_fn_base, U)  # forward happens here (always)
-
         def do_pullback(_):
             # pullback returns a tuple of cotangents (one per primal input)
             (g,) = pullback(1.0)  # assuming loss is scalar

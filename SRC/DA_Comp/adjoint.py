@@ -345,6 +345,75 @@ def get_loss_grad_vp_fn(pIC, crit, target_trj, stepper, transform_fn,
         return loss, grad_x
 
     return get_loss_grad_vp_fn
+
+def get_loss_grad_conditional_vp_fn(pIC, crit, target_trj, stepper, transform_fn,
+                    vel_part_trans, dt, T, mbits, exp_bits, exp_bias):
+    p_idx = pIC.shape[0]
+    adj_step_1 = Adjoint_Stepper_1(
+            p_idx, crit, target_trj, stepper, vel_part_trans
+        )
+
+    #trj_gen_fn = create_trj_generator(stepper.step.rhs, dt, T)
+    trj_gen_fn = create_trj_generator_vpfloat(stepper.step.rhs, adj_step_1.g, dt, T, exp_bits, exp_bias, mbits)
+    
+    def get_loss_grad_vp_fn(loss_ub, u_0_vel_raw):
+        # 1) Transform IC and linearization
+        u_0_vel, lin = jax.linearize(transform_fn, u_0_vel_raw)
+
+        # 2) Forward trajectory (must be fixed-length for JIT)
+        sign_trj, exp_trj, mant_trj, loss = trj_gen_fn(pIC, u_0_vel)
+
+        state_shape = (u_0_vel.shape[0] + pIC.shape[0],)
+
+        def do_grad(_):
+            N = sign_trj.shape[0]
+
+            sign_N = sign_trj[-1]
+            exp_N  = exp_trj[-1]
+            mant_N = mant_trj[-1]
+
+            U_N = join_f64_via_callback(
+                sign_N, exp_N, mant_N,
+                state_shape,
+                exp_bits, exp_bias, mbits
+            )
+
+            _, lam_N = adj_step_1.loss_dg__du_fn(U_N, N - 1)
+
+            xs = (sign_trj[:-1], exp_trj[:-1], mant_trj[:-1], jnp.arange(N - 1))
+
+            def grad_step(lam, x):
+                sign_i, exp_i, mant_i, i = x
+                U_i = join_f64_via_callback(
+                    sign_i, exp_i, mant_i,
+                    state_shape,
+                    exp_bits, exp_bias, mbits
+                )
+                lam, _ = adj_step_1(lam, U_i, i)
+                return lam, None
+
+            lam_0, _ = lax.scan(grad_step, lam_N, xs, reverse=True)
+
+            grad_t = lam_0[p_idx:]
+            lin_T = jax.linear_transpose(lin, u_0_vel_raw)
+            (grad_x,) = lin_T(grad_t)
+
+            return grad_x, jnp.bool_(True)
+
+        def skip_grad(_):
+            grad_x = jnp.zeros_like(u_0_vel_raw)
+            return grad_x, jnp.bool_(False)
+
+        grad_x, did_grad = lax.cond(
+            loss <= loss_ub,
+            do_grad,
+            skip_grad,
+            operand=None
+        )
+
+        return loss, grad_x, did_grad
+
+    return get_loss_grad_vp_fn
                                                     
 
 def get_loss_grad_fn(pIC, crit, target_trj, stepper, transform_fn,

@@ -230,7 +230,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         for loss_crit in DA_opts.crit_list:
                             loss_crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
                             crit_dir = os.path.join(PI_root, f"{loss_crit}")
-                            loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn)
                             loss_fn = create_loss_fn(
                                 loss_crit, stepper, target_trj, pIC, vel_part_trans
                             )
@@ -253,38 +252,42 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     opt_method_dir = os.path.join(
                                         opt_init_dir, f"{optimizer}"
                                 )
-                                    os.makedirs(opt_method_dir)
+                                    for vfloat in DA_opts.vp_list:
+                                        if vfloat is None:
+                                            vfloat_dir = os.path.join(opt_method_dir, "double")
+                                        else:
+                                            vfloat_dir = os.path.join(opt_method_dir, f"{vfloat}")
+                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, kf_opts.dt, T, vfloat)
+                                        os.makedirs(vfloat_dir, exist_ok=True)
+                                        def omega_fn(U):
+                                            U = vel_part_trans.reshape_flattened_vel(U)
+                                            u_hat = jnp.fft.rfft2(U[0])
+                                            v_hat = jnp.fft.rfft2(U[1])
+                                            return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
+                                        
+                                        def div_check(U_fourier):
+                                            U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
+                                            div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
+                                            return jnp.mean(jnp.abs(div_field))
+                                        
+                                        results_df = pd.DataFrame({
+                                                                    "seed": [seed_idx],
+                                                                    "T": [T],
+                                                                    "n_part": [npart],
+                                                                    "samp_period": [samp_period],
+                                                                    "init_IC_distance": [float(actual_norm_dist)],
+                                                                    "optimizer": [f"{optimizer}"],
+                                                                    "loss_crit": [f"{loss_crit}"]
 
+                                                                })
+                                        div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
+                
 
-                                    def omega_fn(U):
-                                        U = vel_part_trans.reshape_flattened_vel(U)
-                                        u_hat = jnp.fft.rfft2(U[0])
-                                        v_hat = jnp.fft.rfft2(U[1])
-                                        return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
-                                    
-                                    def div_check(U_fourier):
-                                        U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
-                                        div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
-                                        return jnp.mean(jnp.abs(div_field))
-                                    
-                                    results_df = pd.DataFrame({
-                                                                "seed": [seed_idx],
-                                                                "T": [T],
-                                                                "n_part": [npart],
-                                                                "samp_period": [samp_period],
-                                                                "init_IC_distance": [float(actual_norm_dist)],
-                                                                "optimizer": [f"{optimizer}"],
-                                                                "loss_crit": [f"{loss_crit}"]
-
-                                                            })
-                                    div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
-            
-
-                                    _run_DA_case(target_trj, U_0_guess, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, opt_method_dir, kf_opts.dt,
-                                                omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
-                                                parquet_path)
-                                    count += 1
-                                    print(f"case: {count}/{total_cases}")
+                                        _run_DA_case(target_trj, U_0_guess, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, vfloat_dir, kf_opts.dt,
+                                                    omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
+                                                    parquet_path)
+                                        count += 1
+                                        print(f"case: {count}/{total_cases}")
 
 
     return root

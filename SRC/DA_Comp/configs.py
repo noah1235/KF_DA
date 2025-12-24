@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from SRC.Vel_init.IC_init import IC_init
+from SRC.vp_floats.vp_py_utils import choose_exponent_format, float_pos_range
 
 @dataclass
 class KF_Opts:
@@ -26,6 +27,7 @@ class DA_Opts:
     num_seeds: int
     ic_init: IC_init
     optimizer_list: any
+    vp_list: any
     crit_list: any
     T_list: any
 
@@ -40,3 +42,18 @@ class Opt_Config_2:
     def __repr__(self):
         return (f"{self.search_method}_{self.ls_method}-{self.its}")
 
+
+class VP_Float_Settings:
+    def __init__(self, mbits, minv, maxv):
+        exp_bits, exp_bias = choose_exponent_format(minv, maxv)
+        self.minp, self.maxp = float_pos_range(exp_bits, exp_bias, mbits)
+
+        self.mbits = mbits
+        self.exp_bits = exp_bits
+        self.exp_bias = exp_bias
+
+    def get_vp_settings(self):
+        return self.mbits, self.exp_bits, self.exp_bias
+    
+    def __repr__(self):
+        return f"M={self.mbits}_E={self.exp_bits}_bias={self.exp_bias}"

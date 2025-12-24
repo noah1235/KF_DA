@@ -31,13 +31,13 @@ def create_trj_generator(rhs, dt, T, dtype=jnp.float64):
         return trj
     return trj_gen
 
-def create_trj_generator_vpfloat(rhs, dt, T, exp_bits, exp_bias, mbits):
+def create_trj_generator_vpfloat(rhs, g, dt, T, exp_bits, exp_bias, mbits):
     def trj_gen(pIC, U_hat_0):
         nsteps = int(T/dt)
         X0 = jnp.concat([pIC, U_hat_0.reshape(-1)])
         integrator = Time_Stepper(rhs, dt, method="RK4", n_particles=rhs.n_particles)
-        sign_trj, exp_trj, mant_trj = integrator.integrate_scan_vp_save(X0, nsteps, exp_bits, exp_bias, mbits)
-        return sign_trj, exp_trj, mant_trj
+        sign_trj, exp_trj, mant_trj, loss = integrator.integrate_scan_vp_save(X0, g, nsteps, exp_bits, exp_bias, mbits)
+        return sign_trj, exp_trj, mant_trj, loss
     return trj_gen
 
 def split_f64_cb(U, exp_bits, exp_bias, mbits):
@@ -119,7 +119,7 @@ class Time_Stepper:
         trj = jnp.concatenate([U0[None, ...].astype(dtype), trj], axis=0)
         return trj
     
-    def integrate_scan_vp_save(self, U0, nsteps, exp_bits, exp_bias, mbits):
+    def integrate_scan_vp_save(self, U0, g, nsteps, exp_bits, exp_bias, mbits):
         sign_shape, exp_shape, m_shape = calc_output_shape(len(U0), mbits, exp_bits)
         # output specs (must match vpfloat output exactly)
         sign_spec = ShapeDtypeStruct(
@@ -137,18 +137,21 @@ class Time_Stepper:
                 shape=m_shape, dtype=jnp.uint8
             )
 
-        def body(U, _):
-            # host callback
+        def body(carry, _):
+            U, loss, i = carry
+            i += 1
             U_next = self.step(U)
+            loss += g(U_next, i)
+
             sign, exp, mant = jax.pure_callback(
                 split_f64_cb,
                 (sign_spec, exp_spec, mant_spec),
                 U_next, exp_bits, exp_bias, mbits
             )
-            return U_next, (sign, exp, mant)
+            return (U_next, loss, i), (sign, exp, mant)
 
-        U_f, (sign_trj, exp_trj, mant_trj) = lax.scan(
-            body, U0, xs=None, length=nsteps
+        (U_f, loss, _), (sign_trj, exp_trj, mant_trj) = lax.scan(
+            body, (U0, g(U0, 0), 0), xs=None, length=nsteps
         )
 
         # also save t = 0
@@ -162,7 +165,7 @@ class Time_Stepper:
         exp_trj  = jnp.concatenate([exp0[None, ...],  exp_trj],  axis=0)
         mant_trj = jnp.concatenate([mant0[None, ...], mant_trj], axis=0)
 
-        return sign_trj, exp_trj, mant_trj
+        return sign_trj, exp_trj, mant_trj, loss
   
     def integrate_scan_checkpoint(self, U0, nsteps, chunk_size, path, dtype=np.float32):
         U0 = jnp.asarray(U0)
