@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import lax
 import functools
 from SRC.Solver.KF_intergrators import create_trj_generator_vpfloat, create_trj_generator
-from vp_py_utils import choose_exponent_format, calc_output_shape
+from SRC.vp_floats.vp_py_utils import choose_exponent_format, calc_output_shape
 import vpfloat
 import numpy as np
 from jax import ShapeDtypeStruct

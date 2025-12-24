@@ -1,3 +1,4 @@
+pyproject.toml
 setup.py
 vpfloat.cpp
 vpfloat.egg-info/PKG-INFO

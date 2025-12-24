@@ -87,7 +87,7 @@ def collect_stats_over_mbits(
     pIC, crit, target_trj, stepper, adj_transform, vel_part_trans,
     dt, T, exp_bits, exp_bias,
     attractor_snapshots,
-    nreps=2,
+    nreps=20,
     seed=0,
 ):
     rng = np.random.default_rng(seed)
@@ -134,7 +134,7 @@ def plot_metrics_vs_mbits(df, path):
     plt.xlabel("mantissa bits (mbits)")
     plt.ylabel("Loss percent error (%)")
     plt.title("Loss error vs mantissa bits")
-    plt.grid(True, which="both", ls="--", alpha=0.4)
+    #plt.grid(True, which="both", ls="--", alpha=0.4)
 
     save_svg(plt, fig, os.path.join(path, "loss_v_mbits.svg"))
     plt.close(fig)
@@ -148,7 +148,7 @@ def plot_metrics_vs_mbits(df, path):
     plt.xlabel("mantissa bits (mbits)")
     plt.ylabel("Gradient percent error (%)")
     plt.title("Gradient error vs mantissa bits")
-    plt.grid(True, which="both", ls="--", alpha=0.4)
+    #plt.grid(True, which="both", ls="--", alpha=0.4)
 
     save_svg(plt, fig, os.path.join(path, "grad_v_mbits.svg"))
     plt.close(fig)
@@ -161,7 +161,7 @@ def plot_metrics_vs_mbits(df, path):
     plt.xlabel("mantissa bits (mbits)")
     plt.ylabel("Gradient cosine similarity")
     plt.title("Gradient cosine similarity vs mantissa bits")
-    plt.grid(True, ls="--", alpha=0.4)
+    #plt.grid(True, ls="--", alpha=0.4)
 
     save_svg(plt, fig, os.path.join(path, "cos_v_mbits.svg"))
     plt.close(fig)
@@ -173,17 +173,22 @@ def adjoint_test():
     kf_opts = KF_Opts(
         Re=100,
         n=4,
-        NDOF=32,
+        NDOF=128,
         dt=1e-2,
         total_T=1000,
         min_samp_T=50,
         t_skip=1e-1,
     )
 
-    npart = 30
-    T = 0.5
-    mbits_list = [2, 4, 12]
+    npart = 25
+    T = 4
+    samp_period = .1
+    mbits_list = np.arange(2, 14, 2)
     minv, maxv = 1e-3, 10.0
+
+    period_idx = int(samp_period/kf_opts.dt)
+    idx = jnp.arange(int(T/kf_opts.dt)+1)
+    t_mask = (idx % period_idx == 0)
 
     crit = MSE_Vel()
 
@@ -207,7 +212,6 @@ def adjoint_test():
     trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T, dtype=jnp.float64)
     target_trj = trj_gen_fn(pIC, U_true)
 
-    t_mask = jnp.ones(target_trj.shape[0])
     crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
     adj_transform = build_div_free_proj(stepper, vel_part_trans)
 
