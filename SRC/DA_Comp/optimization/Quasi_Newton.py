@@ -35,7 +35,7 @@ class L_BK:
             result += jnp.outer(x, x) * self.Bk_scalars[i]
         return result
 
-    def eig_decomp(self, which="LM", num_eig=None):
+    def eig_decomp_dec(self, which="LM", num_eig=None):
         if num_eig is None or num_eig > len(self):
             num_eig = len(self)
 
@@ -44,9 +44,67 @@ class L_BK:
             return self @ v
 
         A_op = LinearOperator((self.N, self.N), matvec=matvec)
-        #ncv = min(3*num_eig+1, self.N)
         Bk_eigs, Bk_eig_vec = eigsh(A_op, k=num_eig, which=which)
         return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
+    
+    def eig_decomp(self, which="LM", num_eig=None, *, max_tries=5):
+        """
+        Robust eigsh wrapper:
+        - tries k=num_eig
+        - if eigsh throws, halves k and retries
+        - repeats until k < 1, then raises the last error
+
+        Returns:
+        (eigs, eigvecs) as jnp arrays
+        """
+        N = int(self.N)
+
+        # pick initial k
+        if num_eig is None or num_eig > len(self):
+            k = int(len(self))
+        else:
+            k = int(num_eig)
+
+        # eigsh constraints: 0 < k < N
+        k = min(k, N - 1)
+
+        if k < 1:
+            raise ValueError(f"eig_decomp: requested num_eig={num_eig} is invalid for N={N} (need k>=1 and k<N).")
+
+        def matvec(v):
+            v = jnp.asarray(v)
+            return self @ v
+
+        A_op = LinearOperator((N, N), matvec=matvec)
+
+        last_err = None
+        tries = 0
+
+        while k >= 1 and tries < max_tries:
+            tries += 1
+            try:
+                Bk_eigs, Bk_eig_vec = eigsh(
+                    A_op,
+                    k=k,
+                    which=which,
+                )
+                return jnp.array(Bk_eigs), jnp.array(Bk_eig_vec)
+
+            except Exception as e:
+                last_err = e
+                # halve k and retry
+                new_k = k // 2
+                if new_k == k:  # (shouldn't happen, but guard)
+                    new_k = k - 1
+                k = new_k
+
+        # If we got here, we failed for all k >= 1
+        raise RuntimeError(
+            f"eig_decomp: eigsh failed after {tries} attempt(s). "
+            f"Last attempted k={max(0, k)}; N={N}; which={which}. "
+            f"Last error: {type(last_err).__name__}: {last_err}"
+        ) from last_err
+
 
     def __len__(self):
         return self.cmem
