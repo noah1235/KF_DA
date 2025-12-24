@@ -6,6 +6,7 @@ from SRC.DA_Comp.adjoint import Adjoint_Solver
 from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
 import time
+import os
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 class Loss_and_Deriv_fns:
     def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, trj_gen_fn):
@@ -44,33 +45,16 @@ class Loss_and_Deriv_fns:
         self.loss_grad_evals = 0
         self.Hvp_evals = 0
 
-        self.loss_time_total = 0
-        self.loss_grad_time_total = 0.0
-        self.Hvp_time_total = 0.0
-
 
     def loss_fn(self, *args, **kwargs):
         self.loss_evals += 1
-
-        start = time.perf_counter()
         out = self.loss_fn_jit(*args, **kwargs)
-        out = jax.block_until_ready(out)
-        dt = time.perf_counter() - start
-
-        self.loss_time_total += dt
 
         return out
         
     def loss_grad_fn(self, *args, **kwargs):
         self.loss_grad_evals += 1
-
-        start = time.perf_counter()
         out = self.loss_grad_fn_jit(*args, **kwargs)
-        out = jax.block_until_ready(out)
-
-        end = time.perf_counter()
-        dt = end - start
-        self.loss_grad_time_total += dt
 
         return out
 
@@ -92,14 +76,7 @@ class Loss_and_Deriv_fns:
 
     def HVP_fn(self, u, v):
         self.Hvp_evals += 1
-        start = time.perf_counter()
-
         out = self.hvp_fn_jit(u, v)
-        out = jax.block_until_ready(out)
-
-        end = time.perf_counter()
-        dt = end - start
-        self.Hvp_time_total += dt
 
         return out
 
@@ -171,6 +148,11 @@ class Opt_Data:
         self.loss_record = self.loss_record[:iters]
         self.grad_norm_record = self.grad_norm_record[:iters]
         self.alpha_gTp_record = self.alpha_gTp_record[:iters]
+
+    def save_data(self, root):
+        np.save(os.path.join(root, "loss_record.npy"), np.array(self.loss_record))
+        np.save(os.path.join(root, "grad_norm_record.npy"), np.array(self.grad_norm_record))
+        np.save(os.path.join(root, "alpha_gTp_record.npy"), np.array(self.alpha_gTp_record))
 
     def __add__(self, other):
         if not isinstance(other, Opt_Data):

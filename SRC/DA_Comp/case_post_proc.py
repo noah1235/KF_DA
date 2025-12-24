@@ -2,7 +2,8 @@ import os
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-
+from SRC.plotting_utils import save_svg
+import matplotlib as mpl
 from SRC.Solver.ploting import plot_vorticity
 
 def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df):
@@ -20,8 +21,8 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
 
     init_guess_vel = init_guess_trj[:, n_particles * 4 :]
 
-    trj_cos_sim = jnp.vdot(target_vel.reshape(-1), DA_vel.reshape(-1)) / (jnp.linalg.norm(target_vel) * jnp.linalg.norm(DA_vel))
-    final_snap_cos_sim = jnp.vdot(target_vel[0], DA_vel[0])/(jnp.linalg.norm(target_vel[0]) * jnp.linalg.norm(DA_vel[0]))
+    trj_cos_sim = jnp.dot(target_vel.reshape(-1), DA_vel.reshape(-1)) / (jnp.linalg.norm(target_vel) * jnp.linalg.norm(DA_vel))
+    final_snap_cos_sim = jnp.dot(target_vel[0], DA_vel[0])/(jnp.linalg.norm(target_vel[0]) * jnp.linalg.norm(DA_vel[0]))
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
     results_df["final_snap_cos_sim"] = [float(final_snap_cos_sim)]
 
@@ -30,16 +31,14 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
     time_axis = jnp.arange(nsteps) * dt
 
     vel_cos_sim = compute_cosine_vs_time(target_vel, DA_vel)
-    part_cos_sim = compute_cosine_vs_time(target_part, DA_part)
-    plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, save_dir)
+    plot_vel_error_vs_time(vel_cos_sim, time_axis, t_mask, save_dir)
 
     #Vorticity plot
-    print(jnp.linalg.norm(init_guess_vel[0]-target_vel[0]))
-    plot_vort_comp(init_guess_vel[0], target_vel[0], omega_fn, os.path.join(save_dir, "IC_guess_comp.png"),
+    plot_vort_comp(init_guess_vel[0], target_vel[0], omega_fn, os.path.join(save_dir, "IC_guess_comp.svg"),
                    l1="DA final vorticity", l2="Target final vorticity")
-    plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison.png"),
+    plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison.svg"),
                    l1="DA final vorticity", l2="Target final vorticity")
-    plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison_init.png"),
+    plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison_init.svg"),
                    l1="DA init final vorticity", l2="Target final vorticity")
     plot_convergence(opt_data, save_dir)
 
@@ -92,7 +91,7 @@ def plot_vort_comp(DA_vel, target_vel, omega_fn, save_path, l1, l2):
     ax2.set_title(l2)
 
     # Save
-    fig.savefig(save_path, dpi=150)
+    save_svg(mpl, fig, save_path)
     plt.close(fig)
 
 def compute_cosine_vs_time(A, B, eps=1e-12):
@@ -101,7 +100,7 @@ def compute_cosine_vs_time(A, B, eps=1e-12):
     nb  = jnp.linalg.norm(B, axis=1)
     return dot / (na * nb + eps)
 
-def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, save_dir):
+def plot_vel_error_vs_time(vel_cos_sim, time_axis, t_mask, save_dir):
     """
     Plot velocity and particle errors vs. time and save the figure.
     """
@@ -109,7 +108,6 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, sa
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
 
     ax.plot(time_axis, vel_cos_sim, label="Velocity error", marker="o")
-    ax.plot(time_axis, part_cos_sim, label="Particle error", marker="o")
     
     for t in time_axis[t_mask == 1]:
         ax.axvline(x=t, color="k", linestyle="--", alpha=0.3, linewidth=1.0)
@@ -118,11 +116,11 @@ def plot_vel_part_error_vs_time(vel_cos_sim, part_cos_sim, time_axis, t_mask, sa
     ax.set_ylabel("Cosine Similarity")
     ax.grid(True, alpha=0.3)
     ax.legend()
-    ax.set_ylim(-1.2, 1.2)
+    ax.set_ylim(.8, 1.05)
     fig.tight_layout()
 
-    out_path = os.path.join(save_dir, "vel_part_error_vs_time.png")
-    fig.savefig(out_path, dpi=150)
+    out_path = os.path.join(save_dir, "vel_part_error_vs_time.svg")
+    save_svg(mpl, fig, out_path)
     plt.close(fig)
     return out_path
 
@@ -174,12 +172,12 @@ def plot_convergence(opt_data, save_dir, y_min=1e-18):
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Value")
     ax.set_yscale("log")
-    ax.set_ylim(y_min, ymax)
+    #ax.set_ylim(y_min, ymax)
     ax.grid(True, ls=":", alpha=0.5)
     ax.legend(loc="best")
 
     # --- keep your saving logic exactly ---
-    fig.savefig(os.path.join(save_dir, "convergence.png"), dpi=200)
+    save_svg(mpl, fig, os.path.join(save_dir, "convergence.svg"))
     plt.close()
 
     return fig, ax
