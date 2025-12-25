@@ -24,7 +24,7 @@ class DA_Opts:
     part_opts: Particle_Opts
     num_particle_inits: int
     num_opt_inits: int
-    num_seeds: int
+    IC_seed_list: any
     ic_init: IC_init
     optimizer_list: any
     vp_list: any

@@ -33,32 +33,6 @@ import gc
 
 
 
-def get_max_seed_index(directory: str) -> int | None:
-    """
-    Find the maximum integer x among subfolders named exactly 'seed_idx=x' within `directory`.
-
-    Parameters
-    ----------
-    directory : str
-        Path to the root directory that may contain seed-indexed subfolders.
-
-    Returns
-    -------
-    int | None
-        The maximum seed index found, or None if there are no matching subfolders.
-    """
-    path = Path(directory)
-    max_x = None
-    for folder in path.iterdir():
-        if folder.is_dir():
-            m = re.match(r"seed_idx=(\d+)$", folder.name)
-            if m:
-                x = int(m.group(1))
-                if max_x is None or x > max_x:
-                    max_x = x
-    return max_x
-
-
 def append_to_parquet(df, parquet_path):
     """
     Append a DataFrame to a Parquet file, or create it if it doesn't exist.
@@ -113,13 +87,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     os.makedirs(root, exist_ok=True)
     parquet_path = os.path.join(root, "results.parquet")
 
-    # Continue seed indexing from the max existing seed, if present
-    max_seed_idx = get_max_seed_index(root)
-    if max_seed_idx is None:
-        max_seed_idx = 0
 
     total_cases = (
-        DA_opts.num_seeds
+        len(DA_opts.IC_seed_list)
         * len(DA_opts.T_list)
         * len(DA_opts.n_particles_list)
         * len(DA_opts.sampling_period_list)
@@ -130,8 +100,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     )
     count = 0
     # Loop over experiment seeds
-    for i in range(DA_opts.num_seeds):
-        seed_idx = i + max_seed_idx
+    for seed_idx in DA_opts.IC_seed_list:
         seed_root = os.path.join(root, f"seed_idx={seed_idx}")
         os.makedirs(seed_root, exist_ok=True)
 
@@ -140,9 +109,12 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
         if os.path.exists(U_0_path):
             U_0 = np.load(U_0_path)
         else:
-            U_0 = attractor_snapshots[
-                random.randint(0, attractor_snapshots.shape[0] - 1), :
-            ]
+            rng = np.random.default_rng(seed_idx)   # ← seed used HERE
+            idx = rng.integers(
+                low=0,
+                high=attractor_snapshots.shape[0],
+            )
+            U_0 = attractor_snapshots[idx, :]
             np.save(U_0_path, U_0)
 
         # Loop over time horizons
@@ -176,7 +148,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                     # Loop over particle initializations
                     
                     PI_root_base = os.path.join(samp_p_root, "PI")
-                    base_seed = getattr(DA_opts, "particle_seed_base", 12345)
+                    base_seed = getattr(DA_opts, "particle_seed_base", 1)
                     for i in range(DA_opts.num_particle_inits):
                         # ------------------------------------------------
                         # 1) Choose a repeatable seed and folder name
@@ -197,13 +169,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                         else:
                             print(f"[PI] Generating new pIC for seed {seed}")
-
-                            # Make randomness repeatable for this init
-                            # Option A: if init_particles_vector uses np.random internally:
-                            np.random.seed(seed)
-
-                            # Option B (better): if init_particles_vector can take an rng argument:
-                            # rng = np.random.default_rng(seed)
+                            rng = np.random.default_rng(seed)
 
                             # Random particle ICs in the periodic domain
                             pIC = init_particles_vector(
@@ -212,7 +178,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                 (0, RHS.KF_RHS.L),
                                 (0, RHS.KF_RHS.L),
                                 RHS.KF_RHS.L,
-                                # rng=rng,  # uncomment if your function supports this
+                                rng=rng,
                             )
 
                             # Save pIC for reuse
