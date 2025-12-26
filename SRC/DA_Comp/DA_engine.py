@@ -222,9 +222,11 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                 )
                                     for vfloat in DA_opts.vp_list:
                                         if vfloat is None:
-                                            vfloat_dir = os.path.join(opt_method_dir, "double")
+                                            vfloat_name = "double"
                                         else:
-                                            vfloat_dir = os.path.join(opt_method_dir, f"{vfloat}")
+                                            vfloat_name = f"{vfloat}"
+                                        vfloat_dir = os.path.join(opt_method_dir, vfloat_name)
+
                                         loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, kf_opts.dt, T, vfloat)
                                         os.makedirs(vfloat_dir, exist_ok=True)
                                         def omega_fn(U):
@@ -245,7 +247,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                     "NT": [NT],
                                                                     "init_IC_distance": [float(actual_norm_dist)],
                                                                     "optimizer": [f"{optimizer}"],
-                                                                    "loss_crit": [f"{loss_crit}"]
+                                                                    "loss_crit": [f"{loss_crit}"],
+                                                                    "floatp": [vfloat_name]
+
 
                                                                 })
                                         div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")

@@ -58,15 +58,23 @@ def generate_KF_flow():
 
 def generate_KF_dataset():
     NDOF = 256
-    Re = 200
-    n  = 4
-    dt = 5e-3
+    Re = 100
+    n  = 8
+    dt = 1e-2
     T = 100
     T_samp = 50
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
     use_cpu = False
     chunk_size = 10
+
+    root = os.path.join(
+        create_results_dir(),
+        "Trjs",
+        "KF_datasets",
+        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={int(T)}"
+    )
+    os.makedirs(root, exist_ok=True)
 
     if use_cpu:
         jax.config.update("jax_default_device", jax.devices("cpu")[0])
@@ -86,13 +94,6 @@ def generate_KF_dataset():
             U_0 = integrator.integrate_scan(U_0, chunk_size)[-1]
     
 
-    root = os.path.join(
-        create_results_dir(),
-        "Trjs",
-        "KF_datasets",
-        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={int(T)}"
-    )
-    os.makedirs(root, exist_ok=True)
     integrator.integrate_scan_checkpoint(U_0, nsteps, chunk_size, os.path.join(root, "dataset.npy"))  # assume shape (nsteps+1, dim)
 
 def generate_KF_energy_plots():

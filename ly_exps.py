@@ -5,9 +5,10 @@ from SRC.utils import load_data
 from SRC.DA_Comp.configs import KF_Opts
 import random
 import multiprocessing as mp
+import os 
 #jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_default_device", jax.devices("cpu")[0])
-
+from create_results_dir import create_results_dir
 import jax.numpy as jnp
 
 def kaplan_yorke_dimension(lyap: jnp.ndarray) -> jnp.ndarray:
@@ -141,6 +142,12 @@ def push_orthonormal_matrix(stepper, u_0, Y_0, n):
     return growth_trj
 
 # ------------- main function -----------------
+import os
+import random
+import numpy as np
+import jax
+import jax.numpy as jnp
+
 def ly_exp_main():
     kf_opts = KF_Opts(
         Re=100,
@@ -151,27 +158,33 @@ def ly_exp_main():
         min_samp_T=50,
         t_skip=1e-1,
     )
+
     seed = 0
     r = 50
-    T = 1000
+    T = 1e3
     T_skip = 1
+
+    root = os.path.join(
+        create_results_dir(),
+        "Ly_Exps",
+        f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_T={T}"
+    )
+    os.makedirs(root, exist_ok=True)
 
     attractor_snapshots = load_data(kf_opts)
 
     # Python RNG for picking U_0
     rng = random.Random(seed)
-
-    # pick a random snapshot
     idx = rng.randint(0, attractor_snapshots.shape[0] - 1)
     U_0 = attractor_snapshots[idx, :]
 
-    # build RHS & stepper locally in the worker
+    # Build RHS & stepper
     rhs = KF_PS_RHS(kf_opts.NDOF, kf_opts.Re, kf_opts.n)
     stepper = RK4_Step(rhs, kf_opts.dt)
 
     n = U_0.shape[0]
 
-    # JAX key per worker
+    # JAX key
     key = jax.random.PRNGKey(seed)
     A = jax.random.normal(key, (n, r))
     Y_0, _ = jnp.linalg.qr(A)
@@ -183,13 +196,42 @@ def ly_exp_main():
         stepper, U_0, Y_0, n_steps, n_skip
     )
 
+    # Lyapunov spectrum
     lyapunov_spectrum = (
         jnp.sum(jnp.log(jnp.abs(growth_trj)), axis=0) / T
     )
-    print(lyapunov_spectrum)
-    print(f"LLE: {jnp.max(lyapunov_spectrum)}")
-    KY_dim = kaplan_yorke_dimension(lyapunov_spectrum)
-    print(KY_dim)
+
+    # Move to host + sort
+    lyap_np = np.asarray(lyapunov_spectrum)
+    lyap_sorted = np.sort(lyap_np)[::-1]
+
+    LLE = float(lyap_sorted[0])
+    KY_dim = float(kaplan_yorke_dimension(lyap_sorted))
+
+    # -------- Write to file --------
+    out_file = os.path.join(root, "lyapunov_spectrum.txt")
+
+    with open(out_file, "w") as f:
+        f.write("# Lyapunov analysis\n")
+        f.write(f"# Re        = {kf_opts.Re}\n")
+        f.write(f"# NDOF      = {kf_opts.NDOF}\n")
+        f.write(f"# dt        = {kf_opts.dt}\n")
+        f.write(f"# T         = {T}\n")
+        f.write(f"# r         = {r}\n")
+        f.write("\n")
+
+        f.write(f"LLE = {LLE:.8e}\n")
+        f.write(f"KY_dim = {KY_dim:.8f}\n")
+        f.write("\n")
+
+        f.write("# Lyapunov exponents (sorted, descending)\n")
+        for i, le in enumerate(lyap_sorted):
+            f.write(f"{i:3d}  {le:.8e}\n")
+
+    print(f"Saved Lyapunov results to: {out_file}")
+    print(f"LLE = {LLE}")
+    print(f"KY_dim = {KY_dim}")
+
 
 if __name__ == "__main__":
     ly_exp_main()
