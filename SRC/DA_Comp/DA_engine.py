@@ -89,18 +89,18 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
 
     total_cases = (
-        len(DA_opts.IC_seed_list)
+        len(DA_opts.TIC_seed_list)
         * len(DA_opts.T_list)
         * len(DA_opts.n_particles_list)
-        * len(DA_opts.sampling_period_list)
-        * DA_opts.num_particle_inits
+        * len(DA_opts.NT_list)
+        * len(DA_opts.PIC_seed_list)
         * DA_opts.num_opt_inits
         * len(DA_opts.optimizer_list)
         * len(DA_opts.crit_list)
     )
     count = 0
     # Loop over experiment seeds
-    for seed_idx in DA_opts.IC_seed_list:
+    for seed_idx in DA_opts.TIC_seed_list:
         seed_root = os.path.join(root, f"seed_idx={seed_idx}")
         os.makedirs(seed_root, exist_ok=True)
 
@@ -139,22 +139,24 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                 if isinstance(DA_opts.ic_init, CS_init):
                     DA_opts.ic_init.set_transform(stepper, vel_part_trans)
                 
-                for samp_period in DA_opts.sampling_period_list:
+                for NT in DA_opts.NT_list:
+                    NT_root = os.path.join(npart_root, f"NT={NT}")
+                    #t_mask = jnp.linspace(0, int(T/kf_opts.dt)+1)
+                    samp_period = T/(NT-1)
                     period_idx = int(samp_period/kf_opts.dt)
                     idx = jnp.arange(int(T/kf_opts.dt)+1)
                     t_mask = (idx % period_idx == 0)
+                    plt.plot(np.linspace(0, 1, t_mask.shape[0]), t_mask)
+                    plt.show()
 
-                    samp_p_root = os.path.join(npart_root, f"SP={samp_period}")
                     # Loop over particle initializations
                     
-                    PI_root_base = os.path.join(samp_p_root, "PI")
-                    base_seed = getattr(DA_opts, "particle_seed_base", 1)
-                    for i in range(DA_opts.num_particle_inits):
+                    PI_root_base = os.path.join(NT_root, "PI")
+                    for PIC_seed in DA_opts.PIC_seed_list:
                         # ------------------------------------------------
                         # 1) Choose a repeatable seed and folder name
                         # ------------------------------------------------
-                        seed = base_seed + i
-                        PI_root = os.path.join(PI_root_base, f"seed_{seed}")
+                        PI_root = os.path.join(PI_root_base, f"seed_{PIC_seed}")
                         os.makedirs(PI_root, exist_ok=True)
 
                         pIC_path = os.path.join(PI_root, "pIC.npy")
@@ -164,12 +166,12 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         # 2) If pIC already exists, just load it
                         # ------------------------------------------------
                         if os.path.exists(pIC_path):
-                            print(f"[PI] Using existing pIC for seed {seed}")
+                            print(f"[PI] Using existing pIC for seed {PIC_seed}")
                             pIC = np.load(pIC_path)
 
                         else:
-                            print(f"[PI] Generating new pIC for seed {seed}")
-                            rng = np.random.default_rng(seed)
+                            print(f"[PI] Generating new pIC for seed {PIC_seed}")
+                            rng = np.random.default_rng(PIC_seed)
 
                             # Random particle ICs in the periodic domain
                             pIC = init_particles_vector(
@@ -240,7 +242,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                     "seed": [seed_idx],
                                                                     "T": [T],
                                                                     "n_part": [npart],
-                                                                    "samp_period": [samp_period],
+                                                                    "NT": [NT],
                                                                     "init_IC_distance": [float(actual_norm_dist)],
                                                                     "optimizer": [f"{optimizer}"],
                                                                     "loss_crit": [f"{loss_crit}"]

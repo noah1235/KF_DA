@@ -20,11 +20,11 @@ class Particle_Opts:
 @dataclass
 class DA_Opts:
     n_particles_list: any
-    sampling_period_list: any
+    NT_list: any
     part_opts: Particle_Opts
-    num_particle_inits: int
+    PIC_seed_list: any
     num_opt_inits: int
-    IC_seed_list: any
+    TIC_seed_list: any
     ic_init: IC_init
     optimizer_list: any
     vp_list: any
