@@ -8,6 +8,7 @@ import matplotlib as mpl
 def plot_opt_comp(crit_df, loss_crit_root, avg_loss_grad_cost=2, avg_Hvp_cost=5):
     # Figure for average optimizer performance (across all optimizers)
     fig_avg, ax_avg = plt.subplots()
+    fig_avg_v_its, ax_avg_v_its = plt.subplots()
     
     for optimizer, opt_df in crit_df.groupby("optimizer"):
         save_root = os.path.join(loss_crit_root, str(optimizer))
@@ -55,6 +56,7 @@ def plot_opt_comp(crit_df, loss_crit_root, avg_loss_grad_cost=2, avg_Hvp_cost=5)
 
 
         ax_avg.plot(avg_cost_trace, avg_loss_trace, label=str(optimizer))
+        ax_avg_v_its.plot(avg_loss_trace,label=str(optimizer) )
         
 
     # Finalize and save average performance plot
@@ -65,6 +67,14 @@ def plot_opt_comp(crit_df, loss_crit_root, avg_loss_grad_cost=2, avg_Hvp_cost=5)
     fig_avg.tight_layout()
     fig_avg.savefig(os.path.join(loss_crit_root, "avg_opt_perf.png"))
     plt.close(fig_avg)
+
+    ax_avg_v_its.set_yscale("log")
+    ax_avg_v_its.set_xlabel("cost")
+    ax_avg_v_its.set_ylabel("loss")
+    ax_avg_v_its.legend()
+    fig_avg_v_its.tight_layout()
+    fig_avg_v_its.savefig(os.path.join(loss_crit_root, "avg_opt_perf_v_its.png"))
+    plt.close(fig_avg_v_its)
 
 
 def global_post_main(df: pd.DataFrame, root: str) -> None:
