@@ -6,6 +6,12 @@ from SRC.plotting_utils import save_svg
 import matplotlib as mpl
 from SRC.Solver.ploting import plot_vorticity
 
+def cos_sim(x, y):
+    return jnp.dot(x, y)/(jnp.linalg.norm(x) * jnp.linalg.norm(y))
+
+def rel_error(trg, pred):
+    return jnp.linalg.norm(pred - trg) / jnp.linalg.norm(trg)
+
 def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df):
     """
     Post-process a DA case:
@@ -21,12 +27,23 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
 
     init_guess_vel = init_guess_trj[:, n_particles * 4 :]
 
-    trj_cos_sim = jnp.dot(target_vel.reshape(-1), DA_vel.reshape(-1)) / (jnp.linalg.norm(target_vel) * jnp.linalg.norm(DA_vel))
-    final_snap_cos_sim = jnp.dot(target_vel[-1], DA_vel[-1])/(jnp.linalg.norm(target_vel[-1]) * jnp.linalg.norm(DA_vel[-1]))
-    init_snap_cos_sim = jnp.dot(target_vel[0], DA_vel[0])/(jnp.linalg.norm(target_vel[0]) * jnp.linalg.norm(DA_vel[0]))
+    trj_cos_sim = cos_sim(target_vel.reshape(-1), DA_vel.reshape(-1))
+    trj_rel_error = rel_error(target_vel.reshape(-1), DA_vel.reshape(-1))
+
+    final_snap_cos_sim = cos_sim(target_vel[-1], DA_vel[-1])
+    final_snap_rel_error = rel_error(target_vel[-1], DA_vel[-1])
+    
+    init_snap_cos_sim = cos_sim(target_vel[0], DA_vel[0])
+    int_snap_rel_error = rel_error(target_vel[0], DA_vel[0])
+
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
+    results_df["trj_rel_error"] = [float(trj_rel_error)]
+
     results_df["final_snap_cos_sim"] = [float(final_snap_cos_sim)]
+    results_df["final_snap_rel_error"] = [float(final_snap_rel_error)]
+
     results_df["init_snap_cos_sim"] = [float(init_snap_cos_sim)]
+    results_df["int_snap_rel_error"] = [float(int_snap_rel_error)]
 
     # Time axis length should match the number of timesteps
     nsteps = target_trj.shape[0]

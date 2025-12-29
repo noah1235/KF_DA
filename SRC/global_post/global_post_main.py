@@ -90,12 +90,12 @@ def global_post_main(df: pd.DataFrame, root: str) -> None:
     os.makedirs(root, exist_ok=True)
 
     # Group hierarchically instead of repeatedly masking
-    for samp_period, df_samp in df.groupby("samp_period"):
-        samp_root = os.path.join(root, f"SP={samp_period}")
+    for NT, df_NT in df.groupby("NT"):
+        NT_root = os.path.join(root, f"NT={NT}")
 
-        for n_part, df_part in df_samp.groupby("n_part"):
+        for n_part, df_part in df_NT.groupby("n_part"):
             for loss_crit, crit_df in df_part.groupby("loss_crit"):
-                loss_crit_root = os.path.join(samp_root, f"np={n_part}", str(loss_crit))
+                loss_crit_root = os.path.join(NT_root, f"np={n_part}", str(loss_crit))
                 os.makedirs(loss_crit_root, exist_ok=True)
                 plot_opt_comp(crit_df, loss_crit_root)
 

@@ -146,8 +146,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                     period_idx = int(samp_period/kf_opts.dt)
                     idx = jnp.arange(int(T/kf_opts.dt)+1)
                     t_mask = (idx % period_idx == 0)
-                    plt.plot(np.linspace(0, 1, t_mask.shape[0]), t_mask)
-                    plt.show()
 
                     # Loop over particle initializations
                     
