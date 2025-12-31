@@ -53,65 +53,54 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
     plot_vel_error_vs_time(vel_cos_sim, time_axis, t_mask, save_dir)
 
     #Vorticity plot
-    plot_vort_comp(init_guess_vel[0], target_vel[0], omega_fn, os.path.join(save_dir, "IC_guess_comp.svg"),
+    plot_vort_comp(init_guess_vel[0], target_vel[0], omega_fn, os.path.join(save_dir, "IC_guess_comp.svg"), os.path.join(save_dir, "IC_guess_error.svg"),
                    l1="DA final vorticity", l2="Target final vorticity")
-    plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison.svg"),
+    plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_snap_comp.svg"), os.path.join(save_dir, "final_snap_error.svg"),
                    l1="DA final vorticity", l2="Target final vorticity")
-    plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_vorticity_comparison_init.svg"),
+    plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_snap_init_trj_comp.svg"), os.path.join(save_dir, "final_snap_init_trj_error.svg"),
                    l1="DA init final vorticity", l2="Target final vorticity")
     plot_convergence(opt_data, save_dir)
 
-def plot_vort_comp(DA_vel, target_vel, omega_fn, save_path, l1, l2):
-    """
-    Make a side-by-side vorticity plot at final time for DA vs. target.
-
-    Parameters
-    ----------
-    DA_vel : array-like
-        Velocity trajectory (time, ...). Last frame is used.
-    target_vel : array-like
-        Target velocity trajectory (time, ...). Last frame is used.
-    omega_fn : callable
-        Function mapping a velocity snapshot -> 2D vorticity array (Ny, Nx).
-    save_dir : str
-        Directory to save the figure.
-    Lx, Ly : float or None
-        Domain lengths for plotting extents. If None, use array shape (Nx, Ny).
-    cmap : str
-        Colormap name to forward to plot_vorticity (seaborn cmap).
-
-    Returns
-    -------
-    out_path : str
-        Path to the saved PNG.
-    """
-
-    # Compute final-time vorticity fields
+def plot_vort_comp(DA_vel, target_vel, omega_fn,
+                   save_path_comp, save_path_err,
+                   l1, l2,
+                   err_label="Error (DA − target)",
+                   ):
+    # ---- Compute vorticity fields ----
     omega_T_DA     = omega_fn(DA_vel)
     omega_T_target = omega_fn(target_vel)
+    omega_err      = omega_T_DA - omega_T_target
 
-
-
-    # Create side-by-side axes
+    # ============================================================
+    # 1) DA vs Target comparison (unchanged)
+    # ============================================================
     fig, axes = plt.subplots(1, 2, figsize=(9, 4), constrained_layout=True)
     ax1, ax2 = axes
 
-    _, _, im1, _ = plot_vorticity(omega_T_DA, ax=ax1)
-    _, _, im2, _ = plot_vorticity(omega_T_target, ax=ax2)
+    _, _, _, _ = plot_vorticity(omega_T_DA, ax=ax1)
+    _, _, _, _ = plot_vorticity(omega_T_target, ax=ax2)
 
-    # Match color scales
     vmin = float(jnp.minimum(jnp.min(omega_T_DA), jnp.min(omega_T_target)))
     vmax = float(jnp.maximum(jnp.max(omega_T_DA), jnp.max(omega_T_target)))
-    im1.set_clim(vmin, vmax)
-    im2.set_clim(vmin, vmax)
+    #im1.set_clim(vmin, vmax)
+    #im2.set_clim(vmin, vmax)
 
-    # Titles
     ax1.set_title(l1)
     ax2.set_title(l2)
 
-    # Save
-    save_svg(mpl, fig, save_path)
+    save_svg(mpl, fig, save_path_comp)
     plt.close(fig)
+
+    # ============================================================
+    # 2) Error-only plot (separate SVG)
+    # ============================================================
+    fig, ax = plt.subplots(1, 1, figsize=(4.5, 4), constrained_layout=True)
+
+    _, _, _, _ = plot_vorticity(omega_err, ax=ax)
+    ax.set_title(err_label)
+    save_svg(mpl, fig, save_path_err)
+    plt.close(fig)
+
 
 def compute_cosine_vs_time(A, B, eps=1e-12):
     dot = jnp.sum(A * B, axis=1)

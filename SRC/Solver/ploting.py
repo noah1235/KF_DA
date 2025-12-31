@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from SRC.utils import Specteral_Upsampling
+import matplotlib.colors as colors
 
 def plot_particles(z, L, ax=None, s=20):
     """
@@ -76,19 +77,23 @@ def plot_vorticity(omega, L=2*np.pi, cmap="icefire", ax=None, target_res=512):
     if r > 1:
         omega_hat = np.fft.rfft2(omega)
         omega = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(omega_hat, r)
-    print(omega.shape)
     # pick seaborn colormap
-    cmap_obj = sns.color_palette(cmap, as_cmap=True)
+    #cmap_obj = sns.color_palette(cmap, as_cmap=True)
+
+    norm = colors.TwoSlopeNorm(vmin=-10, vcenter=0.0, vmax=10)
 
     im = ax.imshow(
         omega,
         origin="lower",
         extent=[0, L, 0, L],
-        cmap=cmap_obj,
+        cmap="coolwarm",
+        norm=norm,
         aspect="equal",
     )
 
-    cbar = fig.colorbar(im, ax=ax, label=r"$\omega_z$")
+    fig.colorbar(im, ax=ax, shrink=0.8)
+
+    #cbar = fig.colorbar(im, ax=ax, label=r"$\omega_z$")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
 
