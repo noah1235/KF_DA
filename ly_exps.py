@@ -161,7 +161,7 @@ def ly_exp_main():
 
     seed = 0
     r = 50
-    T = 1e3
+    T = 1e2
     T_skip = 1
 
     root = os.path.join(

@@ -2,7 +2,7 @@ from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import L_BFGS, NCSR1
+from SRC.DA_Comp.optimization.optimization import L_BFGS, NCSR1, NCSR1_and_LBFGS
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 from SRC.utils import load_data
 import numpy as np
@@ -56,42 +56,46 @@ def main():
     kf_opts = KF_Opts(
         Re = 100,   
         n = 4,
-        NDOF = 32,
+        NDOF = 128,
         dt = 1e-2,
         total_T=1000,
         min_samp_T=50,
         t_skip=1e-1
     )
 
+    BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10)
+
     DA_opts = DA_Opts(
-        n_particles_list=[25],
-        sampling_period_list=[1],
+        n_particles_list=[10],
+        NT_list=[11],
         part_opts=Particle_Opts(St=0, beta=0),
-        num_particle_inits=1,
+        PIC_seed_list=[0, 1],
         num_opt_inits=1,
-        num_seeds=1,
-        #ic_init=AI(min_norm=.4, max_norm=.6),
+        TIC_seed_list=[0, 1, 2],
+        #ic_init=AI(min_norm=.1, max_norm=2),
         ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[1],
+        T_list=[3.3],
         optimizer_list=[
-            #L_BFGS(
-            #    ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
-                #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-            #     its=20, max_mem=50, print_loss=True),
-            NCSR1(its=20, eps_H=1e-8, max_memory=40,
-                  #ls=ArmijoLineSearch(alpha_init=1.0, rho=0.5, c=1e-4, max_iters=10), 
+            #NCSR1(its=50, eps_H=1e-7, max_memory=20,
+            #      ls=BT_ls, 
                   #ls=Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                  ls=Armijo_TR(),
-                  num_batch_hvp=1,
-                  SR1_type="conv",
-                  print_loss=True
-                  )
-
-
+                  #ls=Armijo_TR(p=2),
+            #      SR1_type="mod",
+            #      print_loss=True
+            #      ),
+            L_BFGS(
+                ls=BT_ls, 
+                #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
+                 its=200, max_mem=20, eps_H=1e-7, print_loss=True),
         ],
+        vp_list=[None, 
+                 #VP_Float_Settings(mbits=4, minv=1e-3, maxv=10),
+                 #VP_Float_Settings(mbits=8, minv=1e-3, maxv=10),
+                 #VP_Float_Settings(mbits=12, minv=1e-3, maxv=10)
+                 ],
         crit_list=[
-            #MSE_PP(),
-            MSE_Vel()
+            MSE_PP(),
+            #MSE_Vel()
         ]
     )
 

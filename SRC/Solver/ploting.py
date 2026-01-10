@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from SRC.utils import Specteral_Upsampling
 import matplotlib.colors as colors
+from SRC.plotting_utils import balanced_cmap
 
 def plot_particles(z, L, ax=None, s=20):
     """
@@ -86,7 +87,7 @@ def plot_vorticity(omega, L=2*np.pi, cmap="icefire", ax=None, target_res=512):
         omega,
         origin="lower",
         extent=[0, L, 0, L],
-        cmap="coolwarm",
+        cmap=balanced_cmap,
         norm=norm,
         aspect="equal",
     )
