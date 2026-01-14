@@ -83,7 +83,6 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
 
 import jax.numpy as jnp
 
-
 def radial_spectral_error(
     omega_pred: jnp.ndarray,
     omega_true: jnp.ndarray,
@@ -91,119 +90,118 @@ def radial_spectral_error(
     Ly: float = 2.0 * jnp.pi,
     nbins: int | None = None,
     bin_edges: jnp.ndarray | None = None,
-    take_sqrt: bool = False,     # False: energy-relative, True: amplitude-relative
-    eps: float = 1e-30,          # avoids divide-by-zero when true energy in bin is ~0
+    eps: float = 1e-8,
 ):
     if omega_pred.shape != omega_true.shape:
         raise ValueError(f"Shape mismatch: pred {omega_pred.shape}, true {omega_true.shape}")
 
     Ny, Nx = omega_true.shape
 
-    # --- FFTs ---
     pred_hat = jnp.fft.rfft2(omega_pred)
     true_hat = jnp.fft.rfft2(omega_true)
     err_hat  = pred_hat - true_hat
 
-    # --- power (energy) per Fourier mode ---
-    err_pow  = jnp.abs(err_hat) ** 2          # (Ny, Nx//2+1)
-    true_pow = jnp.abs(true_hat) ** 2         # (Ny, Nx//2+1)
+    err_pow  = jnp.abs(err_hat) ** 2
+    true_pow = jnp.abs(true_hat) ** 2
+    pred_pow = jnp.abs(pred_hat) ** 2
 
-    # --- wavenumber grids (rad/length) ---
-    kx = 2.0 * jnp.pi * jnp.fft.rfftfreq(Nx, d=Lx / Nx)   # (Nx//2+1,)
-    ky = 2.0 * jnp.pi * jnp.fft.fftfreq(Ny, d=Ly / Ny)    # (Ny,)
+    kx = 2.0 * jnp.pi * jnp.fft.rfftfreq(Nx, d=Lx / Nx)
+    ky = 2.0 * jnp.pi * jnp.fft.fftfreq(Ny, d=Ly / Ny)
     KX, KY = jnp.meshgrid(kx, ky, indexing="xy")
     K = jnp.sqrt(KX**2 + KY**2)
 
-    # Flatten for binning
-    Kf  = K.reshape(-1)
-    Ef  = err_pow.reshape(-1)
-    Tf  = true_pow.reshape(-1)
+    Kf = K.reshape(-1)
+    Ef = err_pow.reshape(-1)
+    Tf = true_pow.reshape(-1)
+    Pf = pred_pow.reshape(-1)
 
-    # Build bins
     if bin_edges is None:
         if nbins is None:
             nbins = int(jnp.sqrt((Nx // 2) ** 2 + (Ny // 2) ** 2))
             nbins = max(nbins, 8)
-
         k_max = float(jnp.max(Kf))
         bin_edges = jnp.linspace(0.0, k_max, nbins + 1)
 
     nbins = bin_edges.size - 1
     k_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
-    # Assign each Fourier mode to a radial bin
     bin_ids = jnp.digitize(Kf, bin_edges) - 1
     valid = (bin_ids >= 0) & (bin_ids < nbins)
 
     bin_ids = bin_ids[valid]
     Ef = Ef[valid]
     Tf = Tf[valid]
+    Pf = Pf[valid]
 
-    # Accumulate sums in each bin
     err_sums  = jnp.zeros((nbins,), dtype=Ef.dtype).at[bin_ids].add(Ef)
     true_sums = jnp.zeros((nbins,), dtype=Tf.dtype).at[bin_ids].add(Tf)
+    pred_sums = jnp.zeros((nbins,), dtype=Pf.dtype).at[bin_ids].add(Pf)
 
-    # Relative error per k-bin
-    rel_err_k = err_sums / jnp.maximum(true_sums, eps)
+    rel_err_k = err_sums / (true_sums + eps)
 
-    # Optional: amplitude-style relative error
-    if take_sqrt:
-        rel_err_k = jnp.sqrt(rel_err_k)
+    mask = (err_sums < eps) & (true_sums < eps)
+    rel_err_k = jnp.where(mask, 0.0, rel_err_k)
 
-    return k_centers, rel_err_k
+    return k_centers, rel_err_k, true_sums, pred_sums
+
 
 def plot_vort_comp(
     DA_vel, target_vel, omega_fn,
     save_path,
     l1, l2,
     err_label="Error (DA − target)",
-    spec_label=r"Spectral error vs $k$",
+    spec_label=r"Spectral diagnostics vs $k$",
     spec_logy=False,
+    energy_eps=1e-30,
 ):
-    # ---- Compute vorticity fields ----
-    omega_T_DA     = omega_fn(DA_vel)
-    omega_T_target = omega_fn(target_vel)
+    omega_T_DA     = omega_fn(DA_vel)       # "guess"
+    omega_T_target = omega_fn(target_vel)   # true
     omega_err      = omega_T_DA - omega_T_target
 
-    # ---- Radial spectral error ----
-    k_centers, err_k = radial_spectral_error(omega_T_DA, omega_T_target)
+    k_centers, rel_err_k, E_true_k, E_pred_k = radial_spectral_error(omega_T_DA, omega_T_target)
 
-    # ============================================================
-    # Single figure: 2 rows x 2 cols
-    #   [ DA       | Target ]
-    #   [ Error    | err_k(k) ]
-    # ============================================================
+    # Normalize BOTH energies by max(true energy)
+    E_true_max  = jnp.max(E_true_k)
+    denom = jnp.maximum(E_true_max, energy_eps)
+
+    E_true_norm = E_true_k / denom
+    E_pred_norm = E_pred_k / denom
+
     fig, axes = plt.subplots(2, 2, figsize=(10.5, 8), constrained_layout=True)
     ax_DA, ax_target = axes[0, 0], axes[0, 1]
     ax_err, ax_spec  = axes[1, 0], axes[1, 1]
 
-    # ---- Top row: DA / Target ----
+    # Top row: DA / Target
     plot_vorticity(omega_T_DA, ax=ax_DA)
     plot_vorticity(omega_T_target, ax=ax_target)
-
     ax_DA.set_title(l1)
     ax_target.set_title(l2)
 
-    # ---- Bottom-left: spatial error ----
+    # Bottom-left: spatial error
     plot_vorticity(omega_err, ax=ax_err)
     ax_err.set_title(err_label)
 
-    # ---- Bottom-right: spectral error ----
+    # Bottom-right: spectral diagnostics
     k_plot = k_centers
-    err_plot = err_k
 
     if spec_logy:
-        ax_spec.semilogy(k_plot, err_plot, marker="o", linewidth=1)
+        ax_spec.semilogy(k_plot, rel_err_k, marker="o", linewidth=1, label="Relative error")
+        ax_spec.semilogy(k_plot, E_true_norm, marker="s", linewidth=1, label=r"True energy / max(true)")
+        ax_spec.semilogy(k_plot, E_pred_norm, marker="^", linewidth=1, label=r"Guess energy / max(true)")
     else:
-        ax_spec.plot(k_plot, err_plot, marker="o", linewidth=1)
+        ax_spec.plot(k_plot, rel_err_k, marker="o", linewidth=1, label="Relative error")
+        ax_spec.plot(k_plot, E_true_norm, marker="s", linewidth=1, label=r"True energy / max(true)")
+        ax_spec.plot(k_plot, E_pred_norm, marker="^", linewidth=1, label=r"Guess energy / max(true)")
 
-    ax_spec.set_xlabel("k bin centers")
-    ax_spec.set_ylabel("Binned error")
+    ax_spec.set_xlabel(r"$k$")
+    ax_spec.set_ylabel("Value")
     ax_spec.set_title(spec_label)
     ax_spec.grid(True, which="both", alpha=0.3)
+    ax_spec.legend(loc="best")
 
     save_svg(mpl, fig, save_path)
     plt.close(fig)
+
 
 def compute_norm_vs_time(target, pred):
     return jnp.linalg.norm(target - pred, axis=1) / jnp.linalg.norm(target)
