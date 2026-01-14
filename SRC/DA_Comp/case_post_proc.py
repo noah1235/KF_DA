@@ -49,82 +49,182 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
     nsteps = target_trj.shape[0]
     time_axis = jnp.arange(nsteps) * dt
 
-    vel_cos_sim = compute_cosine_vs_time(target_vel, DA_vel)
-    plot_vel_error_vs_time(vel_cos_sim, time_axis, t_mask, save_dir)
+    vel_error = compute_norm_vs_time(target_vel, DA_vel)
+    plot_vel_error_vs_time(vel_error, time_axis, t_mask, save_dir)
 
     #Vorticity plot
-    plot_vort_comp(init_guess_vel[0], target_vel[0], omega_fn, os.path.join(save_dir, "IC_guess_comp.svg"), os.path.join(save_dir, "IC_guess_error.svg"),
-                   l1="DA final vorticity", l2="Target final vorticity")
-    plot_vort_comp(DA_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_snap_comp.svg"), os.path.join(save_dir, "final_snap_error.svg"),
-                   l1="DA final vorticity", l2="Target final vorticity")
-    plot_vort_comp(init_guess_vel[-1], target_vel[-1], omega_fn, os.path.join(save_dir, "final_snap_init_trj_comp.svg"), os.path.join(save_dir, "final_snap_init_trj_error.svg"),
-                   l1="DA init final vorticity", l2="Target final vorticity")
+    plot_vort_comp(
+        init_guess_vel[0], target_vel[0], omega_fn,
+        os.path.join(save_dir, "guess_vs_target_t0.svg"),
+        l1="Guess vorticity (t0)", l2="Target vorticity (t0)"
+    )
+
+    plot_vort_comp(
+        init_guess_vel[-1], target_vel[-1], omega_fn,
+        os.path.join(save_dir, "guess_vs_target_tN.svg"),
+        l1="Guess vorticity (tN)", l2="Target vorticity (tN)"
+    )
+
+    plot_vort_comp(
+        DA_vel[-1], target_vel[-1], omega_fn,
+        os.path.join(save_dir, "DA_vs_target_tN.svg"),
+        l1="DA vorticity (tN)", l2="Target vorticity (tN)"
+    )
+
+    plot_vort_comp(
+        DA_vel[0], target_vel[0], omega_fn,
+        os.path.join(save_dir, "DA_vs_target_t0.svg"),
+        l1="DA vorticity (t0)", l2="Target vorticity (t0)"
+    )
+    
+
     plot_convergence(opt_data, save_dir)
 
-def plot_vort_comp(DA_vel, target_vel, omega_fn,
-                   save_path_comp, save_path_err,
-                   l1, l2,
-                   err_label="Error (DA − target)",
-                   ):
+
+import jax.numpy as jnp
+
+
+def radial_spectral_error(
+    omega_pred: jnp.ndarray,
+    omega_true: jnp.ndarray,
+    Lx: float = 2.0 * jnp.pi,
+    Ly: float = 2.0 * jnp.pi,
+    nbins: int | None = None,
+    bin_edges: jnp.ndarray | None = None,
+    take_sqrt: bool = False,     # False: energy-relative, True: amplitude-relative
+    eps: float = 1e-30,          # avoids divide-by-zero when true energy in bin is ~0
+):
+    if omega_pred.shape != omega_true.shape:
+        raise ValueError(f"Shape mismatch: pred {omega_pred.shape}, true {omega_true.shape}")
+
+    Ny, Nx = omega_true.shape
+
+    # --- FFTs ---
+    pred_hat = jnp.fft.rfft2(omega_pred)
+    true_hat = jnp.fft.rfft2(omega_true)
+    err_hat  = pred_hat - true_hat
+
+    # --- power (energy) per Fourier mode ---
+    err_pow  = jnp.abs(err_hat) ** 2          # (Ny, Nx//2+1)
+    true_pow = jnp.abs(true_hat) ** 2         # (Ny, Nx//2+1)
+
+    # --- wavenumber grids (rad/length) ---
+    kx = 2.0 * jnp.pi * jnp.fft.rfftfreq(Nx, d=Lx / Nx)   # (Nx//2+1,)
+    ky = 2.0 * jnp.pi * jnp.fft.fftfreq(Ny, d=Ly / Ny)    # (Ny,)
+    KX, KY = jnp.meshgrid(kx, ky, indexing="xy")
+    K = jnp.sqrt(KX**2 + KY**2)
+
+    # Flatten for binning
+    Kf  = K.reshape(-1)
+    Ef  = err_pow.reshape(-1)
+    Tf  = true_pow.reshape(-1)
+
+    # Build bins
+    if bin_edges is None:
+        if nbins is None:
+            nbins = int(jnp.sqrt((Nx // 2) ** 2 + (Ny // 2) ** 2))
+            nbins = max(nbins, 8)
+
+        k_max = float(jnp.max(Kf))
+        bin_edges = jnp.linspace(0.0, k_max, nbins + 1)
+
+    nbins = bin_edges.size - 1
+    k_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    # Assign each Fourier mode to a radial bin
+    bin_ids = jnp.digitize(Kf, bin_edges) - 1
+    valid = (bin_ids >= 0) & (bin_ids < nbins)
+
+    bin_ids = bin_ids[valid]
+    Ef = Ef[valid]
+    Tf = Tf[valid]
+
+    # Accumulate sums in each bin
+    err_sums  = jnp.zeros((nbins,), dtype=Ef.dtype).at[bin_ids].add(Ef)
+    true_sums = jnp.zeros((nbins,), dtype=Tf.dtype).at[bin_ids].add(Tf)
+
+    # Relative error per k-bin
+    rel_err_k = err_sums / jnp.maximum(true_sums, eps)
+
+    # Optional: amplitude-style relative error
+    if take_sqrt:
+        rel_err_k = jnp.sqrt(rel_err_k)
+
+    return k_centers, rel_err_k
+
+def plot_vort_comp(
+    DA_vel, target_vel, omega_fn,
+    save_path,
+    l1, l2,
+    err_label="Error (DA − target)",
+    spec_label=r"Spectral error vs $k$",
+    spec_logy=False,
+):
     # ---- Compute vorticity fields ----
     omega_T_DA     = omega_fn(DA_vel)
     omega_T_target = omega_fn(target_vel)
     omega_err      = omega_T_DA - omega_T_target
 
+    # ---- Radial spectral error ----
+    k_centers, err_k = radial_spectral_error(omega_T_DA, omega_T_target)
+
     # ============================================================
-    # 1) DA vs Target comparison (unchanged)
+    # Single figure: 2 rows x 2 cols
+    #   [ DA       | Target ]
+    #   [ Error    | err_k(k) ]
     # ============================================================
-    fig, axes = plt.subplots(1, 2, figsize=(9, 4), constrained_layout=True)
-    ax1, ax2 = axes
+    fig, axes = plt.subplots(2, 2, figsize=(10.5, 8), constrained_layout=True)
+    ax_DA, ax_target = axes[0, 0], axes[0, 1]
+    ax_err, ax_spec  = axes[1, 0], axes[1, 1]
 
-    _, _, _, _ = plot_vorticity(omega_T_DA, ax=ax1)
-    _, _, _, _ = plot_vorticity(omega_T_target, ax=ax2)
+    # ---- Top row: DA / Target ----
+    plot_vorticity(omega_T_DA, ax=ax_DA)
+    plot_vorticity(omega_T_target, ax=ax_target)
 
-    vmin = float(jnp.minimum(jnp.min(omega_T_DA), jnp.min(omega_T_target)))
-    vmax = float(jnp.maximum(jnp.max(omega_T_DA), jnp.max(omega_T_target)))
-    #im1.set_clim(vmin, vmax)
-    #im2.set_clim(vmin, vmax)
+    ax_DA.set_title(l1)
+    ax_target.set_title(l2)
 
-    ax1.set_title(l1)
-    ax2.set_title(l2)
+    # ---- Bottom-left: spatial error ----
+    plot_vorticity(omega_err, ax=ax_err)
+    ax_err.set_title(err_label)
 
-    save_svg(mpl, fig, save_path_comp)
+    # ---- Bottom-right: spectral error ----
+    k_plot = k_centers
+    err_plot = err_k
+
+    if spec_logy:
+        ax_spec.semilogy(k_plot, err_plot, marker="o", linewidth=1)
+    else:
+        ax_spec.plot(k_plot, err_plot, marker="o", linewidth=1)
+
+    ax_spec.set_xlabel("k bin centers")
+    ax_spec.set_ylabel("Binned error")
+    ax_spec.set_title(spec_label)
+    ax_spec.grid(True, which="both", alpha=0.3)
+
+    save_svg(mpl, fig, save_path)
     plt.close(fig)
 
-    # ============================================================
-    # 2) Error-only plot (separate SVG)
-    # ============================================================
-    fig, ax = plt.subplots(1, 1, figsize=(4.5, 4), constrained_layout=True)
+def compute_norm_vs_time(target, pred):
+    return jnp.linalg.norm(target - pred, axis=1) / jnp.linalg.norm(target)
 
-    _, _, _, _ = plot_vorticity(omega_err, ax=ax)
-    ax.set_title(err_label)
-    save_svg(mpl, fig, save_path_err)
-    plt.close(fig)
-
-
-def compute_cosine_vs_time(A, B, eps=1e-12):
-    dot = jnp.sum(A * B, axis=1)
-    na  = jnp.linalg.norm(A, axis=1)
-    nb  = jnp.linalg.norm(B, axis=1)
-    return dot / (na * nb + eps)
-
-def plot_vel_error_vs_time(vel_cos_sim, time_axis, t_mask, save_dir):
+def plot_vel_error_vs_time(vel_error, time_axis, t_mask, save_dir):
     """
     Plot velocity and particle errors vs. time and save the figure.
     """
     os.makedirs(save_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
 
-    ax.plot(time_axis, vel_cos_sim, label="Velocity error", marker="o")
+    ax.plot(time_axis, vel_error, label="Velocity error", marker="o")
     
     for t in time_axis[t_mask == 1]:
         ax.axvline(x=t, color="k", linestyle="--", alpha=0.3, linewidth=1.0)
 
     ax.set_xlabel("Time")
-    ax.set_ylabel("Cosine Similarity")
+    ax.set_ylabel("Normalized L2 norm")
     ax.grid(True, alpha=0.3)
     ax.legend()
-    ax.set_ylim(.8, 1.05)
+    ax.set_ylim(-.05, .2)
     fig.tight_layout()
 
     out_path = os.path.join(save_dir, "vel_part_error_vs_time.svg")
