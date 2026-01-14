@@ -85,6 +85,9 @@ import jax.numpy as jnp
 
 import jax.numpy as jnp
 
+
+import jax.numpy as jnp
+
 def radial_spectral_error(
     omega_pred: jnp.ndarray,
     omega_true: jnp.ndarray,
@@ -92,7 +95,8 @@ def radial_spectral_error(
     Ly: float = 2.0 * jnp.pi,
     nbins: int | None = None,
     bin_edges: jnp.ndarray | None = None,
-    eps: float = 1e-30,
+    take_sqrt: bool = False,
+    eps: float = 1e-6,
 ):
     if omega_pred.shape != omega_true.shape:
         raise ValueError(f"Shape mismatch: pred {omega_pred.shape}, true {omega_true.shape}")
@@ -139,22 +143,11 @@ def radial_spectral_error(
     true_sums = jnp.zeros((nbins,), dtype=Tf.dtype).at[bin_ids].add(Tf)
     pred_sums = jnp.zeros((nbins,), dtype=Pf.dtype).at[bin_ids].add(Pf)
 
-    # ---- GLOBAL normalization by max(true_sums) ----
-    max_true = jnp.max(true_sums)
-    denom = jnp.maximum(max_true, eps)
+    rel_err_k = err_sums / jnp.maximum(true_sums, eps)
+    if take_sqrt:
+        rel_err_k = jnp.sqrt(rel_err_k)
 
-    err_norm_k  = err_sums / denom
-    true_norm_k = true_sums / denom
-    pred_norm_k = pred_sums / denom
-
-
-    # Optional: if both err and true are basically zero, set err_norm to 0
-    mask = (err_sums < eps) & (true_sums < eps)
-    err_norm_k = jnp.where(mask, 0.0, err_norm_k)
-
-    return k_centers, err_norm_k, true_norm_k, pred_norm_k
-
-
+    return k_centers, rel_err_k, true_sums, pred_sums
 
 def plot_vort_comp(
     DA_vel, target_vel, omega_fn,
@@ -162,13 +155,20 @@ def plot_vort_comp(
     l1, l2,
     err_label="Error (DA − target)",
     spec_label=r"Spectral diagnostics vs $k$",
+    energy_eps=1e-30,
 ):
     omega_T_DA     = omega_fn(DA_vel)       # "guess"
     omega_T_target = omega_fn(target_vel)   # true
     omega_err      = omega_T_DA - omega_T_target
 
-    k_centers, err_k, E_true_norm, E_pred_norm = radial_spectral_error(omega_T_DA, omega_T_target)
+    k_centers, rel_err_k, E_true_k, E_pred_k = radial_spectral_error(omega_T_DA, omega_T_target)
 
+    # Normalize BOTH energies by max(true energy)
+    E_true_max  = jnp.max(E_true_k)
+    denom = jnp.maximum(E_true_max, energy_eps)
+
+    E_true_norm = E_true_k / denom
+    E_pred_norm = E_pred_k / denom
 
     fig, axes = plt.subplots(2, 2, figsize=(10.5, 8), constrained_layout=True)
     ax_DA, ax_target = axes[0, 0], axes[0, 1]
@@ -187,7 +187,7 @@ def plot_vort_comp(
     # Bottom-right: spectral diagnostics
     k_plot = k_centers
 
-    ax_spec.plot(k_plot, err_k, marker="o", linewidth=1, label="Relative error")
+    ax_spec.plot(k_plot, rel_err_k, marker="o", linewidth=1, label="Relative error")
     ax_spec.plot(k_plot, E_true_norm, marker="s", linewidth=1, label=r"True energy / max(true)")
     ax_spec.plot(k_plot, E_pred_norm, marker="^", linewidth=1, label=r"Guess energy / max(true)")
 
