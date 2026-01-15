@@ -239,7 +239,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                             return jnp.mean(jnp.abs(div_field))
                                         
                                         results_df = pd.DataFrame({
-                                                                    "seed": [seed_idx],
+                                                                    "true_IC_seed": [seed_idx],
+                                                                    "PIC_seed" : [PIC_seed],
                                                                     "T": [T],
                                                                     "n_part": [npart],
                                                                     "NT": [NT],
