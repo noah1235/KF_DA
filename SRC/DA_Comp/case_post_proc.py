@@ -82,11 +82,7 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
 
 
 import jax.numpy as jnp
-
-import jax.numpy as jnp
-
-
-import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 def radial_spectral_error(
     omega_pred: jnp.ndarray,
@@ -96,7 +92,8 @@ def radial_spectral_error(
     nbins: int | None = None,
     bin_edges: jnp.ndarray | None = None,
     take_sqrt: bool = False,
-    eps: float = 1e-4,
+    eps: float = 1e-16,
+    log_bins: bool = True,          # NEW: log-spaced k bins
 ):
     if omega_pred.shape != omega_true.shape:
         raise ValueError(f"Shape mismatch: pred {omega_pred.shape}, true {omega_true.shape}")
@@ -125,8 +122,33 @@ def radial_spectral_error(
         if nbins is None:
             nbins = int(jnp.sqrt((Nx // 2) ** 2 + (Ny // 2) ** 2))
             nbins = max(nbins, 8)
+
         k_max = float(jnp.max(Kf))
-        bin_edges = jnp.linspace(0.0, k_max, nbins + 1)
+
+        if (not log_bins) or (k_max <= 0.0):
+            bin_edges = jnp.linspace(0.0, k_max, nbins + 1)
+        else:
+            # Smallest strictly-positive k (avoid log(0))
+            k_pos = Kf[Kf > 0.0]
+            if k_pos.size == 0:
+                bin_edges = jnp.linspace(0.0, k_max, nbins + 1)
+            else:
+                k_min = float(jnp.min(k_pos))
+
+                # If k_min == k_max (degenerate), fall back to linear spacing
+                if not (k_max > k_min):
+                    bin_edges = jnp.linspace(0.0, k_max, nbins + 1)
+                else:
+                    # total nbins bins:
+                    # first bin [0, k_min], then log-spaced edges from k_min..k_max
+                    log_edges = jnp.logspace(
+                        jnp.log10(k_min),
+                        jnp.log10(k_max),
+                        nbins
+                    )
+                    bin_edges = jnp.concatenate(
+                        [jnp.array([0.0], dtype=log_edges.dtype), log_edges]
+                    )
 
     nbins = bin_edges.size - 1
     k_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
@@ -144,11 +166,12 @@ def radial_spectral_error(
     pred_sums = jnp.zeros((nbins,), dtype=Pf.dtype).at[bin_ids].add(Pf)
 
     rel_err_k = err_sums / jnp.maximum(true_sums, eps)
-    print(true_sums)
+
     if take_sqrt:
         rel_err_k = jnp.sqrt(rel_err_k)
 
     return k_centers, rel_err_k, true_sums, pred_sums
+
 
 def plot_vort_comp(
     DA_vel, target_vel, omega_fn,
@@ -157,15 +180,18 @@ def plot_vort_comp(
     err_label="Error (DA − target)",
     spec_label=r"Spectral diagnostics vs $k$",
     energy_eps=1e-30,
+    log_k_axis: bool = True,     # NEW: log x-axis for readability with log bins
 ):
     omega_T_DA     = omega_fn(DA_vel)       # "guess"
     omega_T_target = omega_fn(target_vel)   # true
     omega_err      = omega_T_DA - omega_T_target
 
-    k_centers, rel_err_k, E_true_k, E_pred_k = radial_spectral_error(omega_T_DA, omega_T_target)
+    k_centers, rel_err_k, E_true_k, E_pred_k = radial_spectral_error(
+        omega_T_DA, omega_T_target, log_bins=True
+    )
 
     # Normalize BOTH energies by max(true energy)
-    E_true_max  = jnp.max(E_true_k)
+    E_true_max = jnp.max(E_true_k)
     denom = jnp.maximum(E_true_max, energy_eps)
 
     E_true_norm = E_true_k / denom
@@ -195,11 +221,16 @@ def plot_vort_comp(
     ax_spec.set_xlabel(r"$k$")
     ax_spec.set_ylabel("Value")
     ax_spec.set_title(spec_label)
+
+    if log_k_axis:
+        ax_spec.set_xscale("log")
+
     ax_spec.grid(True, which="both", alpha=0.3)
     ax_spec.legend(loc="best")
 
     save_svg(mpl, fig, save_path)
     plt.close(fig)
+
 
 
 def compute_norm_vs_time(target, pred):
