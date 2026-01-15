@@ -96,7 +96,7 @@ def radial_spectral_error(
     nbins: int | None = None,
     bin_edges: jnp.ndarray | None = None,
     take_sqrt: bool = False,
-    eps: float = 1e-6,
+    eps: float = 1e-4,
 ):
     if omega_pred.shape != omega_true.shape:
         raise ValueError(f"Shape mismatch: pred {omega_pred.shape}, true {omega_true.shape}")
@@ -144,6 +144,7 @@ def radial_spectral_error(
     pred_sums = jnp.zeros((nbins,), dtype=Pf.dtype).at[bin_ids].add(Pf)
 
     rel_err_k = err_sums / jnp.maximum(true_sums, eps)
+    print(true_sums)
     if take_sqrt:
         rel_err_k = jnp.sqrt(rel_err_k)
 
