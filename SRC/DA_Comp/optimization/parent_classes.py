@@ -9,8 +9,8 @@ import time
 import os
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 class Loss_and_Deriv_fns:
-    def __init__(self, loss_crit, stepper, target_trj, pIC, vel_part_trans, dt, T, vfloat):
-        loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, vel_part_trans)
+    def __init__(self, loss_crit, inv_transform, stepper, target_trj, pIC, vel_part_trans, dt, T, vfloat):
+        loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, inv_transform, vel_part_trans)
         self.hvp_fn_jit = jax.jit(self.make_hvp(loss_fn_base))
 
         if vfloat is None:
@@ -195,7 +195,7 @@ class LS_TR_Opt():
             debug_str = ""
         return alpha, U_0_next, loss_next, grad_next, debug_str
     
-    def opt_loop(self, U_0, loss_fn_and_derivs: Loss_and_Deriv_fns, div_check, div_free_proj):
+    def opt_loop(self, U_0, loss_fn_and_derivs: Loss_and_Deriv_fns, div_check):
         opt_data = Opt_Data(self.its)
         self.init_opt_params(U_0.shape[0])
 
@@ -208,9 +208,9 @@ class LS_TR_Opt():
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals
             #last iteration
             if i == (self.its-1):
-                U_0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, i, last_iteration=True)
+                U_0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, i, last_iteration=True)
             else:
-                U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, div_free_proj, i, last_iteration=False)
+                U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, i, last_iteration=False)
 
             if alpha == 0:
                 if self.print_loss:

@@ -21,27 +21,10 @@ class Vel_Reshaper:
 
         return U_hat, U
     
-    def vel_flat_2_vel_Fourier(self, U_flat):
-        U_hat, _ = self.get_vel_hat_from_flat(U_flat)
-        U_hat_flat = U_hat.reshape(-1)
-        U_fourier = np.concatenate([U_hat_flat.real, U_hat_flat.imag])
-        return U_fourier
-    
-    def vel_Fourier_2_vel_hat(self, U_fourier):
-        n_half = U_fourier.size // 2
-        real_part = U_fourier[:n_half]
-        imag_part = U_fourier[n_half:]
-
-        # Recombine into complex vector
-        U_hat_flat = real_part + 1j * imag_part
-        U_hat = U_hat_flat.reshape((2, self.NDOF, self.NDOF//2 + 1))
-        return U_hat
-
     @staticmethod
     def flatten_from_comps(u, v):
         return jnp.stack([u, v], axis=0).reshape(-1)
     
-
 class Vel_Part_Transformations(Vel_Reshaper):
     def __init__(self, NDOF, n_particles):
         super().__init__(NDOF)
@@ -70,22 +53,17 @@ def build_hvp(f, x):
     return hvp
 
 
-def build_div_free_proj(stepper, vel_part_trans, M=None, return_type="2D"):
-    NDOF = stepper.step.rhs.KF_RHS.N
+def build_div_free_proj(stepper):
     KX = stepper.step.rhs.KF_RHS.KX
     KY = stepper.step.rhs.KF_RHS.KY
     K2 = stepper.step.rhs.KF_RHS.K2
-    #M = stepper.step.rhs.KF_RHS.M
 
-    def transform_fn(U0_fourier, M=stepper.step.rhs.KF_RHS.M):
-        U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U0_fourier)
-        X_proj = project_divfree_rfft2(U_hat, KX, KY, K2, M, return_type)
-        X = X_proj.reshape(-1)
-        return X
+    def transform_fn(U_hat, M=stepper.step.rhs.KF_RHS.M):
+        return project_divfree_rfft2(U_hat, KX, KY, K2, M)
     
     return transform_fn
 
-def project_divfree_rfft2(U_hat, KX, KY, K2, M, return_type):
+def project_divfree_rfft2(U_hat, KX, KY, K2, M):
     # rFFT of components
     Ux = U_hat[0]
     Uy = U_hat[1]
@@ -101,18 +79,9 @@ def project_divfree_rfft2(U_hat, KX, KY, K2, M, return_type):
     # Helmholtz projection in k-space
     Ux_proj = Ux - KX * scale
     Uy_proj = Uy - KY * scale
+    return Ux_proj, Uy_proj
 
 
-    if return_type == "2D":
-        u = jnp.fft.irfft2(Ux_proj)
-        v = jnp.fft.irfft2(Uy_proj)
-
-        return jnp.stack([u, v], axis=0)
-    elif return_type == "Fourier_flat":
-        U_hat = jnp.stack([Ux_proj, Uy_proj], axis=0)
-        U_hat_flat = U_hat.reshape(-1)
-        U_fourier = jnp.concatenate([U_hat_flat.real, U_hat_flat.imag])
-        return U_fourier
 
 
 def bilinear_sample_periodic(F, x, y, Lx, Ly):

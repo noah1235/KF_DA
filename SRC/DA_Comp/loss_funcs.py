@@ -5,15 +5,10 @@ from jax import lax
 
 
 
-def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, vel_part_trans: Vel_Part_Transformations):
-    transform_fn = build_div_free_proj(
-                    stepper,
-                    vel_part_trans
-    )
+def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, inv_transform, vel_part_trans: Vel_Part_Transformations):
     upsample_factor = stepper.step.rhs.r
-    M = stepper.step.rhs.KF_RHS.M
-    def loss_fn(U0_fourier):
-        U0 = transform_fn(U0_fourier, M=M)
+    def loss_fn(U0_hat):
+        U0 = inv_transform(U0_hat)
 
         X0 = jnp.concatenate([pIC, U0])
 

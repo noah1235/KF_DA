@@ -29,6 +29,7 @@ class DA_Opts:
     optimizer_list: any
     vp_list: any
     crit_list: any
+    IC_param_list: any
     T_list: any
 
 

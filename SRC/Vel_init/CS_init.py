@@ -6,7 +6,7 @@ from SRC.DA_Comp.loss_funcs import MSE_Vel
 import jax
 from scipy.optimize import minimize
 import jaxopt
-
+from SRC.parameterization.Fourier_Param import Fourier_Param
 
 class CS_init(IC_init):
     def __init__(self, l1_weight, can_modes):
@@ -19,45 +19,7 @@ class CS_init(IC_init):
         self.attractor_snapshots = attractor_snapshots
         self.attractor_rad = self.calc_attractor_size(attractor_snapshots)
 
-    @staticmethod
-    def make_first_k_mask(N, k, ord='xy'):
-        """
-        Create a mask for rfft2(U) that keeps only the first k modes in both directions.
 
-        Parameters
-        ----------
-        N   : grid size (U is NxN)
-        k   : number of lowest-index modes to keep (0, 1, ..., k-1)
-        ord : meshgrid indexing ('ij' or 'xy')
-
-        Returns
-        -------
-        M   : boolean mask of shape (N, N//2 + 1)
-        """
-        # Physical frequencies: -N/2,...,N/2-1 (fftfreq*N)
-        mx_full = jnp.fft.fftfreq(N) * N
-        my_full = jnp.fft.fftfreq(N) * N
-
-        MX, MY = jnp.meshgrid(mx_full, my_full, indexing=ord)
-
-        # Keep only frequencies with |kx| < k and |ky| < k
-        # i.e., rectangular low-pass on indices
-        M_full = (jnp.abs(MX) < k) & (jnp.abs(MY) < k)
-
-        # Restrict to rfft2 domain (positive y-frequencies)
-        return M_full[:, :N//2 + 1].astype(jnp.complex128)
-
-    def set_transform(self, stepper, vel_part_trans):
-        self.N = stepper.step.rhs.KF_RHS.N
-        self.vel_part_trans = vel_part_trans
-        self.transform_fn = build_div_free_proj(
-                    stepper,
-                    vel_part_trans,
-    )
-        self.mse_vel = MSE_Vel()
-        self.mse_vel.init_obj(jnp.array([1]), stepper.step.rhs.KF_RHS.L, vel_part_trans)
-        self.upsample_factor = stepper.step.rhs.r
-    
     def g_wrapper(self, target_part_x, target_part_y, U_flat, trg_U_flat):
         return self.mse_vel.g(None, None, target_part_x, target_part_y, U_flat, trg_U_flat, self.upsample_factor, 0)
 
@@ -74,6 +36,7 @@ class CS_init(IC_init):
         best_DA_loss = None
         for k in self.can_modes:
             mask = self.make_first_k_mask(self.N, k)
+            f_param = Fourier_Param(num_k=k)
             
             @jax.jit
             def loss_fn(X):

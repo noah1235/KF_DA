@@ -114,7 +114,7 @@ class L_BFGS(LS_TR_Opt):
         self.H = self.H_init
         self.H_init = None
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, div_free_proj, iter, last_iteration):
+    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 

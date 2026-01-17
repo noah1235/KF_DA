@@ -13,7 +13,6 @@ from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, build_div_free_proj
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
-from SRC.DA_Comp.optimization.optax_logic import *
 from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
 from SRC.Vel_init.CS_init import CS_init
@@ -196,76 +195,74 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         for loss_crit in DA_opts.crit_list:
                             loss_crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
                             crit_dir = os.path.join(PI_root, f"{loss_crit}")
-                            loss_fn = create_loss_fn(
-                                loss_crit, stepper, target_trj, pIC, vel_part_trans
+
+                            # For each optimizer and loss criterion, run a DA case
+                            for optimizer in DA_opts.optimizer_list:
+                                opt_method_dir = os.path.join(
+                                    crit_dir, f"{optimizer}"
                             )
+                                for vfloat in DA_opts.vp_list:
+                                    if vfloat is None:
+                                        vfloat_name = "double"
+                                    else:
+                                        vfloat_name = f"{vfloat}"
+                                    vfloat_dir = os.path.join(opt_method_dir, vfloat_name)
+                                    for IC_param in DA_opts.IC_param_list:
+                                        param_dir = os.path.join(vfloat_dir, f"{IC_param}")
+                                        IC_param.attach(vel_part_trans, build_div_free_proj(stepper))
+                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, target_trj, pIC, vel_part_trans, kf_opts.dt, T, vfloat)
 
-                            # Loop over opt inits
-                            for _ in range(DA_opts.num_opt_inits):
-                                U_0_guess, actual_norm_dist = DA_opts.ic_init(U_0, pIC, loss_fn)
-                                opt_init_dir = os.path.join(crit_dir, "cases", f"{actual_norm_dist}")
+                                        for _ in range(DA_opts.num_opt_inits):
+                                            U_0_guess, actual_norm_dist = DA_opts.ic_init(U_0, pIC, loss_fn_and_derivs.loss_fn_jit)
+                                            opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
 
-                                # Skip if this case directory already exists
-                                if os.path.isdir(opt_init_dir):
-                                    print("skipping")
-                                    continue
+                                            # Skip if this case directory already exists
+                                            if os.path.isdir(opt_init_dir):
+                                                print("skipping")
+                                                continue
 
-                                os.makedirs(opt_init_dir)
-                                np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
-                    
-                                # For each optimizer and loss criterion, run a DA case
-                                for optimizer in DA_opts.optimizer_list:
-                                    opt_method_dir = os.path.join(
-                                        opt_init_dir, f"{optimizer}"
-                                )
-                                    for vfloat in DA_opts.vp_list:
-                                        if vfloat is None:
-                                            vfloat_name = "double"
-                                        else:
-                                            vfloat_name = f"{vfloat}"
-                                        vfloat_dir = os.path.join(opt_method_dir, vfloat_name)
+                                            os.makedirs(opt_init_dir)
+                                            np.save(os.path.join(opt_init_dir, "U_0_guess.npy"), U_0_guess)
 
-                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, stepper, target_trj, pIC, vel_part_trans, kf_opts.dt, T, vfloat)
-                                        os.makedirs(vfloat_dir, exist_ok=True)
-                                        def omega_fn(U):
-                                            U = vel_part_trans.reshape_flattened_vel(U)
-                                            u_hat = jnp.fft.rfft2(U[0])
-                                            v_hat = jnp.fft.rfft2(U[1])
-                                            return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
-                                        
-                                        def div_check(U_fourier):
-                                            U_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_fourier)
-                                            div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
-                                            return jnp.mean(jnp.abs(div_field))
-                                        
-                                        results_df = pd.DataFrame({
-                                                                    "true_IC_seed": [seed_idx],
-                                                                    "PIC_seed" : [PIC_seed],
-                                                                    "T": [T],
-                                                                    "n_part": [npart],
-                                                                    "NT": [NT],
-                                                                    "init_IC_distance": [float(actual_norm_dist)],
-                                                                    "optimizer": [f"{optimizer}"],
-                                                                    "loss_crit": [f"{loss_crit}"],
-                                                                    "floatp": [vfloat_name]
+                                            def omega_fn(U_flat):
+                                                U_hat = vel_part_trans.get_vel_hat_from_flat(U_flat)[0]
+                                                u_hat = U_hat[0]
+                                                v_hat = U_hat[1]
+                                                return RHS.KF_RHS.vorticity_real(u_hat, v_hat)
+                                            
+                                            def div_check(U_hat_flat):
+                                                U_flat = IC_param.inv_transform(U_hat_flat)
+                                                U_hat = vel_part_trans.get_vel_hat_from_flat(U_flat)[0]
+                                                div_field = jnp.fft.irfft2(RHS.KF_RHS.dxop * U_hat[0] + RHS.KF_RHS.dyop * U_hat[1])
+                                                return jnp.mean(jnp.abs(div_field))
+            
+                                            results_df = pd.DataFrame({
+                                                                        "true_IC_seed": [seed_idx],
+                                                                        "PIC_seed" : [PIC_seed],
+                                                                        "T": [T],
+                                                                        "n_part": [npart],
+                                                                        "NT": [NT],
+                                                                        "init_IC_distance": [float(actual_norm_dist)],
+                                                                        "optimizer": [f"{optimizer}"],
+                                                                        "loss_crit": [f"{loss_crit}"],
+                                                                        "floatp": [vfloat_name]
 
 
-                                                                })
-                                        div_free_proj = build_div_free_proj(stepper, vel_part_trans, return_type="Fourier_flat")
-                
+                                                                    })                    
 
-                                        _run_DA_case(target_trj, U_0_guess, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, vfloat_dir, kf_opts.dt,
-                                                    omega_fn, div_check, div_free_proj, vel_part_trans, t_mask, results_df,
-                                                    parquet_path)
-                                        count += 1
-                                        print(f"case: {count}/{total_cases}")
+                                            _run_DA_case(target_trj, U_0_guess, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, pIC, opt_init_dir, kf_opts.dt,
+                                                        omega_fn, div_check, vel_part_trans, t_mask, results_df,
+                                                        parquet_path)
+                                            count += 1
+                                            print(f"case: {count}/{total_cases}")
 
 
     return root
 
 def _run_DA_case(
-    target_trj: np.ndarray | jnp.ndarray,
-    U_0_guess: np.ndarray | jnp.ndarray,
+    target_trj: jnp.ndarray,
+    U_0_guess:  jnp.ndarray,
+    IC_param,
     loss_fn_and_derivs: Loss_and_Deriv_fns,
     optimizer: LS_TR_Opt,
     trj_gen_fn,
@@ -274,7 +271,6 @@ def _run_DA_case(
     dt,
     omega_fn,
     div_check,
-    div_free_proj,
     vel_part_trans: Vel_Part_Transformations,
     t_mask,
     results_df,
@@ -296,32 +292,12 @@ def _run_DA_case(
         Optimizer configuration object (used to dispatch the optimization routine).
     """
     loss_fn_and_derivs.reset_cost_count()
-    U_0_guess_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_0_guess)
-    U_0_DA_fourier, opt_data = optimizer.opt_loop(U_0_guess_fourier, loss_fn_and_derivs, div_check, div_free_proj)
-
-    U_0_DA_hat = vel_part_trans.vel_Fourier_2_vel_hat(U_0_DA_fourier)
-    u = jnp.fft.irfft2(U_0_DA_hat[0])
-    v = jnp.fft.irfft2(U_0_DA_hat[1])
-    U_0_DA = jnp.stack([u, v], axis=0).reshape(-1)
+    U_0_guess_hat = IC_param.transform(U_0_guess)
+    U_0_DA_hat, opt_data = optimizer.opt_loop(U_0_guess_hat, loss_fn_and_derivs, div_check)
+    U_0_DA = IC_param.inv_transform(U_0_DA_hat)
 
     DA_trj = trj_gen_fn(pIC, U_0_DA)
     init_guess_trj = trj_gen_fn(pIC, vel_part_trans.reshape_flattened_vel(U_0_guess))
-
-    if False:
-        hvp = build_hvp(loss_fn, U_0_DA_fourier)
-        print("eig decomp")
-        A_op = LinearOperator((U_0_DA_fourier.shape[0], U_0_DA_fourier.shape[0]), matvec=hvp, dtype=np.float64)
-        w, Q = eigsh(A_op, k=2, which='BE', tol=1e-6)
-        print("done")
-        
-        max_H_eig = float(jnp.max(w))
-        min_H_eig = float(jnp.min(w))
-
-        with open(os.path.join(save_dir, "extreme_H_eigs.txt"), "w") as f:
-            f.write(f"lambda_max={max_H_eig} \n lambda_min={min_H_eig}")
-
-        results_df["max_H_eig"] = [max_H_eig]
-        results_df["min_H_eig"] = [min_H_eig]
     
     results_df["loss_record"] = [opt_data.loss_record]
     results_df["loss_evals_record"] = [opt_data.loss_evals_record]
