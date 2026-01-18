@@ -6,10 +6,11 @@ from SRC.DA_Comp.configs import KF_Opts
 import random
 import multiprocessing as mp
 import os 
-#jax.config.update("jax_enable_x64", True)
+jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_default_device", jax.devices("cpu")[0])
 from create_results_dir import create_results_dir
 import jax.numpy as jnp
+from SRC.Solver.solver import KF_Stepper
 
 def kaplan_yorke_dimension(lyap: jnp.ndarray) -> jnp.ndarray:
     """
@@ -153,7 +154,7 @@ def ly_exp_main():
         Re=100,
         n=4,
         NDOF=128,
-        dt=1e-2,
+        dt=2e-2,
         total_T=1000,
         min_samp_T=50,
         t_skip=1e-1,
@@ -177,16 +178,16 @@ def ly_exp_main():
     rng = random.Random(seed)
     idx = rng.randint(0, attractor_snapshots.shape[0] - 1)
     U_0 = attractor_snapshots[idx, :]
-
+    state_shape = U_0.shape
+    U_0 = U_0.reshape(-1)
     # Build RHS & stepper
-    rhs = KF_PS_RHS(kf_opts.NDOF, kf_opts.Re, kf_opts.n)
-    stepper = RK4_Step(rhs, kf_opts.dt)
-
+    stepper_raw = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt)
+    stepper = lambda x: stepper_raw(x.reshape(*state_shape)).reshape(-1)
     n = U_0.shape[0]
 
     # JAX key
     key = jax.random.PRNGKey(seed)
-    A = jax.random.normal(key, (n, r))
+    A = jax.random.normal(key, (n, r), dtype=U_0.dtype)
     Y_0, _ = jnp.linalg.qr(A)
 
     n_steps = int(T / kf_opts.dt)
