@@ -57,16 +57,16 @@ def generate_KF_flow():
     np.save(os.path.join(root, "trj.npy"), trj)
 
 def generate_KF_dataset():
-    NDOF = 256
+    NDOF = 128
     Re = 100
-    n  = 8
+    n  = 4
     dt = 1e-2
-    T = 100
+    T = 10000
     T_samp = 50
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
     use_cpu = False
-    chunk_size = 10
+    chunk_size = 10000
 
     root = os.path.join(
         create_results_dir(),
@@ -95,6 +95,7 @@ def generate_KF_dataset():
     
 
     integrator.integrate_scan_checkpoint(U_0, nsteps, chunk_size, os.path.join(root, "dataset.npy"))  # assume shape (nsteps+1, dim)
+    #trj = integrator.integrate_scan(U_0, nsteps)
 
 def generate_KF_energy_plots():
     NDOF   = 32
