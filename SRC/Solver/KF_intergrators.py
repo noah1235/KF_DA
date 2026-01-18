@@ -77,7 +77,6 @@ class Particle_Stepper:
         X_next = X_next.at[1:n4:4].set(yp)  # set y entries
         return X_next
 
-# ---------- RK4 Integrator ----------
 class Time_Stepper:
     def __init__(self, rhs, dt, method="RK4", n_particles=None):
         """
@@ -412,28 +411,5 @@ class KF_LPT_PS_RHS:
         particle_rhs = jnp.stack([px, py, up_dot_rhs, vp_dot_rhs], axis=1).reshape(-1)
 
         return jnp.concatenate([particle_rhs, KF_rhs_eval])
-
-def make_divergence_monitor_rfft(rhs, NDOF, n_particles=None, n_print=50):
-    """
-    Print RMS(∇·u) every n_print steps; RHS is rfft-based.
-    """
-    Ny = Nx = NDOF
-    Nx_r = Nx//2 + 1
-
-    def monitor(n, X):
-        if n % n_print != 0:
-            return
-        if n_particles is not None:
-            U_hat_r_flat = X[n_particles*4:]
-        else:
-            U_hat_r_flat = X
-
-        U_hat_r = U_hat_r_flat.reshape(2, Ny, Nx_r)
-        div_hat = rhs.dxop * U_hat_r[0] + rhs.dyop * U_hat_r[1]    # (Ny, Nx_r)
-        div = jnp.fft.irfft2(div_hat, s=(Ny, Nx)).real
-        div_rms = float(jnp.sqrt(jnp.mean(div**2)))
-        print(f"[step {n:5d}] div(RMS) = {div_rms:.3e}")
-
-    return monitor
 
 
