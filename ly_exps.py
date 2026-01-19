@@ -154,15 +154,15 @@ def ly_exp_main():
         Re=100,
         n=4,
         NDOF=128,
-        dt=2e-2,
+        dt=1e-2,
         total_T=1000,
         min_samp_T=50,
         t_skip=1e-1,
     )
 
     seed = 0
-    r = 50
-    T = 1e2
+    r = 2
+    T = 100
     T_skip = 1
 
     root = os.path.join(

@@ -249,3 +249,17 @@ class Omega_Integrator:
 
         return path
     
+    def integrate_scan(self, U0, nsteps):
+        """
+        Returns (U_final, traj) where
+        traj has shape (nsteps, *U0.shape) and stores U at each step.
+        """
+        def body(U, _):
+            U_next = self.stepper(U)
+            
+            return U_next, U_next  # carry, y
+
+        U_f, trj = jax.lax.scan(body, U0, xs=None, length=nsteps)
+        trj = jnp.concatenate([U0[None, ...], trj], axis=0)
+        return trj
+    

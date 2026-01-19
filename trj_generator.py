@@ -34,7 +34,7 @@ def generate_KF_dataset():
     NDOF = 128
     Re = 100
     n  = 4
-    dt = 2e-2
+    dt = 1e-2
     T = 1000
     T_samp = 50
     nsteps = int(T / dt)
@@ -55,7 +55,9 @@ def generate_KF_dataset():
     os.makedirs(root, exist_ok=True)
 
     omega0_hat = integrator.fv_integrate(omega0_hat, sample_steps)
-    integrator.integrate_scan_checkpoint(omega0_hat, nsteps, chunk_size, os.path.join(root, "dataset.npy"))
+    #integrator.integrate_scan_checkpoint(omega0_hat, nsteps, chunk_size, os.path.join(root, "dataset.npy"))
+    trj = integrator.integrate_scan(omega0_hat, sample_steps)
+    np.save(os.path.join(root, "dataset.npy"), np.array(trj))
 
 def generate_KF_energy_plots():
     max_workers = 4
@@ -171,4 +173,4 @@ def generate_sample_case_ani():
 
 
 if __name__ == "__main__":
-    generate_sample_case_ani()
+    generate_KF_dataset()
