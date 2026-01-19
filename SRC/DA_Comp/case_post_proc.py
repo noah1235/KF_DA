@@ -7,34 +7,34 @@ import matplotlib as mpl
 from SRC.Solver.ploting import plot_vorticity
 
 def cos_sim(x, y):
+    x = x.reshape(-1)
+    y = y.reshape(-1)
     return jnp.dot(x, y)/(jnp.linalg.norm(x) * jnp.linalg.norm(y))
 
 def rel_error(trg, pred):
     return jnp.linalg.norm(pred - trg) / jnp.linalg.norm(trg)
 
-def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particles, save_dir, dt, omega_fn, t_mask, results_df):
+def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, dt, t_mask, results_df):
     """
     Post-process a DA case:
       - compute per-timestep errors for velocity and particles
       - plot both vs time and save the figure.
     """
-    # Split (particles | velocity)
-    target_part = target_trj[:, : n_particles * 4]
-    target_vel  = target_trj[:, n_particles * 4 :]
+    omega_trg_hat, xp_trg, yp_trg, up_trg, vp_trg = target_trj
+    omega_DA_hat, xp_DA, yp_DA, up_DA, vp_DA = DA_trj
+    omega_init_guess_hat = init_guess_trj[0]
+    omega_trg = jnp.fft.irfft2(omega_trg_hat, axes=(-2, -1))
+    omega_DA = jnp.fft.irfft2(omega_DA_hat, axes=(-2, -1))
+    omega_init_guess = jnp.fft.irfft2(omega_init_guess_hat, axes=(-2, -1))
 
-    DA_part = DA_trj[:, : n_particles * 4]
-    DA_vel  = DA_trj[:, n_particles * 4 :]
+    trj_cos_sim = cos_sim(omega_trg, omega_DA)
+    trj_rel_error = rel_error(omega_trg, omega_DA)
 
-    init_guess_vel = init_guess_trj[:, n_particles * 4 :]
-
-    trj_cos_sim = cos_sim(target_vel.reshape(-1), DA_vel.reshape(-1))
-    trj_rel_error = rel_error(target_vel.reshape(-1), DA_vel.reshape(-1))
-
-    final_snap_cos_sim = cos_sim(target_vel[-1], DA_vel[-1])
-    final_snap_rel_error = rel_error(target_vel[-1], DA_vel[-1])
+    final_snap_cos_sim = cos_sim(omega_trg[-1], omega_DA[-1])
+    final_snap_rel_error = rel_error(omega_trg[-1], omega_DA[-1])
     
-    init_snap_cos_sim = cos_sim(target_vel[0], DA_vel[0])
-    int_snap_rel_error = rel_error(target_vel[0], DA_vel[0])
+    init_snap_cos_sim = cos_sim(omega_trg[0], omega_DA[0])
+    int_snap_rel_error = rel_error(omega_trg[0], omega_DA[0])
 
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
     results_df["trj_rel_error"] = [float(trj_rel_error)]
@@ -46,39 +46,115 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, n_particle
     results_df["int_snap_rel_error"] = [float(int_snap_rel_error)]
 
     # Time axis length should match the number of timesteps
-    nsteps = target_trj.shape[0]
+    nsteps = omega_trg_hat.shape[0]
     time_axis = jnp.arange(nsteps) * dt
 
-    vel_error = compute_norm_vs_time(target_vel, DA_vel)
+    vel_error = compute_norm_vs_time(omega_trg, omega_DA)
     plot_vel_error_vs_time(vel_error, time_axis, t_mask, save_dir)
+
+    #particle tracks
+    plot_particle_tracks(xp_trg, yp_trg, xp_DA, yp_DA, os.path.join(save_dir, "particle_tracks.svg"))
 
     #Vorticity plot
     plot_vort_comp(
-        init_guess_vel[0], target_vel[0], omega_fn,
+        omega_init_guess[0], omega_trg[0],
         os.path.join(save_dir, "guess_vs_target_t0.svg"),
         l1="Guess vorticity (t0)", l2="Target vorticity (t0)"
     )
 
     plot_vort_comp(
-        init_guess_vel[-1], target_vel[-1], omega_fn,
+        omega_init_guess[-1], omega_trg[-1],
         os.path.join(save_dir, "guess_vs_target_tN.svg"),
         l1="Guess vorticity (tN)", l2="Target vorticity (tN)"
     )
 
     plot_vort_comp(
-        DA_vel[-1], target_vel[-1], omega_fn,
+        omega_DA[-1], omega_trg[-1],
         os.path.join(save_dir, "DA_vs_target_tN.svg"),
         l1="DA vorticity (tN)", l2="Target vorticity (tN)"
     )
 
     plot_vort_comp(
-        DA_vel[0], target_vel[0], omega_fn,
+        omega_DA[0], omega_trg[0],
         os.path.join(save_dir, "DA_vs_target_t0.svg"),
         l1="DA vorticity (t0)", l2="Target vorticity (t0)"
     )
     
 
     plot_convergence(opt_data, save_dir)
+
+
+
+def _break_periodic_lines(x, y, Lx, Ly, jump_frac=0.5):
+    """
+    Insert NaNs where a periodic wrap likely occurred so matplotlib breaks the line.
+    Assumes positions are in [0, L).
+    """
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    dx = np.diff(x)
+    dy = np.diff(y)
+
+    # if jump is bigger than ~L/2, it's probably a wrap
+    breaks = (np.abs(dx) > jump_frac * Lx) | (np.abs(dy) > jump_frac * Ly)
+
+    xb = x.astype(float).copy()
+    yb = y.astype(float).copy()
+
+    # put NaN at the *point after* the jump to break the segment
+    idx = np.where(breaks)[0] + 1
+    xb[idx] = np.nan
+    yb[idx] = np.nan
+    return xb, yb
+
+def plot_particle_tracks(
+    xp_trg, yp_trg, xp_DA, yp_DA, save_path,
+    max_particles=1
+):
+    """
+    Plot x vs y tracks for target and DA in a periodic domain [0,Lx) x [0,Ly),
+    breaking trajectories at wrap crossings to avoid straight lines.
+    Arrays are shape (T, n).
+    """
+    Lx, Ly = 2*jnp.pi, 2*jnp.pi
+
+    xp_trg = np.asarray(xp_trg); yp_trg = np.asarray(yp_trg)
+    xp_DA  = np.asarray(xp_DA);  yp_DA  = np.asarray(yp_DA)
+
+    if xp_trg.shape != yp_trg.shape or xp_DA.shape != yp_DA.shape:
+        raise ValueError("x/y shapes must match within trg and within DA.")
+    if xp_trg.shape != xp_DA.shape:
+        raise ValueError(f"trg shape {xp_trg.shape} must match DA shape {xp_DA.shape}.")
+
+    T, n = xp_trg.shape
+    m = n if max_particles is None else min(max_particles, n)
+
+    fig, ax = plt.subplots(figsize=(7, 7), constrained_layout=True)
+
+    for p in range(m):
+        x1, y1 = _break_periodic_lines(xp_trg[:, p], yp_trg[:, p], Lx, Ly)
+        x2, y2 = _break_periodic_lines(xp_DA[:, p],  yp_DA[:, p],  Lx, Ly)
+
+        ax.plot(x1, y1, lw=1.5, alpha=0.9, label="Target" if p == 0 else None)
+        ax.plot(x2, y2, lw=1.5, alpha=0.9, ls="--", label="DA" if p == 0 else None)
+
+        # mark starts (modded into the box)
+        ax.scatter(xp_trg[0, p] % Lx, yp_trg[0, p] % Ly, s=14, marker="o", alpha=0.9)
+        ax.scatter(xp_DA[0, p]  % Lx, yp_DA[0, p]  % Ly, s=14, marker="x", alpha=0.9)
+
+    ax.set_xlim(0, Lx)
+    ax.set_ylim(0, Ly)
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_title(f"Particle tracks in periodic domain (showing {m}/{n})")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="best")
+
+    save_svg(mpl, fig, save_path)
+    plt.close(fig)
+
 
 def radial_spectral_error(
     omega_pred: jnp.ndarray,
@@ -172,9 +248,8 @@ def radial_spectral_error(
 
     return k_centers, rel_err_k, true_sums, pred_sums
 
-
 def plot_vort_comp(
-    DA_vel, target_vel, omega_fn,
+    omega_T_DA, omega_T_target,
     save_path,
     l1, l2,
     err_label="Error (DA − target)",
@@ -183,8 +258,6 @@ def plot_vort_comp(
     log_k: bool = False,
     max_k: float | None = 15.0,
 ):
-    omega_T_DA     = omega_fn(DA_vel)       # "guess"
-    omega_T_target = omega_fn(target_vel)   # true
     omega_err      = omega_T_DA - omega_T_target
 
     k_centers, rel_err_k, E_true_k, E_pred_k = radial_spectral_error(
@@ -195,7 +268,6 @@ def plot_vort_comp(
         nbins=8
     )
 
-    # Normalize BOTH energies by max(true energy)
     E_true_max = jnp.max(E_true_k)
     denom = jnp.maximum(E_true_max, energy_eps)
     E_true_norm = E_true_k / denom
@@ -233,7 +305,9 @@ def plot_vort_comp(
 
 
 def compute_norm_vs_time(target, pred):
-    return jnp.linalg.norm(target - pred, axis=1) / jnp.linalg.norm(target)
+    num = jnp.linalg.norm(target - pred, axis=(1, 2))
+    den = jnp.linalg.norm(target, axis=(1, 2))
+    return num / den
 
 def plot_vel_error_vs_time(vel_error, time_axis, t_mask, save_dir):
     """

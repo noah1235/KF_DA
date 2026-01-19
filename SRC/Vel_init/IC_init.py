@@ -18,5 +18,5 @@ class IC_init:
             Scalar mean distance (0-D array) representing an attractor "size" scale.
         """
         mean = jnp.mean(attractor_snapshots, axis=0)
-        dist = jnp.linalg.norm(attractor_snapshots - mean.reshape((1, -1)), axis=1)
+        dist = jnp.linalg.norm(attractor_snapshots - jnp.expand_dims(mean, axis=0), axis=(1, 2))
         return jnp.mean(dist)

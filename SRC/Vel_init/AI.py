@@ -23,8 +23,9 @@ class AI(IC_init):
         
         dist = self.attractor_rad * norm_dist
         true_IC_dist = jnp.linalg.norm(
-        self.attractor_snapshots[self.unused_IC_mask, :] - U_0.reshape((1, -1)), axis=1
+        self.attractor_snapshots[self.unused_IC_mask, :] - jnp.expand_dims(U_0, axis=0), axis=(1, 2)
         )
+
         IC_idx = jnp.argmin(jnp.abs(true_IC_dist - dist))
         U_0_guess = self.attractor_snapshots[
             IC_idx, :

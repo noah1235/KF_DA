@@ -6,6 +6,65 @@ import numpy as np
 from SRC.utils import bilinear_sample_periodic
 from dataclasses import dataclass
 
+#for animation
+def create_vel_part_gen_fn(stepper, T):
+    nsteps = int(T/stepper.dt)
+    def body(carry, _):
+        omega_hat, xp, yp, up, vp = carry
+
+        # advance one step
+        omega_hat, xp, yp, up, vp = stepper(omega_hat, xp, yp, up, vp)
+
+        # compute grid velocity from omega_hat
+        u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega_hat)
+        u = jnp.fft.irfft2(u_hat)
+        v = jnp.fft.irfft2(v_hat)
+
+        new_carry = (omega_hat, xp, yp, up, vp)
+        y = (u, v, xp, yp)  # saved outputs
+        return new_carry, y
+    def vel_part_trj_gen_fn(omega0_hat, xp, yp, up, vp):
+        carry0 = (omega0_hat, xp, yp, up, vp)
+        _, (u_traj, v_traj, xp_traj, yp_traj) = jax.lax.scan(
+            body, carry0, xs=None, length=nsteps
+        )
+        return u_traj, v_traj, xp_traj, yp_traj
+    
+    return vel_part_trj_gen_fn
+
+
+def create_omega_part_gen_fn(stepper, T):
+    nsteps = int(T / stepper.dt)
+
+    def body(carry, _):
+        omega_hat, xp, yp, up, vp = carry
+
+        # advance one step
+        omega_hat, xp, yp, up, vp = stepper(omega_hat, xp, yp, up, vp)
+
+        new_carry = (omega_hat, xp, yp, up, vp)
+        y = (omega_hat, xp, yp, up, vp)  # saved outputs (after step)
+        return new_carry, y
+
+    def omega_part_trj_gen_fn(omega0_hat, xp0, yp0, up0, vp0):
+        carry0 = (omega0_hat, xp0, yp0, up0, vp0)
+
+        _, (omega_traj, xp_traj, yp_traj, up_traj, vp_traj) = jax.lax.scan(
+            body, carry0, xs=None, length=nsteps
+        )
+
+        # Prepend initial conditions so trajectories are length nsteps+1
+        omega_traj = jnp.concatenate([omega0_hat[None, ...], omega_traj], axis=0)
+        xp_traj    = jnp.concatenate([xp0[None, ...],       xp_traj],    axis=0)
+        yp_traj    = jnp.concatenate([yp0[None, ...],       yp_traj],    axis=0)
+        up_traj    = jnp.concatenate([up0[None, ...],       up_traj],    axis=0)
+        vp_traj    = jnp.concatenate([vp0[None, ...],       vp_traj],    axis=0)
+
+        return omega_traj, xp_traj, yp_traj, up_traj, vp_traj
+
+    return omega_part_trj_gen_fn
+
+
 class Forced_2D_NS:
     L = 2 * jnp.pi
 

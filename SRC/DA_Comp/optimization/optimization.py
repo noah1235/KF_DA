@@ -114,24 +114,24 @@ class L_BFGS(LS_TR_Opt):
         self.H = self.H_init
         self.H_init = None
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
+    def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
         if iter == 0 and self.H is None:
             print("diag init BFGS")
-            Hg = loss_fn_and_derivs.HVP_fn(U_0, grad)
-            self.H = LBFGS_Update(U_0.shape[0], self.max_mem, init_gamma=(1/self.eps_H))
+            Hg = loss_fn_and_derivs.HVP_fn(Z0, grad)
+            self.H = LBFGS_Update(Z0.shape[0], self.max_mem, init_gamma=(1/self.eps_H))
             self.H.update(grad, Hg)
 
         pk = self.H.get_step_dir(grad)
 
-        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration)
+        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
         alpha_pk = pk * alpha
         if last_iteration:
             return U_0_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
         else:
-            sk = U_0_next - U_0
+            sk = U_0_next - Z0
             yk = grad_next - grad
             did_update = self.H.update(sk, yk)
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {did_update}"
@@ -161,11 +161,11 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
         return div_free_proj(pk)
 
-    def second_order_logic(self, grad, hvp, U_0, div_free_proj, iter):
+    def second_order_logic(self, grad, hvp, Z0, div_free_proj, iter):
         if len(self.Bk) == 0:
             print("init w/ HVP")
             self.Bk.eps = self.eps_H
-            gTHg = jnp.dot(grad, hvp(U_0, grad))
+            gTHg = jnp.dot(grad, hvp(Z0, grad))
             self.HVP_Bk_update(gTHg, grad.reshape((-1, 1)))
 
         if False:
@@ -196,15 +196,15 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if isinstance(self.ls, Cubic_TR) or isinstance(self.ls, Armijo_TR):
             self.ls.init_opt()
 
-    def inner_loop(self, U_0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
+    def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
         #loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
         hvp = loss_fn_and_derivs.HVP_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
 
-        pk, step_type = self.second_order_logic(grad, hvp, U_0, div_free_proj, iter)
-        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration)
+        pk, step_type = self.second_order_logic(grad, hvp, Z0, div_free_proj, iter)
+        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
 
         alpha_pk = pk * alpha
         debug_str = f"step type: {step_type} | " + debug_str
@@ -212,7 +212,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         if last_iteration:
             return U_0_next, np.nan, np.nan, alpha, alpha_pk, debug_str
         else:
-            self.SR1_update(U_0_next, U_0, grad_next, grad, loss_next, loss)
+            self.SR1_update(U_0_next, Z0, grad_next, grad, loss_next, loss)
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
 
 class NCSR1_and_LBFGS:

@@ -9,8 +9,8 @@ import time
 import os
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
 class Loss_and_Deriv_fns:
-    def __init__(self, loss_crit, inv_transform, stepper, target_trj, pIC, vel_part_trans, dt, T, vfloat):
-        loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, pIC, inv_transform, vel_part_trans)
+    def __init__(self, loss_crit, inv_transform, stepper, target_trj, dt, T, vfloat):
+        loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, inv_transform)
         self.hvp_fn_jit = jax.jit(self.make_hvp(loss_fn_base))
 
         if vfloat is None:
@@ -182,35 +182,35 @@ class LS_TR_Opt():
     def inner_loop(self):
         pass
 
-    def ls_choice_logic(self, loss_fn, loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration):
+    def ls_choice_logic(self, loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration):
         if isinstance(self.ls, ArmijoLineSearch):
-            alpha, U_0_next, loss_next, grad_next = self.ls(loss, U_0, pk, grad, loss_grad_cond_fn, last_iteration)
+            alpha, U_0_next, loss_next, grad_next = self.ls(loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
             debug_str = ""
         elif isinstance(self.ls, Cubic_TR):
             pTHp = jnp.dot(pk, -grad)
-            alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, U_0, loss, loss_grad_cond_fn, last_iteration)
+            alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, Z0, loss, loss_grad_cond_fn, last_iteration)
             debug_str = f"eta: {self.ls.eta}"
         elif isinstance(self.ls, Armijo_TR):
-            alpha, U_0_next, loss_next, grad_next = self.ls(pk, grad, loss_fn, U_0, loss, loss_grad_cond_fn, last_iteration)
+            alpha, U_0_next, loss_next, grad_next = self.ls(pk, grad, loss_fn, Z0, loss, loss_grad_cond_fn, last_iteration)
             debug_str = ""
         return alpha, U_0_next, loss_next, grad_next, debug_str
     
-    def opt_loop(self, U_0, loss_fn_and_derivs: Loss_and_Deriv_fns, div_check):
+    def opt_loop(self, Z0, loss_fn_and_derivs: Loss_and_Deriv_fns):
         opt_data = Opt_Data(self.its)
-        self.init_opt_params(U_0.shape[0])
+        self.init_opt_params(Z0.shape[0])
 
 
         for i in range(self.its):
             if i == 0:
-                loss, grad = loss_fn_and_derivs.loss_grad_fn(U_0)
+                loss, grad = loss_fn_and_derivs.loss_grad_fn(Z0)
             loss_prev = loss
             grad_prev = grad
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals
             #last iteration
             if i == (self.its-1):
-                U_0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, i, last_iteration=True)
+                Z0, _, _, alpha, alpha_pk, diag_str = self.inner_loop(Z0, grad, loss, loss_fn_and_derivs, i, last_iteration=True)
             else:
-                U_0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(U_0, grad, loss, loss_fn_and_derivs, i, last_iteration=False)
+                Z0, loss, grad, alpha, alpha_pk, diag_str = self.inner_loop(Z0, grad, loss, loss_fn_and_derivs, i, last_iteration=False)
 
             if alpha == 0:
                 if self.print_loss:
@@ -223,7 +223,7 @@ class LS_TR_Opt():
             opt_data(i, loss_prev, grad_prev, alpha_pk, loss_evals_prev, loss_grad_evals_prev, Hvp_evals_prev)
 
             if self.print_loss:
-                print(f"i:{i} | loss: {loss_prev:.4e} | Div: {div_check(U_0):.2e} | alpha: {alpha:.3e}" + "|" + diag_str)
+                print(f"i:{i} | loss: {loss_prev:.4e} | alpha: {alpha:.3e}" + "|" + diag_str)
 
 
-        return U_0, opt_data
+        return Z0, opt_data

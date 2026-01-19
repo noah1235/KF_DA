@@ -19,6 +19,7 @@ from jax import config
 from SRC.Vel_init.AI import AI
 from SRC.Vel_init.CS_init import CS_init
 from SRC.global_post.global_post_main import global_post_main
+from SRC.parameterization.Fourier_Param import Fourier_Param
 config.update("jax_enable_x64", True)
 
 def parquet_to_excel(parquet_path, excel_path=None):
@@ -66,15 +67,15 @@ def main():
     BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10)
 
     DA_opts = DA_Opts(
-        n_particles_list=[10],
-        NT_list=[11],
+        n_particles_list=[30],
+        NT_list=[21],
         part_opts=Particle_Opts(St=0, beta=0),
-        PIC_seed_list=[0, 1],
+        PIC_seed_list=[0],
         num_opt_inits=1,
-        TIC_seed_list=[0, 1, 2],
-        #ic_init=AI(min_norm=.1, max_norm=2),
-        ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[3.3],
+        TIC_seed_list=[0],
+        ic_init=AI(min_norm=1, max_norm=2),
+        #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
+        T_list=[3],
         optimizer_list=[
             #NCSR1(its=50, eps_H=1e-7, max_memory=20,
             #      ls=BT_ls, 
@@ -86,7 +87,7 @@ def main():
             L_BFGS(
                 ls=BT_ls, 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                 its=200, max_mem=20, eps_H=1e-7, print_loss=True),
+                 its=100, max_mem=20, eps_H=1e-7, print_loss=True),
         ],
         vp_list=[None, 
                  #VP_Float_Settings(mbits=4, minv=1e-3, maxv=10),
@@ -96,7 +97,8 @@ def main():
         crit_list=[
             MSE_PP(),
             #MSE_Vel()
-        ]
+        ],
+        IC_param_list=[Fourier_Param(kf_opts.NDOF, 64)]
     )
 
     root = os.path.join(

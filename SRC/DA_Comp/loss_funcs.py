@@ -1,43 +1,36 @@
 import jax.numpy as jnp
-from SRC.Solver.KF_intergrators import RK4_Step, Particle_Stepper
-from SRC.utils import build_div_free_proj, Vel_Part_Transformations, Specteral_Upsampling, bilinear_sample_periodic
+from SRC.Solver.solver import KF_TP_Stepper
+from SRC.utils import bilinear_sample_periodic
 from jax import lax
 
 
 
-def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, inv_transform, vel_part_trans: Vel_Part_Transformations):
-    upsample_factor = stepper.step.rhs.r
-    def loss_fn(U0_hat):
-        U0 = inv_transform(U0_hat)
-
-        X0 = jnp.concatenate([pIC, U0])
+def create_loss_fn(crit, stepper: KF_TP_Stepper, target_trj, inv_transform):
+    omega_traj, xp_traj, yp_traj, up_traj, vp_traj = target_trj
+    def loss_fn(Z0):
+        omega0_hat = inv_transform(Z0)
 
         def body(X, data):
-            target_snapshot, i = data
-            particles, U_flat = vel_part_trans.split_part_and_vel(X)
-            xp, yp, up, vp = vel_part_trans.get_part_pos_and_vel(particles)
-
-            #extracting target data
-            trg_particles, trg_U_flat = vel_part_trans.split_part_and_vel(target_snapshot)
-            trg_xp, trg_yp, trg_up, trg_vp = vel_part_trans.get_part_pos_and_vel(trg_particles)
+            omega_DA, xp_DA, yp_DA, up_DA, vp_DA = X
+            omega_trg, xp_trg, yp_trg, up_trg, vp_trg, i = data
 
             def have_measurment(_):
-                return jnp.concatenate([trg_particles, U_flat], axis=0), crit.g(xp, yp, trg_xp, trg_yp, U_flat, trg_U_flat, upsample_factor, i)
+                return xp_trg, yp_trg, up_trg, vp_trg, crit.g(xp_DA, yp_DA, xp_trg, yp_trg, omega_DA, omega_trg, stepper.NS.vort_hat_2_vel_hat, i)
+                #return xp_DA, yp_DA, up_DA, vp_DA, crit.g(xp_DA, yp_DA, xp_trg, yp_trg, omega_DA, omega_trg, stepper.NS.vort_hat_2_vel_hat, i)
 
             def no_measurment(_):
-                return jnp.concatenate([particles, U_flat], axis=0), jnp.array(0.0, dtype=X.dtype)
+                return xp_DA, yp_DA, up_DA, vp_DA, jnp.array(0.0)
 
-            X, loss_t = lax.cond(crit.t_mask[i] != 0, have_measurment, no_measurment, operand=None)
+            xp_DA, yp_DA, up_DA, vp_DA, loss_t = lax.cond(crit.t_mask[i] != 0, have_measurment, no_measurment, operand=None)
 
 
-            
-            X_next = stepper(X)
-            return X_next, loss_t
+            omega_DA, xp_DA, yp_DA, up_DA, vp_DA = stepper(omega_DA, xp_DA, yp_DA, up_DA, vp_DA)
+            return (omega_DA, xp_DA, yp_DA, up_DA, vp_DA), loss_t
 
-        nsteps = target_trj.shape[0]
+        nsteps = omega_traj.shape[0]
         idxs = jnp.arange(nsteps, dtype=jnp.int32)
-        xs = (target_trj.real, idxs)
-
+        xs = (omega_traj, xp_traj, yp_traj, up_traj, vp_traj, idxs)
+        X0 = (omega0_hat, xp_traj[0], yp_traj[0], up_traj[0], vp_traj[0])
         _, losses = lax.scan(body, X0, xs=xs)
 
         return jnp.sum(losses)
@@ -45,20 +38,19 @@ def create_loss_fn(crit, stepper: Particle_Stepper, target_trj, pIC, inv_transfo
     return loss_fn
 
 class Loss_fn:
-    def init_obj(self, t_mask, L, vel_part_trans: Vel_Part_Transformations):
+    def init_obj(self, t_mask, L):
         self.t_mask = t_mask
         self.num_frames = jnp.sum(t_mask)
-        self.vel_part_trans = vel_part_trans
         self.L = L
 
 
 class MSE_PP(Loss_fn):
-    def g(self, part_x, part_y, target_part_x, target_part_y,
-          U_flat, trg_U_flat, upsample_factor, i):
+    def g(self, xp_DA, yp_DA, xp_trg, yp_trg, 
+          omega_DA, omega_trg, vort_2_vel_hat_fn, i):
 
         # periodic (minimum-image) differences in x and y
-        dx = part_x - target_part_x
-        dy = part_y - target_part_y
+        dx = xp_DA - xp_trg
+        dy = yp_DA - yp_trg
 
         dx = dx - self.L * jnp.round(dx / self.L)
         dy = dy - self.L * jnp.round(dy / self.L)
@@ -72,27 +64,27 @@ class MSE_PP(Loss_fn):
         return "PP_MSE"
     
 class MSE_Vel(Loss_fn):
-    def g(self, part_x, part_y, target_part_x, target_part_y, U_flat, trg_U_flat, upsample_factor, i):
-        U = self.vel_part_trans.reshape_flattened_vel(U_flat)
-        trg_U = self.vel_part_trans.reshape_flattened_vel(trg_U_flat)
+    @staticmethod
+    def _vort_2_vel(omega, vort_2_vel_hat_fn):
+        u_hat, v_hat = vort_2_vel_hat_fn(omega)
+        return jnp.fft.irfft2(u_hat), jnp.fft.irfft2(v_hat)
 
-        # upsample to a finer grid for particle sampling
-        trg_u_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(trg_U[0]), upsample_factor)
-        trg_v_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(trg_U[1]), upsample_factor)
+    def g(self, xp_DA, yp_DA, xp_trg, yp_trg, 
+          omega_DA, omega_trg, vort_2_vel_hat_fn, i):
+        u_trj, v_trj = self._vort_2_vel(omega_trg, vort_2_vel_hat_fn)
+        u_DA, v_DA = self._vort_2_vel(omega_DA, vort_2_vel_hat_fn)
 
-        u_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(U[0]), upsample_factor)
-        v_fine = Specteral_Upsampling.spectral_upsample_from_hat2d_rfft(jnp.fft.rfft2(U[1]), upsample_factor)
 
         # bilinear samples (periodic) at particle positions
-        u = bilinear_sample_periodic(u_fine, target_part_x, target_part_y, self.L, self.L)
-        v = bilinear_sample_periodic(v_fine, target_part_x, target_part_y, self.L, self.L)
+        u_DA = bilinear_sample_periodic(u_DA, xp_trg, yp_trg, self.L, self.L)
+        v_DA = bilinear_sample_periodic(v_DA, xp_trg, yp_trg, self.L, self.L)
 
-        trg_u = bilinear_sample_periodic(trg_u_fine, target_part_x, target_part_y, self.L, self.L)
-        trg_v = bilinear_sample_periodic(trg_v_fine, target_part_x, target_part_y, self.L, self.L)
+        u_trj = bilinear_sample_periodic(u_trj, xp_trg, yp_trg, self.L, self.L)
+        v_trj = bilinear_sample_periodic(v_trj, xp_trg, yp_trg, self.L, self.L)
 
 
-        MSE_u = jnp.mean((u - trg_u)**2)
-        MSE_v = jnp.mean((v - trg_v)**2)
+        MSE_u = jnp.mean((u_DA - u_trj)**2)
+        MSE_v = jnp.mean((v_DA - v_trj)**2)
 
 
         return self.t_mask[i] * ((MSE_u + MSE_v)/2) / self.num_frames

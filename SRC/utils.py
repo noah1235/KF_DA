@@ -125,6 +125,95 @@ def bilinear_sample_periodic(F, x, y, Lx, Ly):
             (1 - tx) * ty       * f01 +
             tx       * ty       * f11)
 
+
+def _cubic_kernel(t, a=-0.5):
+    """
+    Keys cubic convolution kernel.
+    t can be any real array. Returns weights same shape as t.
+    """
+    t = jnp.abs(t)
+    t2 = t * t
+    t3 = t2 * t
+
+    w0 = (a + 2.0) * t3 - (a + 3.0) * t2 + 1.0              # |t| < 1
+    w1 = a * t3 - 5.0 * a * t2 + 8.0 * a * t - 4.0 * a      # 1 <= |t| < 2
+    return jnp.where(t < 1.0, w0, jnp.where(t < 2.0, w1, 0.0))
+
+def bilinear_sample_periodic_dec(F: jnp.ndarray,
+                            x: jnp.ndarray,
+                            y: jnp.ndarray,
+                            Lx: float,
+                            Ly: float,
+                            a: float = -0.5):
+    """
+    Periodic bicubic interpolation of F[iy, ix] on a uniform grid.
+
+    Assumes samples at x_i = i*Lx/Nx, y_j = j*Ly/Ny (corner grid).
+    x,y can be any real values; periodic wrap is applied.
+
+    Returns: values with shape broadcast(x,y) (typically (P,))
+    """
+    Ny, Nx = F.shape
+    x = jnp.asarray(x)
+    y = jnp.asarray(y)
+
+    # Periodize positions to [0, L)
+    x = jnp.mod(x, Lx)
+    y = jnp.mod(y, Ly)
+
+    # Continuous grid coordinates
+    gx = x * (Nx / Lx)
+    gy = y * (Ny / Ly)
+
+    ix = jnp.floor(gx).astype(jnp.int32)
+    iy = jnp.floor(gy).astype(jnp.int32)
+
+    tx = gx - ix.astype(gx.dtype)  # in [0,1)
+    ty = gy - iy.astype(gy.dtype)
+
+    # Neighbor indices: i-1, i, i+1, i+2 (periodic)
+    ixm1 = (ix - 1) % Nx
+    ix0  = ix % Nx
+    ixp1 = (ix + 1) % Nx
+    ixp2 = (ix + 2) % Nx
+
+    iym1 = (iy - 1) % Ny
+    iy0  = iy % Ny
+    iyp1 = (iy + 1) % Ny
+    iyp2 = (iy + 2) % Ny
+
+    # Weights in x and y for the four neighbors
+    # Distances to the four sample points relative to cell origin:
+    # x: -1, 0, 1, 2 corresponds to t = tx - offset
+    wxm1 = _cubic_kernel(tx + 1.0, a)
+    wx0  = _cubic_kernel(tx + 0.0, a)
+    wxp1 = _cubic_kernel(tx - 1.0, a)
+    wxp2 = _cubic_kernel(tx - 2.0, a)
+
+    wym1 = _cubic_kernel(ty + 1.0, a)
+    wy0  = _cubic_kernel(ty + 0.0, a)
+    wyp1 = _cubic_kernel(ty - 1.0, a)
+    wyp2 = _cubic_kernel(ty - 2.0, a)
+
+    # Gather 4x4 stencil values with explicit advanced indexing (shape-safe)
+    # Row -1
+    rym1 = (wxm1 * F[iym1, ixm1] + wx0 * F[iym1, ix0] +
+            wxp1 * F[iym1, ixp1] + wxp2 * F[iym1, ixp2])
+    # Row 0
+    ry0  = (wxm1 * F[iy0,  ixm1] + wx0 * F[iy0,  ix0] +
+            wxp1 * F[iy0,  ixp1] + wxp2 * F[iy0,  ixp2])
+    # Row +1
+    ryp1 = (wxm1 * F[iyp1, ixm1] + wx0 * F[iyp1, ix0] +
+            wxp1 * F[iyp1, ixp1] + wxp2 * F[iyp1, ixp2])
+    # Row +2
+    ryp2 = (wxm1 * F[iyp2, ixm1] + wx0 * F[iyp2, ix0] +
+            wxp1 * F[iyp2, ixp1] + wxp2 * F[iyp2, ixp2])
+
+    # Now interpolate in y
+    val = (wym1 * rym1 + wy0 * ry0 + wyp1 * ryp1 + wyp2 * ryp2)
+    return val
+
+
 def load_data(kf_opts: KF_Opts):
     #Re=100_NDOF=32_dt=0.01_n=4_sampT=500_total_T=2000
     path = os.path.join(create_results_dir(), "Trjs", "KF_datasets", f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_n={kf_opts.n}_sampT={kf_opts.min_samp_T}_total_T={kf_opts.total_T}", "dataset.npy")

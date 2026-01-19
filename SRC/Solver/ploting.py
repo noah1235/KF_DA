@@ -5,7 +5,7 @@ from SRC.utils import Specteral_Upsampling
 import matplotlib.colors as colors
 from SRC.plotting_utils import balanced_cmap
 
-def plot_particles(z, L, ax=None, s=20):
+def plot_particles(xs, ys, L, ax=None, s=20):
     """
     Plot particle positions (black dots) from a packed state vector:
     z = [x1, y1, u1, v1, x2, y2, u2, v2, ..., xN, yN, uN, vN].
@@ -26,13 +26,6 @@ def plot_particles(z, L, ax=None, s=20):
     -------
     fig, ax : matplotlib Figure and Axes
     """
-    z = np.asarray(z)
-    if z.size % 4 != 0:
-        raise ValueError("z length must be a multiple of 4 (x,y,u,v per particle).")
-
-    # Unpack positions with stride indexing
-    xs = z[0::4]
-    ys = z[1::4]
 
     # Domain extents
     if isinstance(L, (tuple, list, np.ndarray)):
