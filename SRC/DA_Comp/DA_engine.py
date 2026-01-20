@@ -181,8 +181,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                         param_dir = os.path.join(vfloat_dir, f"{IC_param}")
                                         loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, target_trj, kf_opts.dt, T, vfloat)
 
-                                        for _ in range(DA_opts.num_opt_inits):
-                                            omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit)
+                                        for opt_init_seed_num in range(DA_opts.num_opt_inits):
+                                            omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_seed_num)
                                             opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
 
                                             # Skip if this case directory already exists

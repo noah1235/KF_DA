@@ -53,7 +53,7 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, 
     plot_vel_error_vs_time(vel_error, time_axis, t_mask, save_dir)
 
     #particle tracks
-    plot_particle_tracks(xp_trg, yp_trg, xp_DA, yp_DA, os.path.join(save_dir, "particle_tracks.svg"))
+    plot_particle_tracks(xp_trg, yp_trg, xp_DA, yp_DA, t_mask, os.path.join(save_dir, "particle_tracks.svg"))
 
     #Vorticity plot
     plot_vort_comp(
@@ -108,19 +108,19 @@ def _break_periodic_lines(x, y, Lx, Ly, jump_frac=0.5):
     yb[idx] = np.nan
     return xb, yb
 
-def plot_particle_tracks(
-    xp_trg, yp_trg, xp_DA, yp_DA, save_path,
-    max_particles=1
-):
-    """
-    Plot x vs y tracks for target and DA in a periodic domain [0,Lx) x [0,Ly),
-    breaking trajectories at wrap crossings to avoid straight lines.
-    Arrays are shape (T, n).
-    """
-    Lx, Ly = 2*jnp.pi, 2*jnp.pi
+import numpy as np
+import matplotlib.pyplot as plt
+import jax.numpy as jnp
 
+def plot_particle_tracks(
+    xp_trg, yp_trg, xp_DA, yp_DA,
+    t_mask, save_path,
+    max_particles=5
+):
+    Lx, Ly = 2*jnp.pi, 2*jnp.pi
     xp_trg = np.asarray(xp_trg); yp_trg = np.asarray(yp_trg)
     xp_DA  = np.asarray(xp_DA);  yp_DA  = np.asarray(yp_DA)
+    t_mask = np.asarray(t_mask)
 
     if xp_trg.shape != yp_trg.shape or xp_DA.shape != yp_DA.shape:
         raise ValueError("x/y shapes must match within trg and within DA.")
@@ -128,28 +128,82 @@ def plot_particle_tracks(
         raise ValueError(f"trg shape {xp_trg.shape} must match DA shape {xp_DA.shape}.")
 
     T, n = xp_trg.shape
+
+    # Allow t_mask to be (T,) or (T,n)
+    if t_mask.shape == (T,):
+        mask_mode = "global"
+    elif t_mask.shape == (T, n):
+        mask_mode = "per_particle"
+    else:
+        raise ValueError(f"t_mask must have shape (T,) or (T,n). Got {t_mask.shape}")
+
     m = n if max_particles is None else min(max_particles, n)
 
     fig, ax = plt.subplots(figsize=(7, 7), constrained_layout=True)
 
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    # marker styling for measurement markers
+    ms = 14
+    mew = 1.5
+
     for p in range(m):
+        c = colors[p % len(colors)]
+
+        # break lines for periodic wrap (NaNs inserted)
         x1, y1 = _break_periodic_lines(xp_trg[:, p], yp_trg[:, p], Lx, Ly)
         x2, y2 = _break_periodic_lines(xp_DA[:, p],  yp_DA[:, p],  Lx, Ly)
 
-        ax.plot(x1, y1, lw=1.5, alpha=0.9, label="Target" if p == 0 else None)
-        ax.plot(x2, y2, lw=1.5, alpha=0.9, ls="--", label="DA" if p == 0 else None)
+        # ---- 1) LINES first ----
+        ax.plot(x1, y1, lw=1.5, color=c, label="Target" if p == 0 else None, zorder=1)
+        ax.plot(x2, y2, lw=1.5, ls="--", color=c, label="DA" if p == 0 else None, zorder=1)
 
-        # mark starts (modded into the box)
-        ax.scatter(xp_trg[0, p] % Lx, yp_trg[0, p] % Ly, s=14, marker="o", alpha=0.9)
-        ax.scatter(xp_DA[0, p]  % Lx, yp_DA[0, p]  % Ly, s=14, marker="x", alpha=0.9)
+        # Measurement indices
+        if mask_mode == "global":
+            idx = np.flatnonzero(t_mask == 1)
+        else:
+            idx = np.flatnonzero(t_mask[:, p] == 1)
+
+        if idx.size > 0:
+            # ---- 2) OPEN markers (DA) ----
+            ax.scatter(
+                xp_DA[idx, p] % Lx, yp_DA[idx, p] % Ly,
+                s=1.5 * ms,          # bigger
+                marker="o",
+                facecolors="white",
+                edgecolors=c,
+                linewidths=mew,
+                zorder=3
+            )
+
+            # ---- 3) FILLED markers (Target) ----
+            ax.scatter(
+                xp_trg[idx, p] % Lx, yp_trg[idx, p] % Ly,
+                s=ms,
+                marker="o",
+                color=c,
+                edgecolors="none",
+                label="Meas. times" if p == 0 else None,
+                zorder=4
+            )
+
+        # ---- START marker LAST (big black hollow circle) ----
+        ax.scatter(
+            xp_DA[0, p] % Lx, yp_DA[0, p] % Ly,
+            s=140,
+            marker="o",
+            facecolors="none",
+            edgecolors="k",
+            linewidths=2.5,
+            alpha=1.0,
+            zorder=10
+        )
 
     ax.set_xlim(0, Lx)
     ax.set_ylim(0, Ly)
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
-    ax.set_title(f"Particle tracks in periodic domain (showing {m}/{n})")
-    ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
 
     save_svg(mpl, fig, save_path)
