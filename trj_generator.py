@@ -34,11 +34,11 @@ def generate_KF_dataset():
     Re = 100
     n  = 4
     dt = 1e-2
-    T = 1000
-    T_samp = 50
+    T = 1e5
+    T_samp = 500
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    chunk_size = 10000
+    chunk_size = 100000
 
     omega0_hat = generate_rand_IC(NDOF)
 
@@ -154,4 +154,4 @@ def generate_sample_case_ani():
 
 
 if __name__ == "__main__":
-    generate_sample_case_ani()
+    generate_KF_dataset()
