@@ -34,8 +34,8 @@ def generate_KF_dataset():
     Re = 100
     n  = 4
     dt = 1e-2
-    T = 1e5
-    T_samp = 500
+    T = 1e6
+    T_samp = 100
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
     chunk_size = 100000

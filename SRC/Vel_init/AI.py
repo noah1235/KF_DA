@@ -16,7 +16,7 @@ class AI(IC_init):
     def __repr__(self):
         return "AI"
     
-    def __call__(self, U_0, pIC, DA_loss_fn_base, opt_init_seed_num):
+    def __call__dec(self, U_0, pIC, DA_loss_fn_base, opt_init_seed_num):
         key = jax.random.PRNGKey(opt_init_seed_num)
 
         # uniform in [min_norm, max_norm)
@@ -44,4 +44,36 @@ class AI(IC_init):
 
         actual_norm_dist = jnp.linalg.norm(U_0_guess - U_0) / self.attractor_rad
 
+        return U_0_guess, actual_norm_dist
+    
+    def __call__(self, U_0, pIC, DA_loss_fn_base, opt_init_seed_num):
+        key = jax.random.PRNGKey(opt_init_seed_num)
+
+        # Distances to all snapshots (global indexing)
+        dists = jnp.linalg.norm(
+            self.attractor_snapshots - jnp.expand_dims(U_0, axis=0),
+            axis=(1, 2)
+        )
+        norm_dists = dists / self.attractor_rad
+
+        # Eligible = unused AND within [min_norm, max_norm]
+        eligible = self.unused_IC_mask & (norm_dists >= self.min_norm) & (norm_dists <= self.max_norm)
+        eligible_idx = jnp.where(eligible)[0]  # global indices
+
+        if eligible_idx.size > 0:
+            # pick uniformly at random from eligible snapshots
+            IC_idx = jax.random.choice(key, eligible_idx)
+        else:
+            # fallback: pick the unused snapshot closest to the middle of the band
+            unused_idx = jnp.where(self.unused_IC_mask)[0]
+            target = 0.5 * (self.min_norm + self.max_norm)
+            j = jnp.argmin(jnp.abs(norm_dists[unused_idx] - target))
+            IC_idx = unused_idx[j]
+
+        U_0_guess = self.attractor_snapshots[IC_idx, :]
+
+        # NOTE: mutates state; fine if you're not jitting this function.
+        self.unused_IC_mask[IC_idx] = False
+
+        actual_norm_dist = jnp.linalg.norm(U_0_guess - U_0) / self.attractor_rad
         return U_0_guess, actual_norm_dist

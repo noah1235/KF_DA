@@ -266,7 +266,7 @@ class LBFGS_Update:
         ss = jnp.dot(s, s)
 
         # Curvature condition: y^T s > 0 (with tolerance)
-        if ys <= self.curvature_tol * ss:
+        if ys <= self.curvature_tol:
             # skip update if curvature is bad (keeps PD-ness)
             return False
 
