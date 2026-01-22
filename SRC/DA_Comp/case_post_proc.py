@@ -413,7 +413,7 @@ def plot_convergence(opt_data, save_dir, y_min=1e-18):
 
     loss_plot    = _pos_or_nan(loss)
     grad_plot    = _pos_or_nan(grad_norm)
-    descent_plot = _pos_or_nan(-alpha_gTp)   # -g^T p ≥ 0 for descent; mask nonpositive
+    descent_plot = _pos_or_nan(-alpha_gTp)
 
     # Common y-limits (log): small positive floor to avoid 0
     candidates = [np.nanmax(loss_plot), np.nanmax(grad_plot), np.nanmax(descent_plot)]
@@ -430,7 +430,7 @@ def plot_convergence(opt_data, save_dir, y_min=1e-18):
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     ax.plot(iters, loss_plot,    marker='o', ms=3, lw=1, label="Loss")
     ax.plot(iters, grad_plot,    marker='s', ms=3, lw=1, label=r"$\|\nabla f\|$")
-    ax.plot(iters, descent_plot, marker='^', ms=3, lw=1, label=r"$-\,g^\top p$")
+    ax.plot(iters, descent_plot, marker='^', ms=3, lw=1, label=r"$-\,\alpha\,g^\top p$")
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Value")

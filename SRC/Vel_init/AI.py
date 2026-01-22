@@ -10,8 +10,10 @@ class AI(IC_init):
 
     def get_attractor_snaps(self, attractor_snapshots):
         self.attractor_snapshots = attractor_snapshots
-        self.unused_IC_mask = np.ones(attractor_snapshots.shape[0], dtype=np.bool)
+        self.N = attractor_snapshots.shape[0]
         self.attractor_rad = self.calc_attractor_size(attractor_snapshots)
+    def set_unused_mask(self):
+        self.unused_IC_mask = np.ones(self.N, dtype=np.bool)
 
     def __repr__(self):
         return "AI"
@@ -46,9 +48,8 @@ class AI(IC_init):
 
         return U_0_guess, actual_norm_dist
     
-    def __call__(self, U_0, pIC, DA_loss_fn_base, opt_init_seed_num):
-        key = jax.random.PRNGKey(opt_init_seed_num)
-
+    def __call__(self, U_0, pIC, DA_loss_fn_base, key_num):
+        key = jax.random.PRNGKey(key_num)
         # Distances to all snapshots (global indexing)
         dists = jnp.linalg.norm(
             self.attractor_snapshots - jnp.expand_dims(U_0, axis=0),

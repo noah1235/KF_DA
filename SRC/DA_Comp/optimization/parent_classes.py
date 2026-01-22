@@ -7,7 +7,7 @@ from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
 import time
 import os
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
 class Loss_and_Deriv_fns:
     def __init__(self, loss_crit, inv_transform, stepper, target_trj, dt, T, vfloat):
         loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, inv_transform)
@@ -185,13 +185,6 @@ class LS_TR_Opt():
     def ls_choice_logic(self, loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration):
         if isinstance(self.ls, ArmijoLineSearch):
             alpha, U_0_next, loss_next, grad_next = self.ls(loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
-            debug_str = ""
-        elif isinstance(self.ls, Cubic_TR):
-            pTHp = jnp.dot(pk, -grad)
-            alpha, U_0_next, loss_next, grad_next = self.ls.get_alpha(pk, grad, pTHp, loss_fn, Z0, loss, loss_grad_cond_fn, last_iteration)
-            debug_str = f"eta: {self.ls.eta}"
-        elif isinstance(self.ls, Armijo_TR):
-            alpha, U_0_next, loss_next, grad_next = self.ls(pk, grad, loss_fn, Z0, loss, loss_grad_cond_fn, last_iteration)
             debug_str = ""
         return alpha, U_0_next, loss_next, grad_next, debug_str
     

@@ -8,8 +8,7 @@ from scipy.sparse.linalg import minres
 from scipy.sparse.linalg import eigsh
 import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
-from SRC.DA_Comp.optimization.LS_TR import Cubic_TR
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS_Update
 import numpy as np
 from scipy.optimize import minimize
@@ -109,8 +108,6 @@ class L_BFGS(LS_TR_Opt):
         self.eps_H = eps_H
 
     def init_opt_params(self, N):
-        if isinstance(self.ls, Cubic_TR):
-            self.ls.init_opt()
         self.H = self.H_init
         self.H_init = None
 
@@ -154,14 +151,14 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.ls = ls
         
 
-    def NCN_dir(self, Lam, Q, grad, div_free_proj):
+    def NCN_dir(self, Lam, Q, grad):
         Lam_reg = jnp.abs(Lam)
         Lam_reg = jnp.where(Lam_reg > self.eps_H, Lam_reg, self.eps_H)
         null_space_comp = (-grad) - Q @ (Q.T @ -grad)
         pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
-        return div_free_proj(pk)
+        return pk
 
-    def second_order_logic(self, grad, hvp, Z0, div_free_proj, iter):
+    def second_order_logic(self, grad, hvp, Z0, iter):
         if len(self.Bk) == 0:
             print("init w/ HVP")
             self.Bk.eps = self.eps_H
@@ -176,7 +173,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             print("----")
 
         Bk_eigs, Bk_eig_vec = self.Bk.eig_decomp(which="LM", num_eig=len(self.Bk))
-        pk = self.NCN_dir(Bk_eigs, Bk_eig_vec, grad, div_free_proj)
+        pk = self.NCN_dir(Bk_eigs, Bk_eig_vec, grad)
         if jnp.any(jnp.isnan(pk)):
             pk = -grad
         step_type = "NCN"
@@ -193,17 +190,15 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         self.init_Bk = False
         self.Bk = L_BK(self._max_memory, N)
         self.current_memory = 0
-        if isinstance(self.ls, Cubic_TR) or isinstance(self.ls, Armijo_TR):
-            self.ls.init_opt()
 
-    def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs, div_free_proj, iter, last_iteration):
+    def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
         #loss_grad_fn = loss_fn_and_derivs.loss_grad_fn
         hvp = loss_fn_and_derivs.HVP_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
 
-        pk, step_type = self.second_order_logic(grad, hvp, Z0, div_free_proj, iter)
+        pk, step_type = self.second_order_logic(grad, hvp, Z0, iter)
         alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
 
         alpha_pk = pk * alpha
@@ -232,12 +227,12 @@ class NCSR1_and_LBFGS:
             H.update(s, y)
         self.BFGS_opt.H_init = H
 
-    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj):
+    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs):
         opt_data = None
         
-        U_0_DA_fourier, opt_data = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs)
         self.set_Bk_inv_for_BFGS()
-        U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs, div_check, div_free_proj)
+        U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs)
         opt_data += opt_data_2
 
         return U_0_DA_fourier, opt_data

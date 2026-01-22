@@ -20,9 +20,7 @@ def plot_opt_comp(crit_df, loss_crit_root, avg_loss_grad_cost=2, avg_Hvp_cost=5)
         loss_grad_evals_record = np.vstack(opt_df["loss_grad_evals_record"].to_numpy())
         Hvp_evals_record = np.vstack(opt_df["Hvp_evals_record"].to_numpy())
 
-        print(loss_traces.shape)
         final_loss = loss_traces[:, -1]
-        print(final_loss.shape)
 
         # Broadcast costs over iterations
         total_cost = (
@@ -76,6 +74,100 @@ def plot_opt_comp(crit_df, loss_crit_root, avg_loss_grad_cost=2, avg_Hvp_cost=5)
     fig_avg_v_its.savefig(os.path.join(loss_crit_root, "avg_opt_perf_v_its.png"))
     plt.close(fig_avg_v_its)
 
+def save_histogram(
+    data,
+    save_path,
+    bins=10,
+    density=False,
+    log_y=False,
+    title="Histogram",
+    xlabel="Value",
+    ylabel=None,
+    eps=1e-18,
+):
+    """
+    Plot and save a histogram of a 1D array using log-spaced bins.
+    Uses save_svg(mpl, fig, save_path).
+
+    Notes:
+      - Log-spaced bins require strictly positive data, so nonpositive values
+        are dropped automatically.
+      - x-axis is set to log scale automatically.
+    """
+    data = np.asarray(data).ravel()
+    data = data[np.isfinite(data)]  # drop NaN/inf
+
+    # log bins require positive values only
+    data = data[data > 0]
+    if data.size == 0:
+        raise ValueError("Histogram requires positive values for log-spaced bins, but none were found.")
+
+    if ylabel is None:
+        ylabel = "Density" if density else "Count"
+
+    dmin = max(data.min(), eps)
+    dmax = data.max()
+
+    # build log-spaced bin edges
+    if dmax <= dmin:
+        bin_edges = np.array([dmin, dmin * 1.01])
+    else:
+        bin_edges = np.logspace(np.log10(dmin), np.log10(dmax), bins + 1)
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hist(data, bins=bin_edges, density=density)
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+
+    ax.set_xscale("log")
+    if log_y:
+        ax.set_yscale("log")
+
+    fig.tight_layout()
+    save_svg(mpl, fig, save_path)
+    plt.close(fig)
+
+def loss_transformation(loss, k=1.5, eps=0):
+    loss = np.asarray(loss).ravel()
+    loss = loss[np.isfinite(loss)]
+    loss = loss[loss > 0]
+
+    log_loss = np.log(loss + eps)
+
+    q1, q3 = np.percentile(log_loss, [25, 75])
+    iqr = (q3 - q1) + eps
+    lo = q1 - k * iqr
+    hi = q3 + k * iqr
+
+    inliers = (log_loss >= lo) & (log_loss <= hi)
+
+    mu = np.mean(log_loss[inliers])
+    sigma = np.std(log_loss[inliers]) + eps
+
+    return (log_loss - mu) / sigma
+
+def plot_recon_vs_loss(recon, loss, save_path, ylim=None):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    plt.scatter(loss, recon)
+    if ylim is not None:
+        plt.ylim(ylim[0], ylim[1])
+    fig.tight_layout()
+    save_svg(mpl, fig, save_path)
+    plt.close(fig)
+
+def plot_performance(crit_df, loss_crit_root):
+    for optimizer, opt_df in crit_df.groupby("optimizer"):
+        save_root = os.path.join(loss_crit_root, str(optimizer))
+        os.makedirs(save_root, exist_ok=True)
+        loss_traces = np.vstack(opt_df["loss_record"].to_numpy())
+        final_loss = loss_traces[:, -1]
+        save_histogram(final_loss, os.path.join(save_root, "loss_hist.svg"))
+        loss_stand = loss_transformation(final_loss)
+        plot_recon_vs_loss(opt_df["final_snap_cos_sim"], loss_stand, os.path.join(save_root, "final_snap_cos_sim_vs_loss.svg"), (0, 1))
+
+
 
 def global_post_main(df: pd.DataFrame, root: str) -> None:
     """
@@ -108,5 +200,6 @@ def global_post_main(df: pd.DataFrame, root: str) -> None:
                 loss_crit_root = os.path.join(NT_root, f"np={n_part}", str(loss_crit))
                 os.makedirs(loss_crit_root, exist_ok=True)
                 plot_opt_comp(crit_df, loss_crit_root)
+                plot_performance(crit_df, loss_crit_root)
 
 

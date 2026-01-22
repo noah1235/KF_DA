@@ -16,6 +16,7 @@ from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fn
 from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
 from SRC.Vel_init.CS_init import CS_init
+from SRC.Vel_init.AI import AI
 from SRC.Solver.solver import KF_TP_Stepper, create_omega_part_gen_fn
 
 # --- Stdlib / third-party imports ---
@@ -56,6 +57,7 @@ def append_to_parquet(df, parquet_path):
     combined.to_parquet(parquet_path, index=False)
     print(f"Appended data and updated {parquet_path}")
 
+
 def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
     Main entry point for running data assimilation (DA) experiments.
@@ -86,7 +88,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
     os.makedirs(root, exist_ok=True)
     parquet_path = os.path.join(root, "results.parquet")
-
 
     total_cases = (
         len(DA_opts.TIC_seed_list)
@@ -181,8 +182,10 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                         param_dir = os.path.join(vfloat_dir, f"{IC_param}")
                                         loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, target_trj, kf_opts.dt, T, vfloat)
 
-                                        for opt_init_seed_num in range(DA_opts.num_opt_inits):
-                                            omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_seed_num)
+                                        if isinstance(DA_opts.ic_init, AI):
+                                            DA_opts.ic_init.set_unused_mask()
+                                        for opt_init_key_num in range(DA_opts.num_opt_inits):
+                                            omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_key_num)
                                             opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
 
                                             # Skip if this case directory already exists
