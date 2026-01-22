@@ -115,22 +115,30 @@ class L_BFGS(LS_TR_Opt):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
-        if iter == 0 and self.H is None:
-            print("diag init BFGS")
+        if self.H is None:
             Hg = loss_fn_and_derivs.HVP_fn(Z0, grad)
-            self.H = LBFGS_Update(Z0.shape[0], self.max_mem, init_gamma=(1/self.eps_H))
-            self.H.update(grad, Hg)
-
-        pk = self.H.get_step_dir(grad)
+            gTHg = jnp.dot(grad, Hg)
+            if gTHg > 0:
+                print("diag init BFGS")
+                self.H = LBFGS_Update(Z0.shape[0], self.max_mem, init_gamma=(1/self.eps_H))
+                self.H.update(grad, Hg)
+                pk = self.H.get_step_dir(grad)
+            else:
+                grad_norm = jnp.linalg.norm(grad)
+                Rk = gTHg/grad_norm**2
+                pk = (Rk/grad_norm) * grad
+        else:
+            pk = self.H.get_step_dir(grad)
 
         alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
         alpha_pk = pk * alpha
         if last_iteration:
             return U_0_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
         else:
-            sk = U_0_next - Z0
-            yk = grad_next - grad
-            did_update = self.H.update(sk, yk)
+            if self.H is not None:
+                sk = U_0_next - Z0
+                yk = grad_next - grad
+                did_update = self.H.update(sk, yk)
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {did_update}"
 
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
@@ -231,7 +239,7 @@ class NCSR1_and_LBFGS:
         opt_data = None
         
         U_0_DA_fourier, opt_data = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs)
-        self.set_Bk_inv_for_BFGS()
+        #self.set_Bk_inv_for_BFGS()
         U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs)
         opt_data += opt_data_2
 
