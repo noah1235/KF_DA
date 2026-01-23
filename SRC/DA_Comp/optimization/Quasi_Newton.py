@@ -247,14 +247,6 @@ class LBFGS_Update:
         self.head = 0       # next write index (ring buffer)
         self.gamma = self.init_gamma  # scaling for H0 = gamma I
 
-    def reset(self):
-        self.s_list = jnp.zeros((self.N, self.max_mem))
-        self.y_list = jnp.zeros((self.N, self.max_mem))
-        self.rho_list = jnp.zeros((self.max_mem,))
-        self.cmem = 0
-        self.head = 0
-        self.gamma = self.init_gamma
-
     def update(self, s, y):
         """
         Add a new (s, y) curvature pair.
@@ -330,17 +322,36 @@ class LBFGS_Update:
 
         return -r
             
+class BFGS_Update:
+    def __init__(self, N, curvature_tol=1e-12, init_gamma=1.0):
+        self.N = int(N)
+        self.curvature_tol = float(curvature_tol)
 
+        self.H = (init_gamma * jnp.eye(self.N))  # inverse Hessian approx
 
-class BFGS_Update():
+    def update(self, s, y):
+        ys = jnp.dot(y, s)
 
-    def Bk_inv_update(self, ys, sk, yk):
-        I = jnp.eye(yk.shape[0], dtype=self.Bk_inv.dtype)
+        # Curvature condition ensures SPD if H starts SPD
+        if ys <= self.curvature_tol:
+            return False
+
         rho = 1.0 / ys
-        Sy = jnp.outer(sk, yk)
-        Ys = jnp.outer(yk, sk)
-        Ss = jnp.outer(sk, sk)
-        self.Bk_inv = (I - rho * Sy) @ self.Bk_inv @ (I - rho * Ys) + rho * Ss
+
+        I = jnp.eye(self.N, dtype=self.H.dtype)
+        syT = jnp.outer(s, y)
+        ysT = jnp.outer(y, s)
+
+        V = I - rho * syT
+        # BFGS inverse update
+        self.H = V @ self.H @ (I - rho * ysT) + rho * jnp.outer(s, s)
+
+        return True
+
+    def get_step_dir(self, grad):
+        return -(self.H @ grad)
+
+
 
 class HVP_Update():
     def __init__(self):

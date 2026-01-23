@@ -11,10 +11,10 @@ def cos_sim(x, y):
     y = y.reshape(-1)
     return jnp.dot(x, y)/(jnp.linalg.norm(x) * jnp.linalg.norm(y))
 
-def rel_error(trg, pred):
-    return jnp.linalg.norm(pred - trg) / jnp.linalg.norm(trg)
+def rel_error(trg, pred, attractor_rad):
+    return jnp.linalg.norm(pred - trg) / attractor_rad
 
-def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, dt, t_mask, results_df):
+def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, dt, t_mask, results_df, attractor_rad):
     """
     Post-process a DA case:
       - compute per-timestep errors for velocity and particles
@@ -23,18 +23,20 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, 
     omega_trg_hat, xp_trg, yp_trg, up_trg, vp_trg = target_trj
     omega_DA_hat, xp_DA, yp_DA, up_DA, vp_DA = DA_trj
     omega_init_guess_hat = init_guess_trj[0]
+
     omega_trg = jnp.fft.irfft2(omega_trg_hat, axes=(-2, -1))
     omega_DA = jnp.fft.irfft2(omega_DA_hat, axes=(-2, -1))
     omega_init_guess = jnp.fft.irfft2(omega_init_guess_hat, axes=(-2, -1))
 
     trj_cos_sim = cos_sim(omega_trg, omega_DA)
-    trj_rel_error = rel_error(omega_trg, omega_DA)
+    trj_rel_error = jnp.mean(jnp.linalg.norm(omega_DA_hat - omega_trg_hat, axis=(1, 2)) / attractor_rad)
+
 
     final_snap_cos_sim = cos_sim(omega_trg[-1], omega_DA[-1])
-    final_snap_rel_error = rel_error(omega_trg[-1], omega_DA[-1])
+    final_snap_rel_error = rel_error(omega_trg_hat[-1], omega_DA_hat[-1], attractor_rad)
     
     init_snap_cos_sim = cos_sim(omega_trg[0], omega_DA[0])
-    int_snap_rel_error = rel_error(omega_trg[0], omega_DA[0])
+    int_snap_rel_error = rel_error(omega_trg_hat[0], omega_DA_hat[0], attractor_rad)
 
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
     results_df["trj_rel_error"] = [float(trj_rel_error)]

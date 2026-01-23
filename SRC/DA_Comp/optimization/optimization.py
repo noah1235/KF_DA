@@ -9,7 +9,7 @@ from scipy.sparse.linalg import eigsh
 import random
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
-from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS_Update
+from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS_Update, BFGS_Update
 import numpy as np
 from scipy.optimize import minimize
 from scipy.sparse.linalg import minres, cg
@@ -95,25 +95,28 @@ def equal_component_Q(g, k, key=None):
 
     return Q
 
-class L_BFGS(LS_TR_Opt):
-    name = "LBFGS"
-
-    def __init__(self, ls, its, max_mem, eps_H, psuedo_proj=None, print_loss=False):
+class BFGS(LS_TR_Opt):
+    def __init__(self, ls, its, max_mem, eps_H, limited_memory=True, psuedo_proj=None, print_loss=False):
         super().__init__(its, psuedo_proj, print_loss)
         self.ls = ls
         self.ls_method = ls.name
         self.max_mem = max_mem
-        self.H_init = None
         self.eps_H = eps_H
+        self.limited_memory = limited_memory
+        if limited_memory:
+            self.name = "L-BFGS"
+        else:
+            self.name = "BFGS"
 
     def init_opt_params(self, N):
         pass
 
     def Hvp_init(self, grad, Hg):
         # Initialize (L-)BFGS memory using curvature info
-        print(jnp.dot(grad, Hg))
-        print("----")
-        self.H = LBFGS_Update(grad.shape[0], self.max_mem, init_gamma=(1.0 / self.eps_H))
+        if self.limited_memory:
+            self.H = LBFGS_Update(grad.shape[0], self.max_mem, init_gamma=(1.0 / self.eps_H))
+        else:
+            self.H = BFGS_Update(grad.shape[0], init_gamma=(1.0 / self.eps_H))
         self.H.update(grad, Hg)
 
 
@@ -234,7 +237,7 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
 
 class NCSR1_and_LBFGS:
-    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: L_BFGS):
+    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: BFGS):
         self.NCSR1_opt = NCSR1_opt
         self.BFGS_opt = BFGS_opt
         self.psuedo_proj = self.BFGS_opt.psuedo_proj

@@ -191,7 +191,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
                                         for opt_init_key_num in range(DA_opts.num_opt_inits):
-                                            opt_init_key_num += 7 + 7
                                             omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_key_num)
                                             opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
 
@@ -274,7 +273,7 @@ def _run_DA_case(
     np.save(os.path.join(save_dir, "omega_DA_trj.npy"), np.array(DA_trj[0]))
     opt_data.save_data(save_dir)
 
-    post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, dt, t_mask, results_df)
+    post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, dt, t_mask, results_df, attractor_rad)
     append_to_parquet(results_df, parquet_path)
     
     #cleanup
