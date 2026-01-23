@@ -12,6 +12,7 @@ class AI(IC_init):
         self.attractor_snapshots = attractor_snapshots
         self.N = attractor_snapshots.shape[0]
         self.attractor_rad = self.calc_attractor_size(attractor_snapshots)
+        return self.attractor_rad
     def set_unused_mask(self):
         self.unused_IC_mask = np.ones(self.N, dtype=np.bool)
 
@@ -50,31 +51,27 @@ class AI(IC_init):
     
     def __call__(self, U_0, pIC, DA_loss_fn_base, key_num):
         key = jax.random.PRNGKey(key_num)
+
         # Distances to all snapshots (global indexing)
         dists = jnp.linalg.norm(
             self.attractor_snapshots - jnp.expand_dims(U_0, axis=0),
-            axis=(1, 2)
+            axis=(1, 2),
         )
         norm_dists = dists / self.attractor_rad
 
-        # Eligible = unused AND within [min_norm, max_norm]
-        eligible = self.unused_IC_mask & (norm_dists >= self.min_norm) & (norm_dists <= self.max_norm)
-        eligible_idx = jnp.where(eligible)[0]  # global indices
+        # Eligible = within [min_norm, max_norm]
+        eligible = (norm_dists >= self.min_norm) & (norm_dists <= self.max_norm)
+        eligible_idx = jnp.where(eligible)[0]
 
         if eligible_idx.size > 0:
             # pick uniformly at random from eligible snapshots
             IC_idx = jax.random.choice(key, eligible_idx)
         else:
-            # fallback: pick the unused snapshot closest to the middle of the band
-            unused_idx = jnp.where(self.unused_IC_mask)[0]
+            # fallback: pick snapshot closest to the middle of the band
             target = 0.5 * (self.min_norm + self.max_norm)
-            j = jnp.argmin(jnp.abs(norm_dists[unused_idx] - target))
-            IC_idx = unused_idx[j]
+            IC_idx = jnp.argmin(jnp.abs(norm_dists - target))
 
         U_0_guess = self.attractor_snapshots[IC_idx, :]
-
-        # NOTE: mutates state; fine if you're not jitting this function.
-        self.unused_IC_mask[IC_idx] = False
 
         actual_norm_dist = jnp.linalg.norm(U_0_guess - U_0) / self.attractor_rad
         return U_0_guess, actual_norm_dist

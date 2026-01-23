@@ -5,6 +5,7 @@ import functools
 from SRC.DA_Comp.adjoint import Adjoint_Solver, get_loss_grad_vp_fn, get_loss_grad_conditional_vp_fn
 from SRC.DA_Comp.loss_funcs import create_loss_fn
 from SRC.utils import build_div_free_proj
+from SRC.Solver.solver import Omega_Integrator, KF_Stepper
 import time
 import os
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
@@ -123,20 +124,24 @@ class Opt_Data:
         self.loss_record = np.zeros(its)
         self.grad_norm_record = np.zeros(its)
         self.alpha_gTp_record = np.zeros(its)
+        self.IC_error_record = np.zeros(its)
 
         self.loss_evals_record = np.zeros(its)
         self.loss_grad_evals_record = np.zeros(its)
         self.Hvp_evals_record = np.zeros(its)
     
-    def __call__(self, n, loss, grad, alpha_p, loss_evals, loss_grad_evals, Hvp_evals):
+    def __call__(self, n, loss, grad, alpha_p, IC_error, loss_evals, loss_grad_evals, Hvp_evals):
         self.loss_record[n] = loss
         self.grad_norm_record[n] = jnp.linalg.norm(grad)
         self.alpha_gTp_record[n] = jnp.dot(alpha_p, grad)
+        self.IC_error_record[n] = jnp.linalg.norm(IC_error)
+
         self.loss_evals_record[n] = loss_evals
         self.loss_grad_evals_record[n] = loss_grad_evals
         self.Hvp_evals_record[n] = Hvp_evals
 
     def early_stop_update(self, iters):
+        raise NotImplementedError("early_stop_update needs update")
         self.loss_record = self.loss_record[:iters]
         self.grad_norm_record = self.grad_norm_record[:iters]
         self.alpha_gTp_record = self.alpha_gTp_record[:iters]
@@ -145,6 +150,7 @@ class Opt_Data:
         np.save(os.path.join(root, "loss_record.npy"), np.array(self.loss_record))
         np.save(os.path.join(root, "grad_norm_record.npy"), np.array(self.grad_norm_record))
         np.save(os.path.join(root, "alpha_gTp_record.npy"), np.array(self.alpha_gTp_record))
+        np.save(os.path.join(root, "IC_error_record.npy"), np.array(self.IC_error_record))
 
     def __add__(self, other):
         if not isinstance(other, Opt_Data):
@@ -170,32 +176,74 @@ class Opt_Data:
         out.Hvp_evals_record = new_Hvp_evals_record
 
         return out
-        
+
+class Psuedo_Projection:
+    def __init__(self, it_list, T):
+        self.it_list = it_list
+        self.T = T
+    
+    def attach_transform(self, transform, inv_transform):
+        self.transform = transform
+        self.inv_transform = inv_transform
+
+    def attach_stepper(self, stepper: KF_Stepper):
+        self.integrator = Omega_Integrator(stepper)
+        self.nsteps = int(self.T / stepper.dt)
+        print(self.nsteps)
+    def __call__(self, z):
+        omega_hat = self.inv_transform(z)
+        omega_hat = self.integrator.fv_integrate(omega_hat, self.nsteps)
+        return self.transform(omega_hat)
+
 class LS_TR_Opt():
-    def __init__(self, its, print_loss):
+    def __init__(self, its, psuedo_proj, print_loss):
         self.its = its
+        self.psuedo_proj = psuedo_proj
         self.print_loss = print_loss
 
     def __repr__(self):
-        return f"{self.name}_{self.ls_method}-{self.its}"
+        name = f"{self.name}_{self.ls_method}-{self.its}"
+        if self.psuedo_proj is not None:
+            name += f"_PP"
+        return name
     
     def inner_loop(self):
         pass
+
 
     def ls_choice_logic(self, loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration):
         if isinstance(self.ls, ArmijoLineSearch):
             alpha, U_0_next, loss_next, grad_next = self.ls(loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
             debug_str = ""
         return alpha, U_0_next, loss_next, grad_next, debug_str
+
+    def it0_logic(self, init_loss, init_grad, init_Hg, loss_fn_and_derivs, Z0):
+        if init_loss is not None and init_grad is not None:
+            loss = init_loss
+            grad = init_grad
+        else:
+            loss, grad = loss_fn_and_derivs.loss_grad_fn(Z0)
+
+        if init_Hg is not None:
+            self.Hvp_init(grad, init_Hg)
+        else:
+            init_Hg = loss_fn_and_derivs.HVP_fn(Z0, grad)
+            self.Hvp_init(grad, init_Hg)
+
+        return loss, grad
     
-    def opt_loop(self, Z0, loss_fn_and_derivs: Loss_and_Deriv_fns):
+    def opt_loop(self, Z0, loss_fn_and_derivs: Loss_and_Deriv_fns, inv_transform, omega0_hat_trg, attractor_rad, init_loss=None, init_grad=None, init_Hg=None):
         opt_data = Opt_Data(self.its)
         self.init_opt_params(Z0.shape[0])
-
-
         for i in range(self.its):
+            if self.psuedo_proj is not None and i in self.psuedo_proj.it_list:
+                    print("Applying Psuedo-Projection")
+                    Z0 = self.psuedo_proj(Z0)
+
             if i == 0:
-                loss, grad = loss_fn_and_derivs.loss_grad_fn(Z0)
+                loss, grad = self.it0_logic(init_loss, init_grad, init_Hg, loss_fn_and_derivs, Z0)
+
+            IC_error = (inv_transform(Z0) - omega0_hat_trg) / attractor_rad
             loss_prev = loss
             grad_prev = grad
             loss_grad_evals_prev = loss_fn_and_derivs.loss_grad_evals
@@ -213,7 +261,7 @@ class LS_TR_Opt():
                 break
             loss_evals_prev = loss_fn_and_derivs.loss_evals
             Hvp_evals_prev = loss_fn_and_derivs.Hvp_evals
-            opt_data(i, loss_prev, grad_prev, alpha_pk, loss_evals_prev, loss_grad_evals_prev, Hvp_evals_prev)
+            opt_data(i, loss_prev, grad_prev, alpha_pk, IC_error, loss_evals_prev, loss_grad_evals_prev, Hvp_evals_prev)
 
             if self.print_loss:
                 print(f"i:{i} | loss: {loss_prev:.4e} | alpha: {alpha:.3e}" + "|" + diag_str)

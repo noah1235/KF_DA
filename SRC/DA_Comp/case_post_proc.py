@@ -426,18 +426,37 @@ def plot_convergence(opt_data, save_dir, y_min=1e-18):
         if np.isfinite(arr).any():
             pos_mins.append(np.nanmin(arr))
 
-    # Single axes: overlay all curves
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
-    ax.plot(iters, loss_plot,    marker='o', ms=3, lw=1, label="Loss")
-    ax.plot(iters, grad_plot,    marker='s', ms=3, lw=1, label=r"$\|\nabla f\|$")
-    ax.plot(iters, descent_plot, marker='^', ms=3, lw=1, label=r"$-\,\alpha\,g^\top p$")
+
+    # left y-axis curves
+    ax.plot(
+        iters, loss_plot,
+        marker='o', ms=6, lw=2.5,
+        color='tab:blue', linestyle='-',
+        label="Loss"
+    )
+    #ax.plot(iters, grad_plot,    marker='s', ms=3, lw=1, label=r"$\|\nabla f\|$")
+    #ax.plot(iters, descent_plot, marker='^', ms=3, lw=1, label=r"$-\,\alpha\,g^\top p$")
 
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("Value")
+    ax.set_ylabel("Loss / Grad / Descent")
     ax.set_yscale("log")
-    #ax.set_ylim(y_min, ymax)
     ax.grid(True, ls=":", alpha=0.5)
-    ax.legend(loc="best")
+
+    # right y-axis
+    ax2 = ax.twinx()
+    ax2.plot(
+        iters, opt_data.IC_error_record,
+        marker='x', ms=7, lw=2.5,
+        color='tab:red', linestyle='--',
+        label="IC Error"
+    )
+    ax2.set_ylabel("IC Error")
+
+    # combined legend (both axes)
+    lines1, labels1 = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(lines1 + lines2, labels1 + labels2, loc="best")
 
     # --- keep your saving logic exactly ---
     save_svg(mpl, fig, os.path.join(save_dir, "convergence.svg"))

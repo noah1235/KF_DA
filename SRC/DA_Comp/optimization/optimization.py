@@ -95,61 +95,74 @@ def equal_component_Q(g, k, key=None):
 
     return Q
 
-
 class L_BFGS(LS_TR_Opt):
     name = "LBFGS"
-    def __init__(self, ls, its, max_mem, eps_H, print_loss=False):
+
+    def __init__(self, ls, its, max_mem, eps_H, psuedo_proj=None, print_loss=False):
+        super().__init__(its, psuedo_proj, print_loss)
         self.ls = ls
         self.ls_method = ls.name
-        self.its = its
-        self.print_loss = print_loss
         self.max_mem = max_mem
         self.H_init = None
         self.eps_H = eps_H
 
     def init_opt_params(self, N):
-        self.H = self.H_init
-        self.H_init = None
+        pass
+
+    def Hvp_init(self, grad, Hg):
+        # Initialize (L-)BFGS memory using curvature info
+        print(jnp.dot(grad, Hg))
+        print("----")
+        self.H = LBFGS_Update(grad.shape[0], self.max_mem, init_gamma=(1.0 / self.eps_H))
+        self.H.update(grad, Hg)
+
+
+    def update_memory(self, Z, Z_next, grad, grad_next):
+        sk = Z_next - Z
+        yk = grad_next - grad
+        return self.H.update(sk, yk)
+
 
     def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
         loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
-        if self.H is None:
-            Hg = loss_fn_and_derivs.HVP_fn(Z0, grad)
-            gTHg = jnp.dot(grad, Hg)
-            if gTHg > 0:
-                print("diag init BFGS")
-                self.H = LBFGS_Update(Z0.shape[0], self.max_mem, init_gamma=(1/self.eps_H))
-                self.H.update(grad, Hg)
-                pk = self.H.get_step_dir(grad)
-            else:
-                grad_norm = jnp.linalg.norm(grad)
-                Rk = gTHg/grad_norm**2
-                pk = (Rk/grad_norm) * grad
-        else:
-            pk = self.H.get_step_dir(grad)
+        # 1) Choose search direction
+        pk =  self.H.get_step_dir(grad)
 
-        alpha, U_0_next, loss_next, grad_next, debug_str = self.ls_choice_logic(loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
-        alpha_pk = pk * alpha
+        # 2) Line search / step
+        alpha, Z_next, loss_next, grad_next, debug_str = self.ls_choice_logic(
+            loss_fn,
+            loss,
+            Z0,
+            pk,
+            grad,
+            loss_grad_cond_fn,
+            last_iteration,
+        )
+
+        alpha_pk = alpha * pk
+
+        # 3) Early exit on final iteration (no update / no extra evals expected)
         if last_iteration:
-            return U_0_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
-        else:
-            if self.H is not None:
-                sk = U_0_next - Z0
-                yk = grad_next - grad
-                did_update = self.H.update(sk, yk)
-            else:
-                did_update = False
-            return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {did_update}"
+            return Z_next, jnp.nan, jnp.nan, alpha, alpha_pk, ""
+
+        # 4) Update quasi-Newton memory
+        did_update = self.update_memory(Z0, Z_next, grad, grad_next)
+
+        # 5) Debug string
+        debug_out = f"{debug_str} | Update: {did_update}"
+
+        return Z_next, loss_next, grad_next, alpha, alpha_pk, debug_out
 
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
 
                 SR1_type="conv",
+                psuedo_proj=None,
                 print_loss=False):
-        LS_TR_Opt.__init__(self, its, print_loss)
+        LS_TR_Opt.__init__(self, its, psuedo_proj, print_loss)
         self.set_SR1_update_type(SR1_type)
         self.name = "NCNSR1"
         self.ls_method = ls.name
@@ -168,13 +181,13 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
         pk = Q @ ((Q.T @ -grad) / Lam_reg) + (1.0 / self.eps_H) * null_space_comp
         return pk
 
-    def second_order_logic(self, grad, hvp, Z0, iter):
-        if len(self.Bk) == 0:
-            print("init w/ HVP")
-            self.Bk.eps = self.eps_H
-            gTHg = jnp.dot(grad, hvp(Z0, grad))
-            self.HVP_Bk_update(gTHg, grad.reshape((-1, 1)))
+    def Hvp_init(self, grad, Hg):
+        print("init w/ HVP")
+        self.Bk.eps = self.eps_H
+        gTHg = jnp.dot(grad, Hg)
+        self.HVP_Bk_update(gTHg, grad.reshape((-1, 1)))
 
+    def second_order_logic(self, grad, hvp, Z0, iter):
         if False:
             for i in range(qTHq.shape[0]):
                 xi = Q[:, i]
@@ -221,31 +234,24 @@ class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str
 
 class NCSR1_and_LBFGS:
-    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: L_BFGS, loops=1):
+    def __init__(self, NCSR1_opt: NCSR1, BFGS_opt: L_BFGS):
         self.NCSR1_opt = NCSR1_opt
         self.BFGS_opt = BFGS_opt
+        self.psuedo_proj = self.BFGS_opt.psuedo_proj
 
-    def set_Bk_inv_for_BFGS(self):
-        Bk_eigs, Bk_eig_vec = self.NCSR1_opt.Bk.eig_decomp(which="LA", num_eig=min(len(self.NCSR1_opt.Bk), self.BFGS_opt.max_mem))
-        Bk_eigs = jnp.abs(Bk_eigs)
-        H = LBFGS_Update(self.NCSR1_opt.Bk.N, self.BFGS_opt.max_mem, init_gamma=(self.NCSR1_opt.eps_H))
-        for i in range(Bk_eigs.shape[0]):
-            eig = Bk_eigs[i]
-            vec = Bk_eig_vec[:, i]
-            s = vec
-            y = vec * eig
-            H.update(s, y)
-        self.BFGS_opt.H_init = H
-
-    def opt_loop(self, U_0_DA_fourier, loss_fn_and_derivs):
-        opt_data = None
-        
-        U_0_DA_fourier, opt_data = self.NCSR1_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs)
-        #self.set_Bk_inv_for_BFGS()
-        U_0_DA_fourier, opt_data_2 = self.BFGS_opt.opt_loop(U_0_DA_fourier, loss_fn_and_derivs)
+    # Z0, loss_fn_and_derivs: Loss_and_Deriv_fns, inv_transform, omega0_hat_trg, attractor_rad
+    def opt_loop(self, Z0, loss_fn_and_derivs, inv_transform, omega0_hat_trg, attractor_rad):
+        loss, grad = loss_fn_and_derivs.loss_grad_fn(Z0)
+        Hg = loss_fn_and_derivs.HVP_fn(Z0, grad)
+        gTHg = jnp.dot(grad, Hg)
+        print(f"Initial gTHg: {gTHg/jnp.linalg.norm(grad)**2}")
+        if gTHg < 0:
+            print("NCNSR1 Init")
+            Z0, opt_data = self.NCSR1_opt.opt_loop(Z0, loss_fn_and_derivs, inv_transform, omega0_hat_trg, attractor_rad, init_loss=loss, init_grad=grad, init_Hg=Hg)
+        Z0, opt_data_2 = self.BFGS_opt.opt_loop(Z0, loss_fn_and_derivs, inv_transform, omega0_hat_trg, attractor_rad)
         opt_data += opt_data_2
 
-        return U_0_DA_fourier, opt_data
+        return Z0, opt_data
     
     def __repr__(self):
         name = f"{self.NCSR1_opt}__{self.BFGS_opt}"

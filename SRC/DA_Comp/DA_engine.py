@@ -17,7 +17,7 @@ from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
 from SRC.Vel_init.CS_init import CS_init
 from SRC.Vel_init.AI import AI
-from SRC.Solver.solver import KF_TP_Stepper, create_omega_part_gen_fn
+from SRC.Solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn
 
 # --- Stdlib / third-party imports ---
 import os
@@ -84,7 +84,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
     # Load attractor snapshots and compute attractor size scale
     attractor_snapshots = load_data(kf_opts)
-    DA_opts.ic_init.get_attractor_snaps(attractor_snapshots)
+    attractor_rad = DA_opts.ic_init.get_attractor_snaps(attractor_snapshots)
 
     os.makedirs(root, exist_ok=True)
     parquet_path = os.path.join(root, "results.parquet")
@@ -169,6 +169,10 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                             # For each optimizer and loss criterion, run a DA case
                             for optimizer in DA_opts.optimizer_list:
+                                if optimizer.psuedo_proj is not None:
+                                    kf_stepper = jax.jit(KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt))
+                                    optimizer.psuedo_proj.attach_stepper(kf_stepper)
+
                                 opt_method_dir = os.path.join(
                                     crit_dir, f"{optimizer}"
                             )
@@ -181,10 +185,13 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     for IC_param in DA_opts.IC_param_list:
                                         param_dir = os.path.join(vfloat_dir, f"{IC_param}")
                                         loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, target_trj, kf_opts.dt, T, vfloat)
+                                        if optimizer.psuedo_proj is not None:
+                                            optimizer.psuedo_proj.attach_transform(IC_param.transform, IC_param.inv_transform)
 
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
                                         for opt_init_key_num in range(DA_opts.num_opt_inits):
+                                            opt_init_key_num += 7 + 7
                                             omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_key_num)
                                             opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
 
@@ -210,7 +217,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                                                                     })                    
 
-                                            _run_DA_case(target_trj, omega0_guess_hat, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, particle_IC, opt_init_dir, kf_opts.dt,
+                                            _run_DA_case(target_trj, omega0_guess_hat, omega0_hat, attractor_rad, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, particle_IC, opt_init_dir, kf_opts.dt,
                                                         t_mask, results_df,
                                                         parquet_path)
                                             count += 1
@@ -222,6 +229,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 def _run_DA_case(
     target_trj: jnp.ndarray,
     omega0_guess_hat:  jnp.ndarray,
+    omega0_hat: jnp.ndarray,
+    attractor_rad: float,
     IC_param,
     loss_fn_and_derivs: Loss_and_Deriv_fns,
     optimizer: LS_TR_Opt,
@@ -250,7 +259,7 @@ def _run_DA_case(
     """
     loss_fn_and_derivs.reset_cost_count()
     Z0 = IC_param.transform(omega0_guess_hat)
-    U_0_DA_hat, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs)
+    U_0_DA_hat, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs, IC_param.inv_transform, omega0_hat, attractor_rad)
     omega0_DA_hat = IC_param.inv_transform(U_0_DA_hat)
     DA_trj = trj_gen_fn(omega0_DA_hat, *pIC)
     init_guess_trj = trj_gen_fn(omega0_guess_hat, *pIC)
