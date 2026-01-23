@@ -139,6 +139,8 @@ class L_BFGS(LS_TR_Opt):
                 sk = U_0_next - Z0
                 yk = grad_next - grad
                 did_update = self.H.update(sk, yk)
+            else:
+                did_update = False
             return U_0_next, loss_next, grad_next, alpha, alpha_pk, debug_str + f" | Update: {did_update}"
 
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
