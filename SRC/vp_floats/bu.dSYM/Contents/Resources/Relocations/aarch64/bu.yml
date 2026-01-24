@@ -1,0 +1,5 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     '/Users/noahfrank/Desktop/Kolmogorov_flow_LPT/KF_DA/SRC/vp_floats/bu'
+relocations:     []
+...

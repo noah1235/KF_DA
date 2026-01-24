@@ -1,7 +1,7 @@
 import numpy as np
 import jax.numpy as jnp
 import vpfloat
-from SRC.vp_floats.vp_py_utils import choose_exponent_format
+from vp_py_utils import choose_exponent_format
 
 def test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True):
     # generate random values
@@ -32,7 +32,7 @@ def test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True):
 
 
 def main():
-    mbits = 6
+    mbits = 16
     N = 64
     minv = 1e-3
     maxv = 1e2

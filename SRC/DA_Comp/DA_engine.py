@@ -127,10 +127,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                 npart_root = os.path.join(T_dir, f"np={npart}")
 
                 stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)
-                if isinstance(DA_opts.ic_init, CS_init):
-                    return
-                    DA_opts.ic_init.set_transform(stepper, vel_part_trans)
-                
+                kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt)                
                 for NT in DA_opts.NT_list:
                     NT_root = os.path.join(npart_root, f"NT={NT}")
                     #t_mask = jnp.linspace(0, int(T/kf_opts.dt)+1)
@@ -184,7 +181,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     vfloat_dir = os.path.join(opt_method_dir, vfloat_name)
                                     for IC_param in DA_opts.IC_param_list:
                                         param_dir = os.path.join(vfloat_dir, f"{IC_param}")
-                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, target_trj, kf_opts.dt, T, vfloat)
+                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, kf_stepper, target_trj, kf_opts.dt, T, vfloat)
                                         if optimizer.psuedo_proj is not None:
                                             optimizer.psuedo_proj.attach_transform(IC_param.transform, IC_param.inv_transform)
 

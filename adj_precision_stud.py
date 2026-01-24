@@ -11,6 +11,7 @@ from SRC.utils import build_div_free_proj
 from SRC.vp_floats.vp_py_utils import choose_exponent_format, float_pos_range
 from SRC.Solver.IC_gen import init_particles_vector
 import jax
+from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper, create_omega_part_gen_fn
 import jax.numpy as jnp
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from create_results_dir import create_results_dir
 from SRC.plotting_utils import save_svg
 import matplotlib as mpl
 import os
+from SRC.parameterization.Fourier_Param import Fourier_Param
 config.update("jax_enable_x64", True)
 
 
@@ -27,20 +29,21 @@ config.update("jax_enable_x64", True)
 # Core experiment
 # =========================
 def run_test(
-    pIC, crit, target_trj, stepper, adj_transform, vel_part_trans,
+    crit, target_trj, stepper, kf_stepper, IC_param,
     dt, T,
     mbits, exp_bits, exp_bias,
     attractor_snapshots,
     idxs,
 ):
-    loss_fn = create_loss_fn(crit, stepper, target_trj, pIC, vel_part_trans)
+
+    loss_fn = create_loss_fn(crit, stepper, target_trj, IC_param.inv_transform)
     loss_grad_fn_auto = jax.jit(jax.value_and_grad(loss_fn))
 
     loss_grad_fn_adj = get_loss_grad_vp_fn(
-        pIC, crit, target_trj, stepper, adj_transform,
-        vel_part_trans, dt, T,
+        crit, target_trj, kf_stepper, IC_param.inv_transform, (attractor_snapshots.shape[1], attractor_snapshots.shape[2]), dt, T,
         mbits=mbits, exp_bits=exp_bits, exp_bias=exp_bias,
     )
+
     loss_grad_fn_adj = jax.jit(loss_grad_fn_adj)
 
     loss_errs = []
@@ -48,18 +51,18 @@ def run_test(
     cos_sims = []
 
     for idx in idxs:
-        U_DA = attractor_snapshots[idx]
-        U_DA_fourier = vel_part_trans.vel_flat_2_vel_Fourier(U_DA).astype(jnp.float64)
+        omega0_DA_hat = attractor_snapshots[idx]
+        Z = IC_param.transform(omega0_DA_hat)
 
-        loss_auto, grad_auto = loss_grad_fn_auto(U_DA_fourier)
-        loss_adj,  grad_adj  = loss_grad_fn_adj(U_DA_fourier)
+        loss_auto, grad_auto = loss_grad_fn_auto(Z)
+        loss_adj,  grad_adj  = loss_grad_fn_adj(Z)
 
         loss_err = jnp.abs(loss_adj - loss_auto) / loss_auto * 100
         grad_err = jnp.linalg.norm(grad_adj - grad_auto) / jnp.linalg.norm(grad_auto) * 100
         cos_sim  = jnp.dot(grad_auto, grad_adj) / (
             jnp.linalg.norm(grad_auto) * jnp.linalg.norm(grad_adj)
         )
-
+        print(f"[mbits={mbits}] Sample idx={idx}: Loss % err={loss_err:.2e}, Grad % err={grad_err:.2e}, Cos sim={cos_sim:.6f}")
         loss_errs.append(loss_err)
         grad_errs.append(grad_err)
         cos_sims.append(cos_sim)
@@ -84,7 +87,7 @@ def run_test(
 def collect_stats_over_mbits(
     mbits_list,
     *,
-    pIC, crit, target_trj, stepper, adj_transform, vel_part_trans,
+    crit, target_trj, stepper, kf_stepper, IC_param,
     dt, T, exp_bits, exp_bias,
     attractor_snapshots,
     nreps=20,
@@ -99,7 +102,7 @@ def collect_stats_over_mbits(
         print(f"[mbits={mbits}] range = {mint:.2e} .. {maxt:.2e}")
 
         stats = run_test(
-            pIC, crit, target_trj, stepper, adj_transform, vel_part_trans,
+            crit, target_trj, stepper, kf_stepper, IC_param,
             dt, T,
             mbits, exp_bits, exp_bias,
             attractor_snapshots,
@@ -179,49 +182,37 @@ def adjoint_test():
         min_samp_T=50,
         t_skip=1e-1,
     )
-
+    IC_param = Fourier_Param(kf_opts.NDOF, 64)
     npart = 25
     T = 4
     samp_period = .1
     mbits_list = np.arange(2, 14, 2)
-    minv, maxv = 1e-3, 10.0
+    minv, maxv = 1, 5e4
 
     period_idx = int(samp_period/kf_opts.dt)
     idx = jnp.arange(int(T/kf_opts.dt)+1)
     t_mask = (idx % period_idx == 0)
 
     crit = MSE_Vel()
-
-    RHS = KF_LPT_PS_RHS(
-        kf_opts.NDOF, kf_opts.Re, kf_opts.n,
-        npart, beta=0, St=1e-2,
-    )
-
-    vel_part_trans = Vel_Part_Transformations(kf_opts.NDOF, npart)
     attractor_snapshots = load_data(kf_opts)
 
-    U_true = attractor_snapshots[np.random.randint(0, attractor_snapshots.shape[0])]
-    pIC = init_particles_vector(
-        npart,
-        vel_part_trans.reshape_flattened_vel(U_true),
-        (0, RHS.KF_RHS.L), (0, RHS.KF_RHS.L),
-        RHS.KF_RHS.L,
-    )
+    omega0_hat = attractor_snapshots[np.random.randint(0, attractor_snapshots.shape[0])]
+    stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, 0, 0, npart)
+    kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt)
+    u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega0_hat)
+    u, v = jnp.fft.irfft2(u_hat), jnp.fft.irfft2(v_hat)
+    xp, yp, up, vp = init_particles_vector(npart, u, v, (0, stepper.NS.L), (0, stepper.NS.L), stepper.NS.L, seed=1)
 
-    stepper = Particle_Stepper(RK4_Step(RHS, kf_opts.dt), npart)
-    trj_gen_fn = create_trj_generator(RHS, kf_opts.dt, T, dtype=jnp.float64)
-    target_trj = trj_gen_fn(pIC, U_true)
+    trj_gen_fn = create_omega_part_gen_fn(jax.jit(stepper), T)
+    #tuple (omega_traj, xp_traj, yp_traj, up_traj, vp_traj)
+    target_trj = trj_gen_fn(omega0_hat, xp, yp, up, vp)
 
-    crit.init_obj(t_mask, RHS.KF_RHS.L, vel_part_trans)
-    adj_transform = build_div_free_proj(stepper, vel_part_trans)
-
-    exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=4)
-
+    crit.init_obj(t_mask, stepper.NS.L)
+    exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=8)
     df = collect_stats_over_mbits(
         mbits_list,
-        pIC=pIC, crit=crit, target_trj=target_trj,
-        stepper=stepper, adj_transform=adj_transform,
-        vel_part_trans=vel_part_trans,
+        crit=crit, target_trj=target_trj,
+        stepper=stepper, kf_stepper=kf_stepper, IC_param=IC_param,
         dt=kf_opts.dt, T=T,
         exp_bits=exp_bits, exp_bias=exp_bias,
         attractor_snapshots=attractor_snapshots,

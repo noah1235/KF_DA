@@ -10,7 +10,7 @@ import time
 import os
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
 class Loss_and_Deriv_fns:
-    def __init__(self, loss_crit, inv_transform, stepper, target_trj, dt, T, vfloat):
+    def __init__(self, loss_crit, inv_transform, stepper, kf_stepper, target_trj, dt, T, vfloat):
         loss_fn_base = create_loss_fn(loss_crit, stepper, target_trj, inv_transform)
         self.hvp_fn_jit = jax.jit(self.make_hvp(loss_fn_base))
 
@@ -21,10 +21,9 @@ class Loss_and_Deriv_fns:
 
             
         else:
-            adj_transform = build_div_free_proj(stepper, vel_part_trans)
+            snap_shape = target_trj[0][0].shape
             loss_grad_conditional_vp_fn_adj_jit = get_loss_grad_conditional_vp_fn(
-                    pIC, loss_crit, target_trj, stepper, adj_transform,
-                    vel_part_trans, dt, T,
+                    loss_crit, target_trj, kf_stepper, inv_transform, snap_shape, dt, T,
                     mbits=vfloat.mbits, exp_bits=vfloat.exp_bits, exp_bias=vfloat.exp_bias,
                 )
             self.conditional_loss_grad_fn_jit = jax.jit(loss_grad_conditional_vp_fn_adj_jit)

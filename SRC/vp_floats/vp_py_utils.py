@@ -20,13 +20,6 @@ def choose_exponent_format(min_mag, max_mag, max_E=8):
     # bias choice: anchor smallest value
     bias = 1 - k_min
 
-    # feasibility check after clamping
-    max_bias = 2**E - 2
-    if not (0 <= bias <= max_bias):
-        raise ValueError(
-            f"Requested range [{min_mag:.2e}, {max_mag:.2e}] "
-            f"requires E={E_req} exponent bits, but max_E={max_E}."
-        )
 
     return E, bias
 

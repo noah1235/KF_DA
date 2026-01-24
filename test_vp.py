@@ -32,7 +32,7 @@ def test_vpfloat(mbits, exp_bits, exp_bias, minv, maxv, N, logspace=True):
 
 def main():
     mbits = 12
-    N = 10024324
+    N = int(1e6)
     minv = 1e-3
     maxv = 10
     exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=4)

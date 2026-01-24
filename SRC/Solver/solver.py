@@ -5,7 +5,9 @@ from functools import partial
 import numpy as np
 from SRC.utils import bilinear_sample_periodic
 from dataclasses import dataclass
-
+from SRC.vp_floats.vp_py_utils import calc_output_shape
+from jax import ShapeDtypeStruct
+import vpfloat
 #for animation
 def create_vel_part_gen_fn(stepper, T):
     nsteps = int(T/stepper.dt)
@@ -206,7 +208,6 @@ class Inertial_Evolution:
 
         return xp, yp, h_xp, h_yp, up, vp, h_up, h_vp
 
-
 #KF and Tracer Particles
 class KF_TP_Stepper(KF_Stepper):
     def __init__(self, Re, n, N, dt, St, beta, npart):
@@ -256,7 +257,6 @@ class KF_TP_Stepper(KF_Stepper):
         xp = jnp.mod(xp, self.NS.L)
         yp = jnp.mod(yp, self.NS.L)
         return omega_hat, xp, yp, up, vp
-
 
 class Omega_Integrator:
     def __init__(self, stepper):
