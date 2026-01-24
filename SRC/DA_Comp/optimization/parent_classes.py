@@ -210,11 +210,16 @@ class LS_TR_Opt():
         pass
 
 
-    def ls_choice_logic(self, loss_fn, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration):
+    def ls_choice_logic(self, i, loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration):
+        Z0, did_pp = self.apply_psuedo_proj(Z0, i)
+        no_grad = last_iteration or did_pp
         if isinstance(self.ls, ArmijoLineSearch):
-            alpha, U_0_next, loss_next, grad_next = self.ls(loss, Z0, pk, grad, loss_grad_cond_fn, last_iteration)
+            alpha, Z0_next, loss_next, grad_next = self.ls(loss, Z0, pk, grad, loss_grad_cond_fn, no_grad)
             debug_str = ""
-        return alpha, U_0_next, loss_next, grad_next, debug_str
+        if did_pp:
+            print("Psuedo-Projection applied; recomputing loss and grad")
+            loss_next, grad_next, _ = loss_grad_cond_fn(jnp.inf, Z0_next)
+        return alpha, Z0_next, loss_next, grad_next, debug_str
 
     def it0_logic(self, init_loss, init_grad, init_Hg, loss_fn_and_derivs, Z0):
         if init_loss is not None and init_grad is not None:
@@ -231,14 +236,18 @@ class LS_TR_Opt():
 
         return loss, grad
     
+    def apply_psuedo_proj(self, Z0, i):
+        if self.psuedo_proj is not None and i in self.psuedo_proj.it_list:
+            print("Applying Psuedo-Projection")
+            Z0 = self.psuedo_proj(Z0)
+            return Z0, True
+        else:
+            return Z0, False
+
     def opt_loop(self, Z0, loss_fn_and_derivs: Loss_and_Deriv_fns, inv_transform, omega0_hat_trg, attractor_rad, init_loss=None, init_grad=None, init_Hg=None):
         opt_data = Opt_Data(self.its)
         self.init_opt_params(Z0.shape[0])
         for i in range(self.its):
-            if self.psuedo_proj is not None and i in self.psuedo_proj.it_list:
-                    print("Applying Psuedo-Projection")
-                    Z0 = self.psuedo_proj(Z0)
-
             if i == 0:
                 loss, grad = self.it0_logic(init_loss, init_grad, init_Hg, loss_fn_and_derivs, Z0)
 

@@ -127,7 +127,6 @@ class BFGS(LS_TR_Opt):
 
 
     def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
-        loss_fn = loss_fn_and_derivs.loss_fn
         loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
 
         # 1) Choose search direction
@@ -135,7 +134,7 @@ class BFGS(LS_TR_Opt):
 
         # 2) Line search / step
         alpha, Z_next, loss_next, grad_next, debug_str = self.ls_choice_logic(
-            loss_fn,
+            iter,
             loss,
             Z0,
             pk,

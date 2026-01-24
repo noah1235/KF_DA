@@ -1,23 +1,6 @@
 import jax.numpy as jnp
 
 class Fourier_Param:
-    """
-    Truncation operator for a 2D rfft2 spectrum omega_hat with shape (Nx, Nx//2+1).
-
-    Keeps:
-      - kx = 0..K
-      - ky in [-K..K] (wrap-around on ky axis)
-
-    Packs kept complex coeffs into a real vector:
-      z = [Re(flat(U_small)), Im(flat(U_small))]
-
-    Unpacks z back into a zero-padded rfft2 spectrum of shape (Nx, Nx//2+1).
-
-    Notes:
-      - inv_transform returns complex128 as requested.
-      - Indices and shapes are cached once in __init__.
-    """
-
     def __init__(self, Nx: int, K: int):
         self.Nx = int(Nx)
         self.K = int(K)

@@ -26,7 +26,7 @@ class ArmijoLineSearch:
         p: jnp.ndarray,
         grad: jnp.ndarray,
         loss_grad_cond_fn,
-        last_iter
+        compute_grad: bool,
     ) -> float:
         alpha  = self.alpha_init
         g0 = jnp.dot(grad, p)
@@ -35,9 +35,9 @@ class ArmijoLineSearch:
             max_loss = f0 + self.c*alpha*g0
             x_next = x + alpha * p
             if i == self.max_iters-1:
-                loss_next, grad_next, active = loss_grad_cond_fn(jnp.inf, x_next)
+                loss_next, grad_next, _ = loss_grad_cond_fn(jnp.inf, x_next)
                 return alpha, x_next, loss_next, grad_next
-            if last_iter:
+            if compute_grad:
                 loss_next, _, _ = loss_grad_cond_fn(-jnp.inf, x_next)
                 if loss_next < max_loss:
                     return alpha, x_next, jnp.nan, jnp.nan
