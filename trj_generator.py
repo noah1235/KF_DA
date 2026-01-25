@@ -21,7 +21,7 @@ import multiprocessing as mp
 # or for GPU:
 # jax.config.update("jax_default_device", jax.devices("gpu")[0])
 
-def generate_rand_IC(NDOF, key_num=0, sigma=1.0, kcut_frac=0.15):
+def generate_rand_IC(NDOF, key_num=0, sigma=3, kcut_frac=0.1):
     """
     Random vorticity IC with energy concentrated at low wavenumbers.
     kcut_frac ~ 0.10-0.25 is a good range.
@@ -76,81 +76,6 @@ def generate_KF_dataset():
     trj = integrator.integrate_scan(omega0_hat, sample_steps)
     np.save(os.path.join(root, "dataset.npy"), np.array(trj))
 
-def generate_KF_diss_plots():
-    max_workers = 4
-    NDOF   = 256
-    Re_list = [100]
-    n      = 4
-    dt     = 1e-2
-    T      = 10.0
-    T_warmup = 10.0
-    plot_diss_vs_time = False
-    nsteps_warmup = int(T_warmup / dt)
-    nsteps = int(T / dt)
-    key_num = 1
-    omega0_hat_base = generate_rand_IC(NDOF, key_num=key_num)
-
-    @jax.jit
-    def get_diss_vs_time(Re):
-        stepper = KF_Stepper(Re, n, NDOF, dt)
-        integrator = Omega_Integrator(stepper)  
-        D_lam  = Re / (2 * n**2)
-        omega0_hat = integrator.fv_integrate(omega0_hat_base, nsteps_warmup)
-        def body(omega_hat, _):
-            omega_hat = stepper(omega_hat)
-            u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega_hat)
-            du__dx, dv__dy = jnp.fft.irfft2(stepper.NS.dxop * u_hat), jnp.fft.irfft2(stepper.NS.dyop * v_hat)
-            du__dy, dv__dx = jnp.fft.irfft2(stepper.NS.dyop * u_hat), jnp.fft.irfft2(stepper.NS.dxop * v_hat)
-            diss = (1.0 / Re) * jnp.mean(du__dx**2 + dv__dy**2 + du__dy**2 + dv__dx**2)
-            return omega_hat, diss
-
-        _, diss_list = jax.lax.scan(body, omega0_hat, xs=None, length=nsteps)
-    
-        diss_normalized_list = diss_list / D_lam
-        avg_diss = jnp.mean(diss_list)
-        return Re, diss_normalized_list, avg_diss
-    
-    results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {ex.submit(get_diss_vs_time, Re): Re for Re in Re_list}
-        for fut in as_completed(futures):
-            results.append(fut.result())
-
-    results.sort(key=lambda tup: Re_list.index(tup[0]))
-
-
-    if plot_diss_vs_time:
-        root = os.path.join(create_results_dir(), "Trjs", "Dissipation_Rate", f"dvt_NDOF={NDOF}_dt={dt}_IC_seed={key_num}")
-        os.makedirs(root, exist_ok=True)
-        # --- Plot ---
-        plt.figure(figsize=(6,4.8), dpi=120)
-        t = np.linspace(0, T, nsteps)
-        np.save(os.path.join(root, "t.npy"), t)
-        for Re, diss_norm, _ in results:
-            np.save(os.path.join(root, f"Re={Re}.npy"), np.array(diss_norm))
-            plt.plot(t, diss_norm, label=f"Re={Re}", linewidth=2)
-
-        plt.xlabel("Time")
-        plt.ylabel("Dissipation / D_lam")
-        plt.title(f"Dissipation Rate (N={NDOF}, dt={dt}, n={n})")
-        plt.grid(True, linestyle="--", alpha=0.6)
-        plt.legend()
-
-
-        outpath = os.path.join(root, "diss_rate.png")
-        plt.tight_layout()
-        plt.savefig(outpath)
-        print(f"Saved: {outpath}")
-    else:
-        root = os.path.join(create_results_dir(), "Trjs", "Dissipation_Rate", f"avgd_NDOF={NDOF}_dt={dt}_IC_seed={key_num}")
-        os.makedirs(root, exist_ok=True)
-        Re_list = []
-        avg_diss_list = []
-        for Re, diss_norm, avg_diss in results:
-            Re_list.append(Re)
-            avg_diss_list.append(avg_diss)
-        np.save(os.path.join(root, "Re_list.npy"), np.array(Re_list))
-        np.save(os.path.join(root, "avg_diss_list.npy"), np.array(avg_diss_list))
 
 def generate_sample_case_ani():
     NDOF = 128
@@ -184,4 +109,4 @@ def generate_sample_case_ani():
 
 
 if __name__ == "__main__":
-    generate_KF_diss_plots()
+    generate_KF_dataset()
