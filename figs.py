@@ -49,10 +49,11 @@ def diss_v_time_plot():
 
 def avg_dist_plot():
     seed = 1
+    n = 4
     cases = [
         # (Re, NDOF, dt)
         #(40,  128, 1e-2),
-        (60,  128, 1e-2),
+        #(60,  128, 1e-2),
         (80,  128, 1e-2),
         (100,  128, 1e-2),
         (120, 128, 1e-2),
@@ -61,6 +62,8 @@ def avg_dist_plot():
         (180, 128, 1e-2),
         (200, 256, 2.5e-3),
         (220, 256, 2.5e-3),
+        (300, 512, 1e-3),
+        (400, 512, 1e-3)
     ]
 
     root = os.path.join(create_results_dir(), "Trjs", "Dissipation_Rate")
@@ -71,8 +74,10 @@ def avg_dist_plot():
 
     for Re, NDOF, dt in cases:
         D = np.load(os.path.join(data_path, f"dissnorm_Re={Re}_N={NDOF}_dt={dt}.npy"))
-        print(np.max(D))
-        avg_diss_list.append(float(np.mean(D)))
+        print(Re, D.shape)
+        D_lam = Re / (2 * n**2)
+        mean_D = np.mean(D) * D_lam
+        avg_diss_list.append(float(mean_D))
         Re_list.append(Re)
 
     Re_arr = np.array(Re_list, dtype=float)

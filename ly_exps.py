@@ -151,18 +151,18 @@ import jax.numpy as jnp
 
 def ly_exp_main():
     kf_opts = KF_Opts(
-        Re=100,
-        n=4,
-        NDOF=128,
-        dt=1e-2,
-        total_T=1000,
-        min_samp_T=50,
-        t_skip=1e-1,
+        Re = 100,   
+        n = 4,
+        NDOF = 128,
+        dt = 1e-2,
+        total_T=int(1e6),
+        min_samp_T=100,
+        t_skip=1e-1
     )
 
     seed = 0
-    r = 2
-    T = 100
+    r = 1
+    T = 1000
     T_skip = 1
 
     root = os.path.join(
@@ -173,10 +173,13 @@ def ly_exp_main():
     os.makedirs(root, exist_ok=True)
 
     attractor_snapshots = load_data(kf_opts)
+    # JAX key
+    key = jax.random.PRNGKey(seed)
 
-    # Python RNG for picking U_0
-    rng = random.Random(seed)
-    idx = rng.randint(0, attractor_snapshots.shape[0] - 1)
+    # random integer index in [0, num_snapshots)
+    num_snapshots = attractor_snapshots.shape[0]
+    idx = jax.random.randint(key, shape=(), minval=0, maxval=num_snapshots)
+
     U_0 = attractor_snapshots[idx, :]
     state_shape = U_0.shape
     U_0 = U_0.reshape(-1)
@@ -185,8 +188,7 @@ def ly_exp_main():
     stepper = lambda x: stepper_raw(x.reshape(*state_shape)).reshape(-1)
     n = U_0.shape[0]
 
-    # JAX key
-    key = jax.random.PRNGKey(seed)
+
     A = jax.random.normal(key, (n, r), dtype=U_0.dtype)
     Y_0, _ = jnp.linalg.qr(A)
 
