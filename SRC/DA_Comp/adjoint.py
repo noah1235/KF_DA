@@ -276,6 +276,56 @@ def split_f64_cb(U, exp_bits, exp_bias, mbits):
     )
     return sign, exp, mant
 
+def integrate_scan_vp_save_dec(stepper, omega0_hat_flat, g, nsteps, exp_bits, exp_bias, mbits):
+    sign_shape, exp_shape, m_shape = calc_output_shape(2*len(omega0_hat_flat), mbits, exp_bits)
+
+    # output specs (must match vpfloat output exactly)
+    sign_spec = ShapeDtypeStruct(
+        shape=sign_shape, dtype=jnp.uint8
+    )
+    exp_spec = ShapeDtypeStruct(
+        shape=exp_shape, dtype=jnp.uint8
+    )
+    if mbits == 16:
+        raise ValueError("16-bit mantissa not supported")
+        mant_spec = ShapeDtypeStruct(
+            shape=m_shape, dtype=jnp.uint16
+        )
+    else:
+        mant_spec = ShapeDtypeStruct(
+            shape=m_shape, dtype=jnp.uint8
+        )
+
+    def body(carry, _):
+        U, loss, i = carry
+        i += 1
+        U_next = stepper(U)
+        loss += g(U_next, i)
+
+        sign, exp, mant = jax.pure_callback(
+            split_f64_cb,
+            (sign_spec, exp_spec, mant_spec),
+            U_next, exp_bits, exp_bias, mbits
+        )
+        return (U_next, loss, i), (sign, exp, mant)
+
+    (U_f, loss, _), (sign_trj, exp_trj, mant_trj) = jax.lax.scan(
+        body, (omega0_hat_flat, g(omega0_hat_flat, 0), 0), xs=None, length=nsteps
+    )
+
+    # also save t = 0
+    sign0, exp0, mant0 = jax.pure_callback(
+        split_f64_cb,
+        (sign_spec, exp_spec, mant_spec),
+        omega0_hat_flat, exp_bits, exp_bias, mbits
+    )
+
+    sign_trj = jnp.concatenate([sign0[None, ...], sign_trj], axis=0)
+    exp_trj  = jnp.concatenate([exp0[None, ...],  exp_trj],  axis=0)
+    mant_trj = jnp.concatenate([mant0[None, ...], mant_trj], axis=0)
+
+    return sign_trj, exp_trj, mant_trj, loss
+
 def integrate_scan_vp_save(stepper, omega0_hat_flat, g, nsteps, exp_bits, exp_bias, mbits):
     sign_shape, exp_shape, m_shape = calc_output_shape(2*len(omega0_hat_flat), mbits, exp_bits)
 
@@ -326,8 +376,7 @@ def integrate_scan_vp_save(stepper, omega0_hat_flat, g, nsteps, exp_bits, exp_bi
 
     return sign_trj, exp_trj, mant_trj, loss
 
-
-def get_loss_grad_vp_fn(crit, target_trj, stepper, transform_fn, snap_shape,
+def get_loss_grad_vp_fn_dec(crit, target_trj, stepper, transform_fn, snap_shape,
                         dt, T, mbits, exp_bits, exp_bias):
     stepper_flat = lambda x: stepper(x.reshape(*snap_shape)).reshape(-1)
     adj_step_1 = Adjoint_Stepper_1(
@@ -390,6 +439,15 @@ def get_loss_grad_vp_fn(crit, target_trj, stepper, transform_fn, snap_shape,
 
     return get_loss_grad_vp_fn
 
+
+def get_loss_grad_vp_fn(crit, target_trj, stepper, transform_fn, snap_shape,
+                        dt, T, mbits, exp_bits, exp_bias):
+    loss_grad_vp_fn_cond = get_loss_grad_conditional_vp_fn(crit, target_trj, stepper, transform_fn, snap_shape,
+                        dt, T, mbits, exp_bits, exp_bias)
+    loss_grad_vp_fn = lambda Z0: loss_grad_vp_fn_cond(jnp.inf, Z0)[:2]
+    return loss_grad_vp_fn
+    
+
 def get_loss_grad_conditional_vp_fn(crit, target_trj, stepper, transform_fn, snap_shape,
                         dt, T, mbits, exp_bits, exp_bias):
     
@@ -399,7 +457,7 @@ def get_loss_grad_conditional_vp_fn(crit, target_trj, stepper, transform_fn, sna
         )
     nsteps = int(T / dt)
     
-    def get_loss_grad_vp_fn(loss_ub, Z0):
+    def loss_grad_vp_fn(loss_ub, Z0):
         # 1) Transform IC and get linearization
         omega0_hat, lin = jax.linearize(transform_fn, Z0)
         omega0_hat_flat = omega0_hat.reshape(-1)
@@ -461,7 +519,7 @@ def get_loss_grad_conditional_vp_fn(crit, target_trj, stepper, transform_fn, sna
         )
         return loss, grad_x, did_grad
 
-    return get_loss_grad_vp_fn
+    return loss_grad_vp_fn
                                                     
 def get_loss_grad_fn(crit, target_trj, stepper, transform_fn, snap_shape, nsteps):
     stepper_flat = lambda x: stepper(x.reshape(*snap_shape)).reshape(-1)

@@ -29,7 +29,8 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, 
     omega_init_guess = jnp.fft.irfft2(omega_init_guess_hat, axes=(-2, -1))
 
     trj_cos_sim = cos_sim(omega_trg, omega_DA)
-    trj_rel_error = jnp.mean(jnp.linalg.norm(omega_DA_hat - omega_trg_hat, axis=(1, 2)) / attractor_rad)
+    rel_error_trj = jnp.linalg.norm(omega_DA_hat - omega_trg_hat, axis=(1, 2)) / attractor_rad
+    trj_rel_error = jnp.mean(rel_error_trj)
 
 
     final_snap_cos_sim = cos_sim(omega_trg[-1], omega_DA[-1])
@@ -40,6 +41,7 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, 
 
     results_df["trj_cos_sim"] = [float(trj_cos_sim)]
     results_df["trj_rel_error"] = [float(trj_rel_error)]
+    results_df["rel_error_trj"] = [np.array(rel_error_trj)]
 
     results_df["final_snap_cos_sim"] = [float(final_snap_cos_sim)]
     results_df["final_snap_rel_error"] = [float(final_snap_rel_error)]

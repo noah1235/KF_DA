@@ -57,13 +57,11 @@ def run_test(
         loss_auto, grad_auto = loss_grad_fn_auto(Z)
         loss_adj,  grad_adj  = loss_grad_fn_adj(Z)
 
-        loss_err = jnp.abs(loss_adj - loss_auto) / loss_auto * 100
-        grad_err = jnp.linalg.norm(grad_adj - grad_auto) / jnp.linalg.norm(grad_auto) * 100
+        grad_err = jnp.linalg.norm(grad_adj - grad_auto) / jnp.linalg.norm(grad_auto)
         cos_sim  = jnp.dot(grad_auto, grad_adj) / (
             jnp.linalg.norm(grad_auto) * jnp.linalg.norm(grad_adj)
         )
-        print(f"[mbits={mbits}] Sample idx={idx}: Loss % err={loss_err:.2e}, Grad % err={grad_err:.2e}, Cos sim={cos_sim:.6f}")
-        loss_errs.append(loss_err)
+        print(f"[mbits={mbits}] Sample idx={idx}, Grad % err={grad_err:.2e}, Cos sim={cos_sim:.6f}")
         grad_errs.append(grad_err)
         cos_sims.append(cos_sim)
 
@@ -128,30 +126,29 @@ def plot_metrics_vs_mbits(df, path):
     os.makedirs(path, exist_ok=True)
     mb = df["mbits"].to_numpy()
 
-    # ---------------------------
-    # Loss percent error
-    # ---------------------------
-    fig = plt.figure()
-    plt.errorbar(mb, df["loss_mean"], yerr=df["loss_std"], fmt="o-", capsize=4)
-    plt.yscale("log")
-    plt.xlabel("mantissa bits (mbits)")
-    plt.ylabel("Loss percent error (%)")
-    plt.title("Loss error vs mantissa bits")
-    #plt.grid(True, which="both", ls="--", alpha=0.4)
-
-    save_svg(plt, fig, os.path.join(path, "loss_v_mbits.svg"))
-    plt.close(fig)
 
     # ---------------------------
     # Gradient percent error
     # ---------------------------
+    p = np.array(mb)
+    err = np.array(df["grad_mean"])
+    err_std = np.array(df["grad_std"])
+
+    p_ref = p[-1]
+    err_ref = err[-1]
+
+    # Theoretical scaling: C * 2^{-2p}, normalized at p_ref
+    theory = err_ref * 2.0**(-1.0*(p - p_ref))
+
     fig = plt.figure()
-    plt.errorbar(mb, df["grad_mean"], yerr=df["grad_std"], fmt="o-", capsize=4)
+    plt.scatter(p, err, label="Measured")
+    plt.plot(p, theory, "--", label=r"$\propto 2^{-p}$")
+
     plt.yscale("log")
     plt.xlabel("mantissa bits (mbits)")
-    plt.ylabel("Gradient percent error (%)")
-    plt.title("Gradient error vs mantissa bits")
-    #plt.grid(True, which="both", ls="--", alpha=0.4)
+    plt.ylabel("Gradient relative error")
+    plt.legend()
+
 
     save_svg(plt, fig, os.path.join(path, "grad_v_mbits.svg"))
     plt.close(fig)
@@ -183,12 +180,13 @@ def adjoint_test():
         t_skip=1e-1,
     )
     IC_param = Fourier_Param(kf_opts.NDOF, 64)
-    npart = 25
-    T = 4
-    samp_period = .1
-    mbits_list = np.arange(2, 14, 2)
+    npart = 30
+    NT = 31
+    T = 3.3
+    mbits_list = np.arange(2, 16, 2)
     minv, maxv = 1, 5e4
 
+    samp_period = T/(NT-1)
     period_idx = int(samp_period/kf_opts.dt)
     idx = jnp.arange(int(T/kf_opts.dt)+1)
     t_mask = (idx % period_idx == 0)
@@ -209,22 +207,25 @@ def adjoint_test():
 
     crit.init_obj(t_mask, stepper.NS.L)
     exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=8)
-    df = collect_stats_over_mbits(
-        mbits_list,
-        crit=crit, target_trj=target_trj,
-        stepper=stepper, kf_stepper=kf_stepper, IC_param=IC_param,
-        dt=kf_opts.dt, T=T,
-        exp_bits=exp_bits, exp_bias=exp_bias,
-        attractor_snapshots=attractor_snapshots,
-        nreps=10,
-        seed=0,
-    )
-
-    print(df)
     path = os.path.join(os.path.join(create_results_dir(), "vpfloats", f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_T={T}"))
-    os.makedirs(path, exist_ok=True)
-    df.to_excel(os.path.join(path, "vpfloats_sweep.xlsx"), index=False)
-    plot_metrics_vs_mbits(df, path)
+    if True:
+        df = collect_stats_over_mbits(
+            mbits_list,
+            crit=crit, target_trj=target_trj,
+            stepper=stepper, kf_stepper=kf_stepper, IC_param=IC_param,
+            dt=kf_opts.dt, T=T,
+            exp_bits=exp_bits, exp_bias=exp_bias,
+            attractor_snapshots=attractor_snapshots,
+            nreps=1,
+            seed=0,
+        )
+        print(df)
+        os.makedirs(path, exist_ok=True)
+        df.to_excel(os.path.join(path, "vpfloats_sweep.xlsx"), index=False)
+        plot_metrics_vs_mbits(df, path)
+    else:
+        df = pd.read_excel(os.path.join(path, "vpfloats_sweep.xlsx"))
+        plot_metrics_vs_mbits(df, path)
 
 
 if __name__ == "__main__":

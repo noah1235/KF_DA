@@ -32,7 +32,20 @@ import pandas as pd
 import gc
 
 
+def count_numeric_dirs(folder: str) -> int:
+    pattern = re.compile(r'^\d+\.\d+$')
 
+    return sum(
+        1 for d in os.listdir(folder)
+        if os.path.isdir(os.path.join(folder, d)) and pattern.match(d)
+    )
+
+
+def count_folders(folder: str) -> int:
+    return sum(
+        1 for name in os.listdir(folder)
+        if os.path.isdir(os.path.join(folder, name))
+    )
 
 def append_to_parquet(df, parquet_path):
     """
@@ -187,7 +200,11 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
+
+
+                                        count = count_folders(param_dir)
                                         for opt_init_key_num in range(DA_opts.num_opt_inits):
+                                            opt_init_key_num += count
                                             omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_key_num)
                                             opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
 
