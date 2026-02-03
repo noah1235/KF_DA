@@ -44,28 +44,27 @@ def plot_opt_comp(crit_df, loss_crit_root, avg_loss_grad_cost=2, avg_Hvp_cost=5)
         plt.close(fig)
 
         # Cost vs iteration for each run
-        if False:
-            fig, ax = plt.subplots()
-            ax.plot(total_cost.T)
-            ax.set_ylabel("cost")
-            ax.set_xlabel("iteration")
-            fig.tight_layout()
-            save_svg(mpl, fig, os.path.join(save_root, "cost_v_its.svg"))
-            plt.close(fig)
+        fig, ax = plt.subplots()
+        ax.plot(total_cost.T)
+        ax.set_ylabel("cost")
+        ax.set_xlabel("iteration")
+        fig.tight_layout()
+        save_svg(mpl, fig, os.path.join(save_root, "cost_v_its.svg"))
+        plt.close(fig)
 
 
         ax_avg.plot(avg_cost_trace, avg_loss_trace, label=str(optimizer))
         ax_avg_v_its.plot(avg_loss_trace,label=str(optimizer) )
         
-    if False:
-        # Finalize and save average performance plot
-        ax_avg.set_yscale("log")
-        ax_avg.set_xlabel("cost")
-        ax_avg.set_ylabel("loss")
-        ax_avg.legend()
-        fig_avg.tight_layout()
-        fig_avg.savefig(os.path.join(loss_crit_root, "avg_opt_perf.png"))
-        plt.close(fig_avg)
+
+    # Finalize and save average performance plot
+    ax_avg.set_yscale("log")
+    ax_avg.set_xlabel("cost")
+    ax_avg.set_ylabel("loss")
+    ax_avg.legend()
+    fig_avg.tight_layout()
+    fig_avg.savefig(os.path.join(loss_crit_root, "avg_opt_perf.png"))
+    plt.close(fig_avg)
 
     ax_avg_v_its.set_yscale("log")
     ax_avg_v_its.set_xlabel("cost")
@@ -167,7 +166,6 @@ def plot_performance(crit_df, loss_crit_root):
         save_histogram(final_loss, os.path.join(save_root, "loss_hist.svg"))
         loss_stand = loss_transformation(final_loss)
         plot_recon_vs_loss(opt_df["final_snap_cos_sim"], loss_stand, os.path.join(save_root, "final_snap_cos_sim_vs_loss.svg"), (0, 1))
-
 
 
 def global_post_main(df: pd.DataFrame, root: str) -> None:

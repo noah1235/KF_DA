@@ -42,6 +42,9 @@ def count_numeric_dirs(folder: str) -> int:
 
 
 def count_folders(folder: str) -> int:
+    if not os.path.isdir(folder):
+        return 0
+
     return sum(
         1 for name in os.listdir(folder)
         if os.path.isdir(os.path.join(folder, name))
