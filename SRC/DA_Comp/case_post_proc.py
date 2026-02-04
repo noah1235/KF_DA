@@ -29,7 +29,8 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, 
     omega_init_guess = jnp.fft.irfft2(omega_init_guess_hat, axes=(-2, -1))
 
     trj_cos_sim = cos_sim(omega_trg, omega_DA)
-    rel_error_trj = jnp.linalg.norm(omega_DA_hat - omega_trg_hat, axis=(1, 2)) / attractor_rad
+    L2_error_v_t = jnp.linalg.norm(omega_DA_hat - omega_trg_hat, axis=(1, 2))
+    rel_error_trj = L2_error_v_t/attractor_rad
     trj_rel_error = jnp.mean(rel_error_trj)
 
 
@@ -84,10 +85,7 @@ def post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, 
         l1="DA vorticity (t0)", l2="Target vorticity (t0)"
     )
     
-
     plot_convergence(opt_data, save_dir)
-
-
 
 def _break_periodic_lines(x, y, Lx, Ly, jump_frac=0.5):
     """
@@ -213,7 +211,6 @@ def plot_particle_tracks(
     save_svg(mpl, fig, save_path)
     plt.close(fig)
 
-
 def radial_spectral_error(
     omega_pred: jnp.ndarray,
     omega_true: jnp.ndarray,
@@ -224,14 +221,21 @@ def radial_spectral_error(
     k_max: float | None = None,          # NEW
     eps: float = 1e-16,
     log_bins: bool = True,
+    fft_input=False
 ):
-    if omega_pred.shape != omega_true.shape:
-        raise ValueError(f"Shape mismatch: pred {omega_pred.shape}, true {omega_true.shape}")
 
-    Ny, Nx = omega_true.shape
+    if fft_input:
+        pred_hat = omega_pred
+        true_hat = omega_true
+        Ny  = true_hat.shape[0]
+        Nkx = true_hat.shape[1]
+        Nx  = 2 * (Nkx - 1)
 
-    pred_hat = jnp.fft.rfft2(omega_pred)
-    true_hat = jnp.fft.rfft2(omega_true)
+    else:
+        Ny, Nx = omega_true.shape
+        pred_hat = jnp.fft.rfft2(omega_pred)
+        true_hat = jnp.fft.rfft2(omega_true)
+
     err_hat  = pred_hat - true_hat
 
     err_pow  = jnp.abs(err_hat) ** 2
@@ -359,8 +363,6 @@ def plot_vort_comp(
 
     save_svg(mpl, fig, save_path)
     plt.close(fig)
-
-
 
 def compute_norm_vs_time(target, pred):
     num = jnp.linalg.norm(target - pred, axis=(1, 2))

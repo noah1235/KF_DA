@@ -17,7 +17,7 @@ from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
 from SRC.Vel_init.CS_init import CS_init
 from SRC.Vel_init.AI import AI
-from SRC.Solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn
+from SRC.Solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn, Omega_Integrator
 
 # --- Stdlib / third-party imports ---
 import os
@@ -73,7 +73,6 @@ def append_to_parquet(df, parquet_path):
     combined.to_parquet(parquet_path, index=False)
     print(f"Appended data and updated {parquet_path}")
 
-
 def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
     Main entry point for running data assimilation (DA) experiments.
@@ -116,6 +115,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
         * len(DA_opts.crit_list)
     )
     count = 0
+    IC_guess_count =0
+    did_IC_guess_count = False
     # Loop over experiment seeds
     for seed_idx in DA_opts.TIC_seed_list:
         seed_root = os.path.join(root, f"IC_seed={seed_idx}")
@@ -137,13 +138,17 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
         # Loop over time horizons
         for T in DA_opts.T_list:
             T_dir = os.path.join(seed_root, f"T={T}")
+            os.makedirs(T_dir, exist_ok=True)
+            kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt)   
+            omega_int = Omega_Integrator(kf_stepper)
+            omega_trg_trj =omega_int.integrate_scan(omega0_hat, int(T/kf_opts.dt))
+            np.save(os.path.join(T_dir, "omega_trg_trj.npy"), omega_trg_trj)
 
             # Loop over number of particles
             for npart in DA_opts.n_particles_list:
                 npart_root = os.path.join(T_dir, f"np={npart}")
 
-                stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)
-                kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt)                
+                stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)             
                 for NT in DA_opts.NT_list:
                     NT_root = os.path.join(npart_root, f"NT={NT}")
                     #t_mask = jnp.linspace(0, int(T/kf_opts.dt)+1)
@@ -204,12 +209,13 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
 
-
-                                        count = count_folders(param_dir)
+                                        if not did_IC_guess_count:
+                                            IC_guess_count = count_folders(param_dir)
+                                            did_IC_guess_count = True
                                         for opt_init_key_num in range(DA_opts.num_opt_inits):
-                                            opt_init_key_num += count
+                                            opt_init_key_num += IC_guess_count
                                             omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_key_num)
-                                            opt_init_dir = os.path.join(param_dir, "cases", f"{actual_norm_dist}")
+                                            opt_init_dir = os.path.join(param_dir, "cases", f"{opt_init_key_num}")
 
                                             # Skip if this case directory already exists
                                             if os.path.isdir(opt_init_dir):
@@ -217,7 +223,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                 continue
 
                                             os.makedirs(opt_init_dir)
-                                            np.save(os.path.join(opt_init_dir, "omega0_guess_hat.npy"), omega0_guess_hat)
 
                                             results_df = pd.DataFrame({
                                                                         "true_IC_seed": [seed_idx],
@@ -225,7 +230,9 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                         "T": [T],
                                                                         "n_part": [npart],
                                                                         "NT": [NT],
+                                                                        "IC_param": [f"{IC_param}"],
                                                                         "init_IC_distance": [float(actual_norm_dist)],
+                                                                        "init_IC_seed": [opt_init_key_num],
                                                                         "optimizer": [f"{optimizer}"],
                                                                         "loss_crit": [f"{loss_crit}"],
                                                                         "floatp": [vfloat_name]
@@ -282,12 +289,13 @@ def _run_DA_case(
 
     
     results_df["loss_record"] = [opt_data.loss_record]
-    results_df["loss_evals_record"] = [opt_data.loss_evals_record]
-    results_df["loss_grad_evals_record"] = [opt_data.loss_grad_evals_record]
-    results_df["Hvp_evals_record"] = [opt_data.Hvp_evals_record]
+    #results_df["loss_evals_record"] = [opt_data.loss_evals_record]
+    #results_df["loss_grad_evals_record"] = [opt_data.loss_grad_evals_record]
+    #results_df["Hvp_evals_record"] = [opt_data.Hvp_evals_record]
 
     #saving npy files
     np.save(os.path.join(save_dir, "omega_DA_trj.npy"), np.array(DA_trj[0]))
+    np.save(os.path.join(save_dir, "omega_guess_trj.npy"), np.array(init_guess_trj[0]))
     opt_data.save_data(save_dir)
 
     post_proc_case_main(target_trj, DA_trj, init_guess_trj, opt_data, save_dir, dt, t_mask, results_df, attractor_rad)
