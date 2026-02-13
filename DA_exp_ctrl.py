@@ -22,6 +22,76 @@ from SRC.Vel_init.CS_init import CS_init
 from SRC.global_post.global_post_main import global_post_main
 from SRC.parameterization.Fourier_Param import Fourier_Param
 config.update("jax_enable_x64", True)
+from pathlib import Path
+
+def write_hierarchical_case_summary(
+    folder,
+    filename="results.xlsx",
+    out_name="case_summary.txt",
+):
+    """
+    Writes a hierarchical text summary:
+
+    PIC_seed, T, n_part, NT
+        └── true_IC_seed
+                → number of unique init_IC_seed
+    """
+
+    folder = Path(folder)
+    in_path = folder / filename
+    if not in_path.exists():
+        raise FileNotFoundError(f"Could not find: {in_path}")
+
+    # --- load file ---
+    suffix = in_path.suffix.lower()
+    if suffix in {".parquet", ".pq"}:
+        df = pd.read_parquet(in_path)
+    else:
+        df = pd.read_excel(in_path)
+
+
+    # columns for hierarchy
+    top_cols = ["PIC_seed", "T", "n_part", "NT"]
+    required = top_cols + ["true_IC_seed", "init_IC_seed"]
+
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
+
+    # normalize seed dtype
+    df["init_IC_seed"] = df["init_IC_seed"].astype("Int64", errors="ignore")
+
+    # count unique init seeds
+    counts = (
+        df.groupby(top_cols + ["true_IC_seed"], dropna=False)
+          .agg(n_unique_init_IC_seed=("init_IC_seed", pd.Series.nunique))
+          .reset_index()
+          .sort_values(top_cols + ["true_IC_seed"])
+    )
+
+    # write text file
+    out_path = folder / out_name
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(f"File: {in_path.name}\n")
+        f.write(f"Total rows (after filtering): {len(df)}\n\n")
+
+        for top_vals, top_df in counts.groupby(top_cols):
+            PIC_seed, T, n_part, NT = top_vals
+
+            f.write(
+                f"PIC_seed={PIC_seed}, T={T}, n_part={n_part}, NT={NT}\n"
+            )
+
+            for _, row in top_df.iterrows():
+                f.write(
+                    f"    true_IC_seed={row['true_IC_seed']}: "
+                    f"{int(row['n_unique_init_IC_seed'])} init_IC_seed\n"
+                )
+
+            f.write("\n")
+
+    return out_path
+
 
 def parquet_to_excel(parquet_path, excel_path=None):
     """
@@ -110,6 +180,8 @@ def main():
 
     #DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
+    write_hierarchical_case_summary(root)
+    return
     df = pd.read_parquet(os.path.join(root, "results.parquet"))
     df = df.dropna()
     global_post_main(df, root)
