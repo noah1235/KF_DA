@@ -40,7 +40,6 @@ def create_omega_part_gen_fn(stepper, T):
 
     def body(carry, _):
         omega_hat, xp, yp, up, vp = carry
-
         # advance one step
         omega_hat, xp, yp, up, vp = stepper(omega_hat, xp, yp, up, vp)
 
@@ -70,21 +69,24 @@ def create_omega_part_gen_fn(stepper, T):
 class Forced_2D_NS:
     L = 2 * jnp.pi
 
-    def __init__(self, Re, n, N):
+    def __init__(self, Re, n, N, double=False):
         self.Re = Re
-
+        self.M = self.get_dealias_mask(N)      
         KX, KY = self.get_K(N)
         self.dxop = 1j * KX
         self.dyop = 1j * KY
 
+        forcing = self.kolmogorov_vorticity_forcing(self.L, N, n)  
+        self.forcing_hat = jnp.fft.rfft2(forcing)  
+        self.M = self.M.astype(jnp.float32)  
+        if not double:
+            self.dxop = self.dxop.astype(jnp.complex64)  
+            self.dyop = self.dyop.astype(jnp.complex64)  
+            self.forcing_hat = self.forcing_hat.astype(jnp.complex64)  
+
         laplacian_op = (self.dxop**2 + self.dyop**2)
         self.diff_op = (1 / Re) * laplacian_op
         self.laplacian_op_safe = laplacian_op.at[0, 0].set(1)
-
-        forcing = self.kolmogorov_vorticity_forcing(self.L, N, n)  
-        self.forcing_hat = jnp.fft.rfft2(forcing)  
-
-        self.M = self.get_dealias_mask(N)          
 
     @staticmethod
     def get_K(N):
@@ -140,8 +142,8 @@ class KF_Stepper:
     beta  = [0, -0.4178904745, -1.192151694643, -1.697784692471, -1.514183444257]
     gamma = [0.1496590219993, 0.3792103129999, 0.8229550293869, 0.6994504559488, 0.1530572479681]
 
-    def __init__(self, Re, n, N, dt):
-        self.NS = Forced_2D_NS(Re, n, N)
+    def __init__(self, Re, n, N, dt, double=True):
+        self.NS = Forced_2D_NS(Re, n, N, double=double)
         self.dt = dt
 
     def calc_h(self, g, h, i):
@@ -210,14 +212,18 @@ class Inertial_Evolution:
 
 #KF and Tracer Particles
 class KF_TP_Stepper(KF_Stepper):
-    def __init__(self, Re, n, N, dt, St, beta, npart):
-        super().__init__(Re, n, N, dt)
+    def __init__(self, Re, n, N, dt, St, beta, npart, double=True):
+        super().__init__(Re, n, N, dt, double=double)
         if St == 0 and beta == 0:
             self.p_ev = Tracer_Evolution()
         else:
             self.p_ev = Inertial_Evolution(St)
         
         self.h = jnp.zeros((N, N//2+1))
+        if double:
+            self.h = self.h.astype(jnp.complex128)
+        else:
+            self.h = self.h.astype(jnp.complex64)
         self.h_xp = jnp.zeros(npart)
         self.h_yp = jnp.zeros(npart)
         self.h_up = jnp.zeros(npart)
@@ -234,7 +240,6 @@ class KF_TP_Stepper(KF_Stepper):
         h_yp = self.h_yp * 0
         h_up = self.h_up * 0
         h_vp = self.h_vp * 0
-
         for i in range(5):
             g, u_grid, v_grid = self.NS.explicit_term(omega_hat)
             h = self.calc_h(g, h, i)
@@ -298,7 +303,6 @@ class Omega_Integrator:
             U, trj = run_checkpoint(U, chunk_size)
 
             trj_np = np.asarray(jax.device_get(trj), dtype=dtype)  # shape (L, ndof)
-            print
             mm[write_idx:write_idx + chunk_size] = trj_np
 
             write_idx += chunk_size

@@ -243,8 +243,8 @@ def avg_perf():
 
 def optimal_m_plot():
     # parameters
-    T = 3.3
-    dt = 1e-2
+    T = 10
+    dt = 1e-3
     k = 0
     N = int(T / dt)
 
@@ -265,7 +265,7 @@ def optimal_m_plot():
         print(np.mean(p_j_r))
         print(np.mean(p_j))
         #print(p_j[-1] - p_j[0])
-        j = LLE * dt * j
+        #j = LLE * dt * j
         ax.plot(j, p_j_r, lw=2, label=f"$m={m}$")
         ax.plot(j, p_j, lw=2, label=f"$m={m}$")
     ax.set_xlabel("Time index $j$")

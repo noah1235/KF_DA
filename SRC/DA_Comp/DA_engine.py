@@ -40,7 +40,6 @@ def count_numeric_dirs(folder: str) -> int:
         if os.path.isdir(os.path.join(folder, d)) and pattern.match(d)
     )
 
-
 def count_folders(folder: str) -> int:
     if not os.path.isdir(folder):
         return 0
@@ -264,7 +263,6 @@ def _run_DA_case(
     t_mask,
     results_df,
     parquet_path
-    
 ) -> None:
     """
     Run a single DA case for a given optimizer and loss function.
