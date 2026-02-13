@@ -6,6 +6,7 @@ from SRC.plotting_utils import save_svg
 import matplotlib as mpl
 from create_results_dir import create_results_dir
 from SRC.DA_Comp.case_post_proc import radial_spectral_error
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 def plot_opt_comp(optimizer, opt_df, root):
     # Figure for average optimizer performance (across all optimizers)
@@ -120,6 +121,7 @@ def plot_performance(fp_df, save_root):
     loss_stand = loss_transformation(final_loss)
     plot_recon_vs_loss(fp_df["final_snap_cos_sim"], loss_stand, os.path.join(save_root, "final_snap_cos_sim_vs_loss.svg"), (0, 1))
 
+
 def plot_feilds(
     fp_df,
     T, NP, NT,
@@ -128,147 +130,216 @@ def plot_feilds(
     max_k=15,
     nbins=8,
     log_bins=False,
+    n_workers=None,  # None -> default chosen by ThreadPoolExecutor
 ):
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     os.makedirs(save_root, exist_ok=True)
 
-    # --- accumulators
-    k_ref = None
+    # -------------------------
+    # Helper: plotters
+    # -------------------------
+    def plot_energy(k, E_true_mu, E_true_sd, E_DA_mu, E_DA_sd, E_guess_mu, E_guess_sd, title, outname):
+        fig, ax = plt.subplots(figsize=(9, 6))
+        ax.plot(k, E_true_mu,  label="True",  lw=2)
+        ax.plot(k, E_DA_mu,    label="DA",    lw=2)
+        ax.plot(k, E_guess_mu, label="Guess", lw=2)
+        ax.fill_between(k, E_true_mu - E_true_sd,   E_true_mu + E_true_sd,   alpha=0.2)
+        ax.fill_between(k, E_DA_mu   - E_DA_sd,     E_DA_mu   + E_DA_sd,     alpha=0.2)
+        ax.fill_between(k, E_guess_mu - E_guess_sd, E_guess_mu + E_guess_sd, alpha=0.2)
+        ax.set_xlabel(r"$k$")
+        ax.set_ylabel(r"$E(k)$")
+        ax.set_yscale("log")
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(True, which="both", ls="--", alpha=0.4)
+        fig.savefig(os.path.join(save_root, outname), dpi=200)
+        plt.close(fig)
 
-    E_true_all   = []
-    E_DA_all     = []
-    E_guess_all  = []
+    def plot_relerr(k, rel_DA_mu, rel_DA_sd, rel_guess_mu, rel_guess_sd, title, outname):
+        fig, ax = plt.subplots(figsize=(9, 6))
+        ax.plot(k, rel_DA_mu,    label="DA / True",    lw=2)
+        ax.plot(k, rel_guess_mu, label="Guess / True", lw=2)
+        ax.fill_between(k, rel_DA_mu - rel_DA_sd,       rel_DA_mu + rel_DA_sd,       alpha=0.2)
+        ax.fill_between(k, rel_guess_mu - rel_guess_sd, rel_guess_mu + rel_guess_sd, alpha=0.2)
+        ax.set_xlabel(r"$k$")
+        ax.set_ylabel("Relative Error")
+        ax.set_yscale("log")
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(True, which="both", ls="--", alpha=0.4)
+        fig.savefig(os.path.join(save_root, outname), dpi=200)
+        plt.close(fig)
 
-    relerr_DA_all    = []
-    relerr_guess_all = []
+    def stack_stats(arr_list):
+        arr = np.stack(arr_list, axis=0)
+        return arr.mean(axis=0), arr.std(axis=0)
 
+    # -------------------------
+    # Build list of cases to run
+    # -------------------------
+    cases = []
     for IC_trg_seed, IC_trg_seed_df in fp_df.groupby("true_IC_seed"):
+        for PIC_seed, PIC_seed_df in IC_trg_seed_df.groupby("PIC_seed"):
+            for init_IC_seed, _ in PIC_seed_df.groupby("init_IC_seed"):
+                cases.append((IC_trg_seed, PIC_seed, init_IC_seed))
+
+    # -------------------------
+    # Per-case worker
+    # -------------------------
+    def run_case(case):
+        IC_trg_seed, PIC_seed, init_IC_seed = case
+
         trg_path = os.path.join(
             base_root,
             f"IC_seed={IC_trg_seed}/T={T}/omega_trg_trj.npy",
         )
         omega_trg_trj = np.load(trg_path)
 
-        for PIC_seed, PIC_seed_df in IC_trg_seed_df.groupby("PIC_seed"):
-            for init_IC_seed, _ in PIC_seed_df.groupby("init_IC_seed"):
+        data_root = os.path.join(
+            base_root,
+            f"IC_seed={IC_trg_seed}/T={T}/np={NP}/NT={NT}/PI/seed_{PIC_seed}"
+            f"/{crit}/{optimizer}/{fp}/Fourier_K=64/cases/{init_IC_seed}"
+        )
+        omega_DA_trj = np.load(os.path.join(data_root, "omega_DA_trj.npy"))
+        omega_guess_trj = np.load(os.path.join(data_root, "omega_guess_trj.npy"))
 
-                data_root = os.path.join(
-                    base_root,
-                    f"IC_seed={IC_trg_seed}/T={T}/np={NP}/NT={NT}/PI/seed_{PIC_seed}"
-                    f"/{crit}/{optimizer}/{fp}/Fourier_K=64/cases/{init_IC_seed}"
-                )
+        # INITIAL
+        true_hat_IC  = omega_trg_trj[0]
+        DA_hat_IC    = omega_DA_trj[0]
+        guess_hat_IC = omega_guess_trj[0]
 
-                omega_DA_trj = np.load(os.path.join(data_root, "omega_DA_trj.npy"))
-                omega_guess_trj = np.load(os.path.join(data_root, "omega_guess_trj.npy"))
+        k_IC, rel_DA_IC, E_true_IC, E_DA_IC = radial_spectral_error(
+            DA_hat_IC, true_hat_IC,
+            log_bins=log_bins, k_max=max_k, nbins=nbins, fft_input=True
+        )
+        k2_IC, rel_guess_IC, E_true2_IC, E_guess_IC = radial_spectral_error(
+            guess_hat_IC, true_hat_IC,
+            log_bins=log_bins, k_max=max_k, nbins=nbins, fft_input=True
+        )
 
-                # --- use IC (change to [-1] for final condition)
-                true_hat  = omega_trg_trj[0]
-                DA_hat    = omega_DA_trj[0]
-                guess_hat = omega_guess_trj[0]
+        # FINAL
+        true_hat_F  = omega_trg_trj[-1]
+        DA_hat_F    = omega_DA_trj[-1]
+        guess_hat_F = omega_guess_trj[-1]
 
-                # --- DA vs true
-                k_centers, rel_err_DA, E_true_k, E_DA_k = radial_spectral_error(
-                    DA_hat,
-                    true_hat,
-                    log_bins=log_bins,
-                    k_max=max_k,
-                    nbins=nbins,
-                    fft_input=True,
-                )
+        k_F, rel_DA_F, E_true_F, E_DA_F = radial_spectral_error(
+            DA_hat_F, true_hat_F,
+            log_bins=log_bins, k_max=max_k, nbins=nbins, fft_input=True
+        )
+        k2_F, rel_guess_F, E_true2_F, E_guess_F = radial_spectral_error(
+            guess_hat_F, true_hat_F,
+            log_bins=log_bins, k_max=max_k, nbins=nbins, fft_input=True
+        )
 
-                # --- guess vs true
-                k_centers2, rel_err_guess, E_true_k2, E_guess_k = radial_spectral_error(
-                    guess_hat,
-                    true_hat,
-                    log_bins=log_bins,
-                    k_max=max_k,
-                    nbins=nbins,
-                    fft_input=True,
-                )
+        # Return everything needed; main thread will enforce k consistency
+        return {
+            "k_IC": np.asarray(k_IC),
+            "k_F":  np.asarray(k_F),
 
-                # --- enforce consistent bins
-                if k_ref is None:
-                    k_ref = np.asarray(k_centers)
-                else:
-                    if np.max(np.abs(np.asarray(k_centers) - k_ref)) > 1e-12:
-                        raise ValueError("k_centers mismatch across cases")
+            "E_true_IC":  np.asarray(E_true_IC),
+            "E_DA_IC":    np.asarray(E_DA_IC),
+            "E_guess_IC": np.asarray(E_guess_IC),
+            "rel_DA_IC":  np.asarray(rel_DA_IC),
+            "rel_guess_IC": np.asarray(rel_guess_IC),
 
-                # --- store
-                E_true_all.append(np.asarray(E_true_k))
-                E_DA_all.append(np.asarray(E_DA_k))
-                E_guess_all.append(np.asarray(E_guess_k))
+            "E_true_F":  np.asarray(E_true_F),
+            "E_DA_F":    np.asarray(E_DA_F),
+            "E_guess_F": np.asarray(E_guess_F),
+            "rel_DA_F":  np.asarray(rel_DA_F),
+            "rel_guess_F": np.asarray(rel_guess_F),
+        }
 
-                relerr_DA_all.append(np.asarray(rel_err_DA))
-                relerr_guess_all.append(np.asarray(rel_err_guess))
+    # -------------------------
+    # Run in parallel (threads)
+    # -------------------------
+    results = []
+    with ThreadPoolExecutor(max_workers=n_workers) as ex:
+        futures = [ex.submit(run_case, c) for c in cases]
+        for fut in as_completed(futures):
+            results.append(fut.result())
 
-    # --- stack + statistics
-    E_true_all   = np.stack(E_true_all, axis=0)
-    E_DA_all     = np.stack(E_DA_all, axis=0)
-    E_guess_all  = np.stack(E_guess_all, axis=0)
+    # -------------------------
+    # Enforce consistent k bins
+    # -------------------------
+    k_ref = results[0]["k_IC"]
+    for r in results[1:]:
+        if np.max(np.abs(r["k_IC"] - k_ref)) > 1e-12:
+            raise ValueError("k_centers mismatch across cases (IC)")
+        if np.max(np.abs(r["k_F"] - k_ref)) > 1e-12:
+            raise ValueError("k_centers mismatch across cases (Final vs ref)")
 
-    relerr_DA_all    = np.stack(relerr_DA_all, axis=0)
-    relerr_guess_all = np.stack(relerr_guess_all, axis=0)
+    # -------------------------
+    # Gather arrays
+    # -------------------------
+    E_true_all_IC   = [r["E_true_IC"] for r in results]
+    E_DA_all_IC     = [r["E_DA_IC"] for r in results]
+    E_guess_all_IC  = [r["E_guess_IC"] for r in results]
+    rel_DA_all_IC   = [r["rel_DA_IC"] for r in results]
+    rel_guess_all_IC= [r["rel_guess_IC"] for r in results]
 
-    E_true_mu  = E_true_all.mean(axis=0)
-    E_DA_mu    = E_DA_all.mean(axis=0)
-    E_guess_mu = E_guess_all.mean(axis=0)
+    E_true_all_F    = [r["E_true_F"] for r in results]
+    E_DA_all_F      = [r["E_DA_F"] for r in results]
+    E_guess_all_F   = [r["E_guess_F"] for r in results]
+    rel_DA_all_F    = [r["rel_DA_F"] for r in results]
+    rel_guess_all_F = [r["rel_guess_F"] for r in results]
 
-    rel_DA_mu    = relerr_DA_all.mean(axis=0)
-    rel_guess_mu = relerr_guess_all.mean(axis=0)
+    # -------------------------
+    # Stats
+    # -------------------------
+    E_true_mu_IC,  E_true_sd_IC  = stack_stats(E_true_all_IC)
+    E_DA_mu_IC,    E_DA_sd_IC    = stack_stats(E_DA_all_IC)
+    E_guess_mu_IC, E_guess_sd_IC = stack_stats(E_guess_all_IC)
+    rel_DA_mu_IC,  rel_DA_sd_IC  = stack_stats(rel_DA_all_IC)
+    rel_guess_mu_IC, rel_guess_sd_IC = stack_stats(rel_guess_all_IC)
 
-    # optional spread
-    E_true_sd  = E_true_all.std(axis=0)
-    E_DA_sd    = E_DA_all.std(axis=0)
-    E_guess_sd = E_guess_all.std(axis=0)
+    E_true_mu_F,  E_true_sd_F  = stack_stats(E_true_all_F)
+    E_DA_mu_F,    E_DA_sd_F    = stack_stats(E_DA_all_F)
+    E_guess_mu_F, E_guess_sd_F = stack_stats(E_guess_all_F)
+    rel_DA_mu_F,  rel_DA_sd_F  = stack_stats(rel_DA_all_F)
+    rel_guess_mu_F, rel_guess_sd_F = stack_stats(rel_guess_all_F)
 
-    rel_DA_sd    = relerr_DA_all.std(axis=0)
-    rel_guess_sd = relerr_guess_all.std(axis=0)
+    # -------------------------
+    # Plots: INITIAL
+    # -------------------------
+    plot_energy(
+        k_ref,
+        E_true_mu_IC, E_true_sd_IC,
+        E_DA_mu_IC, E_DA_sd_IC,
+        E_guess_mu_IC, E_guess_sd_IC,
+        title="Average Energy Spectrum (Initial Condition)",
+        outname="avg_energy_spectrum_IC.png",
+    )
+    plot_relerr(
+        k_ref,
+        rel_DA_mu_IC, rel_DA_sd_IC,
+        rel_guess_mu_IC, rel_guess_sd_IC,
+        title="Average Relative Spectral Error (Initial Condition)",
+        outname="avg_relative_error_IC.png",
+    )
 
-    # =========================
-    # Plot 1: Energy spectra
-    # =========================
-    fig1, ax1 = plt.subplots(figsize=(9, 6))
+    # -------------------------
+    # Plots: FINAL
+    # -------------------------
+    plot_energy(
+        k_ref,
+        E_true_mu_F, E_true_sd_F,
+        E_DA_mu_F, E_DA_sd_F,
+        E_guess_mu_F, E_guess_sd_F,
+        title="Average Energy Spectrum (Final Condition)",
+        outname="avg_energy_spectrum_final.png",
+    )
+    plot_relerr(
+        k_ref,
+        rel_DA_mu_F, rel_DA_sd_F,
+        rel_guess_mu_F, rel_guess_sd_F,
+        title="Average Relative Spectral Error (Final Condition)",
+        outname="avg_relative_error_final.png",
+    )
 
-    ax1.plot(k_ref, E_true_mu,  label="True",  lw=2)
-    ax1.plot(k_ref, E_DA_mu,    label="DA",    lw=2)
-    ax1.plot(k_ref, E_guess_mu, label="Guess", lw=2)
-
-    ax1.fill_between(k_ref, E_true_mu - E_true_sd,  E_true_mu + E_true_sd,  alpha=0.2)
-    ax1.fill_between(k_ref, E_DA_mu   - E_DA_sd,    E_DA_mu   + E_DA_sd,    alpha=0.2)
-    ax1.fill_between(k_ref, E_guess_mu - E_guess_sd, E_guess_mu + E_guess_sd, alpha=0.2)
-
-    ax1.set_xlabel(r"$k$")
-    ax1.set_ylabel(r"$E(k)$")
-    ax1.set_yscale("log")
-    ax1.set_title("Average Energy Spectrum")
-    ax1.legend()
-    ax1.grid(True, which="both", ls="--", alpha=0.4)
-
-    fig1.savefig(os.path.join(save_root, "avg_energy_spectrum.png"), dpi=200)
-    plt.close(fig1)
-
-    # =========================
-    # Plot 2: Relative error
-    # =========================
-    fig2, ax2 = plt.subplots(figsize=(9, 6))
-
-    ax2.plot(k_ref, rel_DA_mu,    label="DA / True",    lw=2)
-    ax2.plot(k_ref, rel_guess_mu, label="Guess / True", lw=2)
-
-    ax2.fill_between(k_ref, rel_DA_mu - rel_DA_sd, rel_DA_mu + rel_DA_sd, alpha=0.2)
-    ax2.fill_between(k_ref, rel_guess_mu - rel_guess_sd, rel_guess_mu + rel_guess_sd, alpha=0.2)
-
-    ax2.set_xlabel(r"$k$")
-    ax2.set_ylabel("Relative Error")
-    ax2.set_yscale("log")
-    ax2.set_title("Average Relative Spectral Error")
-    ax2.legend()
-    ax2.grid(True, which="both", ls="--", alpha=0.4)
-
-    fig2.savefig(os.path.join(save_root, "avg_relative_error.png"), dpi=200)
-    plt.close(fig2)
-
-    
-                
 
 def global_post_main(df: pd.DataFrame, base_root: str) -> None:
     """

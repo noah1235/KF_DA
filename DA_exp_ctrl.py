@@ -2,8 +2,9 @@ from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.Solver.KF_intergrators import KF_LPT_PS_RHS, create_trj_generator, create_trj_sens_generator
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import L_BFGS, NCSR1, NCSR1_and_LBFGS
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch, Cubic_TR, Armijo_TR
+from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, NCSR1_and_LBFGS
+from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
+from SRC.DA_Comp.optimization.parent_classes import Psuedo_Projection
 from SRC.utils import load_data
 import numpy as np
 from SRC.Solver.IC_gen import init_particles_vector
@@ -59,38 +60,36 @@ def main():
         n = 4,
         NDOF = 128,
         dt = 1e-2,
-        total_T=1000,
-        min_samp_T=50,
+        total_T=int(1e6),
+        min_samp_T=100,
         t_skip=1e-1
     )
 
     BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10)
 
     DA_opts = DA_Opts(
-        n_particles_list=[30],
-        NT_list=[21],
+        n_particles_list=[10],
+        NT_list=[9],
         part_opts=Particle_Opts(St=0, beta=0),
         PIC_seed_list=[0],
-        num_opt_inits=1,
-        TIC_seed_list=[0],
-        ic_init=AI(min_norm=1, max_norm=2),
+        num_opt_inits=50,
+        TIC_seed_list=[0, 1, 2, 3, 4],
+        ic_init=AI(min_norm=.1, max_norm=jnp.inf),
         #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[3],
+        T_list=[3.3],
         optimizer_list=[
-            #NCSR1(its=50, eps_H=1e-7, max_memory=20,
-            #      ls=BT_ls, 
-                  #ls=Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                  #ls=Armijo_TR(p=2),
-            #      SR1_type="mod",
-            #      print_loss=True
-            #      ),
-            L_BFGS(
+            BFGS(
                 ls=BT_ls, 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                 its=100, max_mem=20, eps_H=1e-7, print_loss=True),
+                psuedo_proj=Psuedo_Projection(it_list=[24, 49, 74], T=.25),
+                 its=200, max_mem=20, eps_H=1e-10, print_loss=True),
+            #BFGS(
+            #    ls=BT_ls, 
+                #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
+            #its=200, max_mem=20, eps_H=1e-10, print_loss=True)
         ],
         vp_list=[None, 
-                 #VP_Float_Settings(mbits=4, minv=1e-3, maxv=10),
+                #VP_Float_Settings(mbits=4, minv=1e-3, maxv=10),
                  #VP_Float_Settings(mbits=8, minv=1e-3, maxv=10),
                  #VP_Float_Settings(mbits=12, minv=1e-3, maxv=10)
                  ],
@@ -109,9 +108,10 @@ def main():
         ),
     )
 
-    DA_exp_main(kf_opts, DA_opts, root)
+    #DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
     df = pd.read_parquet(os.path.join(root, "results.parquet"))
+    df = df.dropna()
     global_post_main(df, root)
 
 def adjoint_test():
