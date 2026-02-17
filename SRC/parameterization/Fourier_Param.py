@@ -45,7 +45,7 @@ class Fourier_Param:
             raise ValueError(f"Expected omega_hat shape {self.full_shape}, got {omega_hat.shape}")
 
         # Ensure we're packing from a complex array
-        omega_hat = omega_hat.astype(jnp.complex128, copy=False)
+        #omega_hat = omega_hat.astype(jnp.complex128, copy=False)
 
         U_small = omega_hat[self._KY, self._KX]     # (nky, nkx) complex
         flat = U_small.reshape(-1)                  # (nn,) complex
@@ -61,15 +61,21 @@ class Fourier_Param:
         z = jnp.asarray(z)
         if z.shape != (self.out_dim,):
             raise ValueError(f"Expected z shape ({self.out_dim},), got {z.shape}")
+        if z.dtype == jnp.float32:
+            c_dtype = jnp.complex64
+        elif z.dtype == jnp.float64:
+            c_dtype = jnp.complex128
+        else:
+            raise TypeError(f"Unsupported dtype: {z.dtype}")
 
         # Work in float64 so complex128 comes out cleanly
-        z = z.astype(jnp.float64, copy=False)
+        #z = z.astype(jnp.float64, copy=False)
 
         re = z[: self.nn].reshape(self.small_shape)
         im = z[self.nn :].reshape(self.small_shape)
         U_small = re + 1j * im                      # complex128
 
-        omega_hat_full = jnp.zeros(self.full_shape, dtype=jnp.complex128)
+        omega_hat_full = jnp.zeros(self.full_shape, dtype=c_dtype)
         omega_hat_full = omega_hat_full.at[self._KY, self._KX].set(U_small)
         return omega_hat_full
 

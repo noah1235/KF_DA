@@ -7,6 +7,7 @@ import matplotlib as mpl
 from create_results_dir import create_results_dir
 from SRC.DA_Comp.case_post_proc import radial_spectral_error
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import scipy.stats as stats
 
 def plot_opt_comp(optimizer, opt_df, root):
     # Figure for average optimizer performance (across all optimizers)
@@ -107,19 +108,131 @@ def loss_transformation(loss, k=1.5, eps=0):
 
 def plot_recon_vs_loss(recon, loss, save_path, ylim=None):
     fig, ax = plt.subplots(figsize=(6, 4))
-    plt.scatter(loss, recon)
+    plt.scatter(loss, recon, s=10, alpha=1.0, color="red")
+    plt.hist2d(loss, recon, bins=20, cmap="viridis", alpha=0.6)
+    plt.colorbar()
     if ylim is not None:
         plt.ylim(ylim[0], ylim[1])
+    plt.xlim(-3, 3)
     fig.tight_layout()
     save_svg(mpl, fig, save_path)
     plt.close(fig)
 
-def plot_performance(fp_df, save_root):
+def fd_bins(x):
+    """Compute number of bins using Freedman–Diaconis rule."""
+    x = np.asarray(x)
+    n = len(x)
+    if n < 2:
+        return 1
+
+    q75, q25 = np.percentile(x, [75, 25])
+    iqr = q75 - q25
+    if iqr == 0:
+        return int(np.sqrt(n))  # fallback
+
+    bin_width = 2 * iqr * n ** (-1/3)
+    if bin_width == 0:
+        return int(np.sqrt(n))
+
+    return max(1, int(np.ceil((x.max() - x.min()) / bin_width)))
+
+
+def plot_recon_conditional(recon, loss, save_path, per_list=(10, 20, 50, 100)):
+    """
+    Each row: histogram of recon conditioned on best x% of loss.
+    Also saves a second figure of mean ± std vs percent.
+    """
+    recon = np.asarray(recon).ravel()
+    loss  = np.asarray(loss).ravel()
+    assert recon.shape == loss.shape, "recon and loss must have the same shape"
+
+    n = len(loss)
+    order = np.argsort(loss)  # ascending: best first
+
+    # store stats for summary plot
+    means = []
+    stds = []
+    counts = []
+
+    # -----------------------
+    # Histogram figure
+    # -----------------------
+    fig, axes = plt.subplots(
+        nrows=len(per_list), ncols=1,
+        figsize=(7, 2.2 * len(per_list)),
+        sharex=True,
+        constrained_layout=True
+    )
+    if len(per_list) == 1:
+        axes = [axes]
+
+    for ax, p in zip(axes, per_list):
+        k = max(1, int(np.ceil(p / 100 * n)))
+        idx = order[:k]
+        recon_p = recon[idx]
+
+        mu = np.mean(recon_p)
+        sigma = np.std(recon_p)
+
+        means.append(mu)
+        stds.append(sigma)
+        counts.append(k)
+
+        # histogram
+        ax.hist(recon_p, bins="fd", density=True)
+        ax.axvline(mu, linestyle="--")
+
+        ax.text(
+            0.02, 0.95,
+            f"μ={mu:.3f}, σ={sigma:.3f}",
+            transform=ax.transAxes,
+            verticalalignment="top"
+        )
+
+        ax.set_ylabel("density")
+        ax.set_title(f"recon | loss in best {p}% (n={k})")
+
+    axes[-1].set_xlabel("recon")
+    fig.savefig(save_path, dpi=200)
+    plt.close(fig)
+
+    # -----------------------
+    # Mean vs percent figure
+    # -----------------------
+    per_array = np.array(per_list)
+    means = np.array(means)
+    stds = np.array(stds)
+
+    fig2 = plt.figure(figsize=(6, 4))
+    plt.errorbar(per_array, means, yerr=stds, marker="o", capsize=4)
+    plt.xlabel("Best loss percentile (%)")
+    plt.ylabel("recon mean ± std")
+    plt.title("Conditional recon statistics")
+    plt.grid(True, alpha=0.3)
+
+    # save with modified filename
+    base, ext = save_path.rsplit(".", 1)
+    save_path_stats = f"{base}_stats.{ext}"
+    fig2.savefig(save_path_stats, dpi=200)
+    plt.close(fig2)
+
+
+#metric="final_snap_cos_sim"
+def plot_performance(fp_df, save_root, metric="final_snap_rel_error"):
+    metric="final_snap_cos_sim"
     loss_traces = np.vstack(fp_df["loss_record"].to_numpy())
     final_loss = loss_traces[:, -1]
     save_histogram(final_loss, os.path.join(save_root, "loss_hist.svg"))
     loss_stand = loss_transformation(final_loss)
-    plot_recon_vs_loss(fp_df["final_snap_cos_sim"], loss_stand, os.path.join(save_root, "final_snap_cos_sim_vs_loss.svg"), (0, 1))
+
+    fig = plt.figure()
+    stats.probplot(loss_stand, dist="norm", plot=plt)
+
+    fig.savefig(os.path.join(save_root, "qq_plot.png"), dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    plot_recon_vs_loss(fp_df[f"{metric}"], loss_stand, os.path.join(save_root, f"{metric}_vs_loss.svg"), (0, 1))
+    plot_recon_conditional(fp_df[f"{metric}"], loss_stand, os.path.join(save_root, f"{metric}_loss_cond.svg"), per_list=(10, 20, 50, 100))
 
 
 def plot_feilds(
@@ -380,6 +493,7 @@ def global_post_main(df: pd.DataFrame, base_root: str) -> None:
                                 os.makedirs(IC_param_root, exist_ok=True)
                                 plot_opt_comp(optimizer, IC_param_df, IC_param_root)
                                 plot_performance(IC_param_df, IC_param_root)
-                                plot_feilds(IC_param_df, T, n_part, NT, loss_crit, optimizer, fp, IC_param_root, base_root)
+                                #plot_feilds(IC_param_df, T, n_part, NT, loss_crit, optimizer, fp, IC_param_root, base_root)
+
 
 

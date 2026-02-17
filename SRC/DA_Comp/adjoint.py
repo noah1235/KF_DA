@@ -68,6 +68,8 @@ class Adjoint_Stepper_1:
 
 
     def g(self, omega_hat_flat, i):
+        if self.target_trj is None:
+            return 0
         omega_DA = omega_hat_flat.reshape(self.snap_shape)
         omega_trg = self.target_trj[0][i]
         xp_trg, yp_trg = self.target_trj[1][i], self.target_trj[2][i]
@@ -98,7 +100,6 @@ class Adjoint_Stepper_1:
         return lam_n, g_val
 
 # ---------- Second-order (Hessian) adjoint stepper ----------
-
 class Adjoint_Stepper_2:
     """
     Second-order adjoint stepper.
@@ -429,7 +430,6 @@ def get_loss_grad_conditional_vp_fn(
 
     nsteps_total = int(T / dt)
     mbits_segments = get_mbits_segments(mbits, nsteps_total, dt, LLE, uniform)
-    print(mbits_segments)
 
     def loss_grad_vp_fn(loss_ub, Z0):
         # 1) Transform IC and get linearization
@@ -447,7 +447,7 @@ def get_loss_grad_conditional_vp_fn(
             mbits_segments,
         )
 
-        state_dim = omega0_hat_flat.size  # same as len(omega0_hat_flat)
+        state_dim = omega0_hat_flat.size  
 
         def do_grad(_):
             # 3) Terminal adjoint
@@ -581,10 +581,10 @@ def get_loss_grad_fn(crit, target_trj, stepper, transform_fn, snap_shape, nsteps
 
     return loss_grad_fn
 
-def get_forced_adj_shooting(crit, target_trj, stepper, transform_fn, snap_shape, nsteps):
+def get_forced_adj_shooting(stepper, transform_fn, snap_shape, nsteps):
     stepper_flat = lambda x: stepper(x.reshape(*snap_shape)).reshape(-1)
     adj_step_1 = Adjoint_Stepper_1(
-        crit, target_trj, stepper_flat, stepper.NS.vort_hat_2_vel_hat, snap_shape
+        None, None, stepper_flat, stepper.NS.vort_hat_2_vel_hat, snap_shape
     )
     integrator = Omega_Integrator(stepper)
 
@@ -595,7 +595,6 @@ def get_forced_adj_shooting(crit, target_trj, stepper, transform_fn, snap_shape,
         """
         # 1) Transform IC and get linearization
         omega0_hat, lin = jax.linearize(transform_fn, Z0)
-
         # 2) Forward trajectory
         DA_trj = integrator.integrate_scan(omega0_hat, nsteps)
         N = DA_trj.shape[0]
@@ -603,10 +602,10 @@ def get_forced_adj_shooting(crit, target_trj, stepper, transform_fn, snap_shape,
 
         # Backward scan over i = 0..N-2 (reverse=True makes it go N-2 -> 0)
         xs = (DA_trj[:-1], jnp.arange(N - 1))
-
         def grad_step(carry, x):
             lam_next = carry
             U_i, i = x
+
             lam_i = adj_step_1.df__du_v_fn(U_i, lam_next)
             return lam_i, lam_i      # collect lam_i
 
@@ -618,7 +617,6 @@ def get_forced_adj_shooting(crit, target_trj, stepper, transform_fn, snap_shape,
         )
 
         lam_0 = carry_final
-
         # lam_hist is (N-1, state_dim) containing [lam_0, lam_1, ..., lam_{N-2}]
         # Append terminal lam_N to get full (N, state_dim): [lam_0, ..., lam_{N-2}, lam_N]
         lam_trj = jnp.concatenate([lam_hist, lam_N[None, :]], axis=0)
@@ -634,6 +632,79 @@ def get_forced_adj_shooting(crit, target_trj, stepper, transform_fn, snap_shape,
 
     return forced_adj_shooting
 
+
+def get_forced_adj_shooting_vp(stepper, transform_fn, snap_shape,
+                                dt, T, mbits, exp_bits, exp_bias, uniform, LLE,
+                                ):
+    
+    stepper_flat = lambda x: stepper(x.reshape(*snap_shape)).reshape(-1)
+    adj_step_1 = Adjoint_Stepper_1(
+        None, None, stepper_flat, stepper.NS.vort_hat_2_vel_hat, snap_shape
+    )
+
+    nsteps_total = int(T / dt)
+    mbits_segments = get_mbits_segments(mbits, nsteps_total, dt, LLE, uniform)
+
+    def forced_adj_shooting(Z0, lam_N):
+        # 1) Transform IC and get linearization
+        omega0_hat, lin = jax.linearize(transform_fn, Z0)
+        omega0_hat_flat = omega0_hat.reshape(-1)
+
+        # 2) Forward trajectory
+        sign_trj, exp_trj, mant_trj, loss, U_N = integrate_scan_vp_save(
+            stepper_flat,
+            omega0_hat_flat,
+            adj_step_1.g,
+            nsteps_total,
+            exp_bits,
+            exp_bias,
+            mbits_segments,
+        )
+
+        state_dim = omega0_hat_flat.size  
+
+        # Preallocate full trajectory (only meaningful if requested)
+        lam_trj = jnp.zeros((nsteps_total + 1, state_dim), dtype=lam_N.dtype)
+        lam_trj = lam_trj.at[nsteps_total].set(lam_N)
+
+        state_end_idx = nsteps_total
+        idx = len(mbits_segments) - 1
+
+        for mbits, nsteps in reversed(mbits_segments):
+            i_idx = jnp.arange(state_end_idx - nsteps, state_end_idx)  # times for this segment
+            xs = (sign_trj[idx], exp_trj[idx], mant_trj[idx], i_idx)
+
+            def grad_step(lam_next, x):
+                sign_i, exp_i, mant_i, i = x
+                U_i = join_f64_via_callback(
+                    sign_i, exp_i, mant_i,
+                    state_dim,
+                    exp_bits, exp_bias, mbits
+                )
+                lam_i = adj_step_1.df__du_v_fn(U_i, lam_next)
+                return lam_i, lam_i 
+
+            lam_0, lam_trj = lax.scan(
+                grad_step,
+                lam_N,
+                xs,
+                reverse=True,
+            )
+
+            lam_N = lam_0
+            state_end_idx -= nsteps
+            idx -= 1
+
+        # Gradient in transformed coordinates at time 0
+        grad_t = lam_0.reshape(snap_shape)
+
+        # Backprop through transform_fn
+        lin_T = jax.linear_transpose(lin, Z0)
+        (grad_x,) = lin_T(grad_t)
+        lam_trj = jnp.concatenate([lam_trj, lam_N[None, :]], axis=0)
+        return grad_x, lam_trj
+
+    return forced_adj_shooting
 
 class Adjoint_Solver:
     def __init__(self, pIC, crit, target_trj, stepper, transform_fn,

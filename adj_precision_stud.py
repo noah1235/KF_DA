@@ -14,25 +14,99 @@ from jax import config
 from create_results_dir import create_results_dir
 from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
-from SRC.DA_Comp.adjoint import get_loss_grad_vp_fn, get_loss_grad_fn
+from SRC.DA_Comp.adjoint import get_loss_grad_vp_fn, get_loss_grad_fn, get_forced_adj_shooting_vp, get_forced_adj_shooting
 from SRC.parameterization.Fourier_Param import Fourier_Param
 from SRC.plotting_utils import save_svg
 from SRC.Solver.IC_gen import init_particles_vector
-from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper, create_omega_part_gen_fn
+from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper, create_omega_part_gen_fn, Omega_Integrator
 from SRC.utils import load_data
 from SRC.vp_floats.vp_py_utils import choose_exponent_format, float_pos_range
 
 config.update("jax_enable_x64", True)
 
 
+def smooth_periodic_field_fft(
+    key: jax.random.PRNGKey,
+    N: int,
+    norm: float,
+    dtype,
+    *,
+    k0: float = 8.0,
+    p: float = 4.0,
+    zero_mean: bool = True,
+):
+    """
+    Generate the rFFT of a smooth, real, square, periodic random field on an (N,N) grid.
+
+    We sample complex Gaussian coefficients on the rFFT half-plane (kx full, ky>=0),
+    apply a smooth low-pass spectral filter
+        filter(k) = exp(-( |k| / k0 )^p),
+    and then scale so the *physical-space* field u = irfft2(u_hat) has L2 norm == norm.
+
+    Parameters
+    ----------
+    key : jax.random.PRNGKey
+    N : int
+        Grid size (N x N).
+    norm : float
+        Desired L2 norm of the real physical-space field.
+    dtype : jnp.complex64 or jnp.complex128
+        dtype of the returned rFFT coefficients u_hat.
+    k0 : float
+        Spectral cutoff scale (in index-frequency units).
+    p : float
+        Smoothness exponent. Larger => smoother.
+    zero_mean : bool
+        If True, set the (0,0) mode to 0.
+
+    Returns
+    -------
+    u_hat : jax.Array, shape (N, N//2 + 1)
+        rFFT coefficients suitable for jnp.fft.irfft2(u_hat, s=(N,N)).
+    """
+    if dtype not in (jnp.complex64, jnp.complex128):
+        raise ValueError("dtype must be complex64 or complex128")
+
+    real_dtype = jnp.float32 if dtype == jnp.complex64 else jnp.float64
+    nky = N // 2 + 1
+
+    # Frequencies in "index" units (0.., -.. for kx; 0..N/2 for ky)
+    kx = (jnp.fft.fftfreq(N, d=1.0).astype(real_dtype) * N)[:, None]     # (N,1)
+    ky = (jnp.fft.rfftfreq(N, d=1.0).astype(real_dtype) * N)[None, :]    # (1,nky)
+    k_mag = jnp.sqrt(kx**2 + ky**2)
+
+    filt = jnp.exp(-((k_mag / jnp.asarray(k0, real_dtype)) ** jnp.asarray(p, real_dtype)))
+    filt = filt.astype(real_dtype)
+
+    # Sample complex Gaussian on rFFT grid
+    key_r, key_i = jax.random.split(key)
+    real = jax.random.normal(key_r, shape=(N, nky), dtype=real_dtype)
+    imag = jax.random.normal(key_i, shape=(N, nky), dtype=real_dtype)
+    a_hat = (real + 1j * imag) / jnp.sqrt(jnp.asarray(2.0, real_dtype))
+    a_hat = (a_hat * filt).astype(dtype)
+
+    # Enforce the "purely real" constraints on the rFFT boundary modes
+    # ky = 0 and (if N even) ky = N/2 must be real for a real field.
+    a_hat = a_hat.at[:, 0].set(jnp.real(a_hat[:, 0]) + 0j)
+    if N % 2 == 0:
+        a_hat = a_hat.at[:, -1].set(jnp.real(a_hat[:, -1]) + 0j)
+
+    if zero_mean:
+        a_hat = a_hat.at[0, 0].set(0.0 + 0.0j)
+
+    # Normalize in physical space
+    u = jnp.fft.irfft2(a_hat, s=(N, N))
+    u_norm = jnp.linalg.norm(u)
+    u = jnp.where(u_norm > 0, (norm / u_norm) * u, u)
+
+    # Return rFFT of the normalized field (guarantees consistency with real u)
+    u_hat = jnp.fft.rfft2(u).astype(dtype)
+    return u_hat
+
 # =========================
 # Core experiment
 # =========================
 def run_test(
-    crit,
-    trj_gen_fn,
-    pIC,
-    stepper,
     kf_stepper,
     IC_param,
     dt,
@@ -44,6 +118,8 @@ def run_test(
     LLE,
     attractor_snapshots,
     double,
+    k0,
+    p,
     idxs_DA,
     idxs_trg
 ):
@@ -51,21 +127,31 @@ def run_test(
     cos_sims = []
     adj_rel_error_v_time = []  # list of (time,) arrays, one per DA sample (across all trg)
 
+    f_norm = jnp.linalg.norm(attractor_snapshots, axis=(1, 2))
+    f_norm = jnp.mean(f_norm)
+
+
+    if double:
+        dtype = jnp.complex128
+    else:
+        dtype = jnp.complex64
     for idx_trg in idxs_trg:
-        omega0_hat = attractor_snapshots[idx_trg]
-        if double:
-            omega0_hat = omega0_hat.astype(jnp.complex128)
-        else:
-            omega0_hat = omega0_hat.astype(jnp.complex64)
-        target_trj = trj_gen_fn(omega0_hat, *pIC)
+        key = jax.random.PRNGKey(idx_trg)
+        #trg_snap = attractor_snapshots[10]
+        #u_hat_trg, v_hat_trg = kf_stepper.NS.vort_hat_2_vel_hat(trg_snap)
+        #u_trg, v_trg = jnp.fft.irfft2(u_hat_trg), jnp.fft.irfft2(v_hat_trg)
 
-        loss_fn = create_loss_fn(crit, stepper, target_trj, IC_param.inv_transform)
-        loss_grad_fn_auto = jax.jit(jax.value_and_grad(loss_fn))  # kept (unused), do not change logic
-
+        #def g(x_hat):
+        #    u_hat, v_hat = kf_stepper.NS.vort_hat_2_vel_hat(x_hat)
+        #    u, v = jnp.fft.irfft2(u_hat), jnp.fft.irfft2(v_hat)
+        #    MSE_u = jnp.mean((u - u_trg)**2)
+        #    MSE_v = jnp.mean((v - v_trg)**2)
+        #    return (MSE_u + MSE_v)/2
+        
+    
+        lam_N = smooth_periodic_field_fft(key, attractor_snapshots.shape[1], f_norm, dtype, p=p, k0=k0).reshape(-1)
         loss_grad_fn_adj_double = jax.jit(
-            get_loss_grad_fn(
-                crit,
-                target_trj,
+            get_forced_adj_shooting(
                 kf_stepper,
                 IC_param.inv_transform,
                 (attractor_snapshots.shape[1], attractor_snapshots.shape[2]),
@@ -73,9 +159,7 @@ def run_test(
             )
         )
 
-        loss_grad_fn_adj = get_loss_grad_vp_fn(
-            crit,
-            target_trj,
+        loss_grad_fn_adj = get_forced_adj_shooting_vp(
             kf_stepper,
             IC_param.inv_transform,
             (attractor_snapshots.shape[1], attractor_snapshots.shape[2]),
@@ -86,35 +170,26 @@ def run_test(
             exp_bias=exp_bias,
             uniform=uniform,
             LLE=LLE,
-            return_lam_trj=True,
         )
         loss_grad_fn_adj = jax.jit(loss_grad_fn_adj)
 
         for idx in idxs_DA:
             omega0_DA_hat = attractor_snapshots[idx]
-            Z = IC_param.transform(omega0_DA_hat)
-
-            loss_true, grad_true, adj_trj_double = loss_grad_fn_adj_double(Z)
-            loss_adj, grad_adj, adj_trj = loss_grad_fn_adj(Z)
-
             if not double:
-                grad_true = grad_true.astype(jnp.float32)
-                grad_adj = grad_adj.astype(jnp.float32)
-
-                adj_trj_double = adj_trj_double.astype(jnp.float32)
-                adj_trj = adj_trj.astype(jnp.float32)
-
-            rel = (
-                jnp.linalg.norm(adj_trj_double - adj_trj, axis=1)
-                / jnp.linalg.norm(adj_trj_double, axis=1)
+                omega0_DA_hat = omega0_DA_hat.astype(jnp.complex64)
+            Z = IC_param.transform(omega0_DA_hat)
+            grad_true, adj_trj_double = loss_grad_fn_adj_double(Z, lam_N)
+            grad_adj, adj_trj = loss_grad_fn_adj(Z.astype(jnp.float64), lam_N.astype(jnp.complex128))
+            adj_trj_error = (
+                jnp.linalg.norm(adj_trj_double - adj_trj, axis=1) / jnp.linalg.norm(adj_trj_double, axis=1)
             )
-            adj_rel_error_v_time.append(rel)
+
+            adj_rel_error_v_time.append(adj_trj_error)
 
             grad_err = jnp.linalg.norm(grad_adj - grad_true) / jnp.linalg.norm(grad_true)
             cos_sim = jnp.dot(grad_true, grad_adj) / (
                 jnp.linalg.norm(grad_true) * jnp.linalg.norm(grad_adj)
             )
-
             print(
                 f"[mbits={mbits}] Sample idx={idx}, "
                 f"Grad % err={grad_err:.2e}, Cos sim={cos_sim:.6f}"
@@ -122,6 +197,7 @@ def run_test(
 
             grad_errs.append(grad_err)
             cos_sims.append(cos_sim)
+
 
     grad_errs = jnp.array(grad_errs)
     cos_sims = jnp.array(cos_sims)
@@ -152,10 +228,6 @@ def run_test(
 def collect_stats_over_mbits(
     mbits_list,
     *,
-    crit,
-    trj_gen_fn,
-    pIC,
-    stepper,
     kf_stepper,
     IC_param,
     dt,
@@ -166,6 +238,8 @@ def collect_stats_over_mbits(
     LLE,
     attractor_snapshots,
     double,
+    k0,
+    p,
     nreps_DA=20,
     nreps_trg=5
 ):
@@ -201,10 +275,6 @@ def collect_stats_over_mbits(
         print(f"[mbits={mbits}] range = {mint:.2e} .. {maxt:.2e}")
 
         stats = run_test(
-            crit,
-            trj_gen_fn,
-            pIC,
-            stepper,
             kf_stepper,
             IC_param,
             dt,
@@ -216,6 +286,8 @@ def collect_stats_over_mbits(
             LLE,
             attractor_snapshots,
             double,
+            k0,
+            p,
             idxs_DA,
             idxs_trg
         )
@@ -305,7 +377,6 @@ def save_results_excel(results: dict, path: str, filename: str = "vpfloats_sweep
 
     return xlsx_path
 
-
 # =========================
 # Curve fit helpers (NEW)
 # =========================
@@ -330,7 +401,6 @@ def fit_exp_on_mean(mean_err: np.ndarray, dt: float, *, skip: int = -40, eps: fl
 
     return float(A), float(lam), float(logA), t_fit, mean_err_fit, int(t_fit.shape[0])
 
-
 def write_fit_params_into_results(results: dict, df: pd.DataFrame) -> dict:
     """
     Copy exp-fit params from the df (one row per mbits) into results["by_mbits"][mbits].
@@ -343,7 +413,6 @@ def write_fit_params_into_results(results: dict, df: pd.DataFrame) -> dict:
         d["expfit_logA"] = float(row["expfit_logA"])
         d["expfit_npts"] = int(row["expfit_npts"])
     return results
-
 
 # =========================
 # Plotting
@@ -363,7 +432,6 @@ def plot_metrics_vs_mbits(df, path, dt):
     # ---------------------------
     p = np.array(mb)
     err = np.array(df["grad_mean"])
-    err_std = np.array(df["grad_std"])  # kept (unused), do not change logic
 
     p_ref = p[-1]
     err_ref = err[-1]
@@ -392,7 +460,7 @@ def plot_metrics_vs_mbits(df, path, dt):
     plt.close(fig)
 
     # ---------------------------
-    # Rel error vs reverse-time + exp fit
+    # Rel error vs reverse-time
     # Plot mean + all individual curves in lighter grey
     # Store fit params into df
     # ---------------------------
@@ -422,7 +490,9 @@ def plot_metrics_vs_mbits(df, path, dt):
         # use same slicing logic as plot
         mean_fit = mean_err[:skip][::-1]
         t_fit = t[:skip]
+        r = np.corrcoef(t_fit, mean_fit)[0, 1]
 
+        print(f"Correlation coefficient r = {r:.4f}")
         # fit: mean_fit ≈ a + b*t
         b, a = np.polyfit(t_fit, mean_fit, 1)
         fit_curve = a + b * t_fit
@@ -448,45 +518,56 @@ def plot_metrics_vs_mbits(df, path, dt):
 
     return df
 
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
 def plot_fit_params_v_m(df, path):
     mbits = df["mbits"].to_numpy()
     y_int = df["y_int"].to_numpy()
     slope = df["slope"].to_numpy()
+
     eps = 1e-12
-    slope = np.maximum(slope, eps)
-    # log2 transform
-    y = np.log2(y_int)
+    y_int_clip = np.maximum(y_int, eps)
+    slope_clip = np.maximum(slope, eps)
 
-    # linear fit: y ≈ alpha*m + log2C
-    alpha, log2C = np.polyfit(mbits, y, 1)
+    # -------------------------
+    # Fit #1: y_int ≈ C * 2^(alpha * m)
+    # -------------------------
+    y1 = np.log2(y_int_clip)
+    alpha1, log2C1 = np.polyfit(mbits, y1, 1)
+    C1 = 2 ** log2C1
+    y_int_fit = C1 * 2 ** (alpha1 * mbits)
 
-    C = 2 ** log2C
-
-    print(f"Fit: A ≈ {C:.3e} * 2^({alpha:.3f} * mbits)")
-
-    # fitted curve
-    alpha = -1.0
-    A_fit = C * 2 ** (alpha * mbits)
-
-    # plot
     fig = plt.figure()
     plt.plot(mbits, y_int, "o-", label="measured")
-    plt.plot(mbits, A_fit, "--", label=f"fit: {C:.2e}·2^({alpha:.2f} m)")
+    plt.plot(mbits, y_int_fit, "--", label=f"fit: {C1:.2e}·2^({alpha1:.2f} m)")
     plt.yscale("log")
     plt.xlabel("mbits")
     plt.ylabel("y int")
     plt.legend()
-    save_svg(plt, fig, os.path.join(path, f"y_int_vs_mbits.svg"))
+    plt.ylim(1e-6, 1e-1)
+    save_svg(plt, fig, os.path.join(path, "y_int_vs_mbits.svg"))
     plt.close(fig)
 
+    # -------------------------
+    # Fit #2: slope ≈ C_s * 2^(alpha_s * m)
+    # -------------------------
+    y2 = np.log2(slope_clip)
+    alpha2, log2C2 = np.polyfit(mbits, y2, 1)
+    C2 = 2 ** log2C2
+    slope_fit = C2 * 2 ** (alpha2 * mbits)
 
     fig = plt.figure()
     plt.plot(mbits, slope, "o-", label="measured")
+    plt.plot(mbits, slope_fit, "--", label=f"fit: {C2:.2e}·2^({alpha2:.2f} m)")
     plt.xlabel("mbits")
     plt.ylabel("slope")
     plt.yscale("log")
-    save_svg(plt, fig, os.path.join(path, f"slope_fit_vs_mbits.svg"))
+    plt.legend()
+    save_svg(plt, fig, os.path.join(path, "slope_fit_vs_mbits.svg"))
     plt.close(fig)
+
 
 # =========================
 # Main driver
@@ -497,8 +578,8 @@ def adjoint_test():
         n=4,
         NDOF=128,
         dt=1e-2,
-        total_T=1000,
-        min_samp_T=50,
+        total_T=int(1e6),
+        min_samp_T=100,
         t_skip=1e-1,
     )
     T_LLE = 3.3
@@ -506,59 +587,23 @@ def adjoint_test():
     LLE = 1 / (T_LLE)
     IC_param = Fourier_Param(kf_opts.NDOF, 64)
     double = True
-    npart = 16
-    NT = 1
+    k0 = 16.0
+    p = 4.0
+
     T = T_LLE * 1
     mbits_list = np.arange(2, 16, 2)
-    # mbits_list = [10]
-
+    #mbits_list = [10]
     minv, maxv = 1, 5e4
-    seed = 10
 
-    if NT == 1:
-        t_mask = np.zeros(int(T / kf_opts.dt) + 1)
-        t_mask[-1] = 1
-        t_mask = jnp.array(t_mask)
-    else:
-        samp_period = T / (NT - 1)
-        period_idx = int(samp_period / kf_opts.dt)
-        idx = jnp.arange(int(T / kf_opts.dt) + 1)
-        t_mask = idx % period_idx == 0
-
-    crit = MSE_Vel()
     attractor_snapshots = load_data(kf_opts)
-
-    rng = np.random.default_rng(seed)
-    idx = rng.integers(0, attractor_snapshots.shape[0])
-    omega0_hat = attractor_snapshots[idx]
-
-    stepper = KF_TP_Stepper(
-        kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, 0, 0, npart, double=double
-    )
-    kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt)
-
-    u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega0_hat)
-    u, v = jnp.fft.irfft2(u_hat), jnp.fft.irfft2(v_hat)
-
-    pIC = init_particles_vector(
-        npart,
-        u,
-        v,
-        (0, stepper.NS.L),
-        (0, stepper.NS.L),
-        stepper.NS.L,
-        seed=1,
-    )
-
-    trj_gen_fn = create_omega_part_gen_fn(jax.jit(stepper), T)
-    crit.init_obj(t_mask, stepper.NS.L)
+    kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, double=double)
 
     exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=8)
 
     path = os.path.join(
         create_results_dir(),
         "vpfloats",
-        f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_T={T}_",
+        f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_T={T}_k0={k0}_p={p}_",
     )
     path += "uniform" if uniform else f"optimal_LLE={LLE:.3e}"
     if double:
@@ -566,15 +611,11 @@ def adjoint_test():
     else:
         path += "_f32"
 
-    RUN_AND_SAVE = False
+    RUN_AND_SAVE = True
 
     if RUN_AND_SAVE:
         results = collect_stats_over_mbits(
             mbits_list,
-            crit=crit,
-            trj_gen_fn=trj_gen_fn,
-            pIC=pIC,
-            stepper=stepper,
             kf_stepper=kf_stepper,
             IC_param=IC_param,
             dt=kf_opts.dt,
@@ -585,10 +626,12 @@ def adjoint_test():
             LLE=LLE,
             attractor_snapshots=attractor_snapshots,
             double=double,
-            # nreps_DA=2,
-            # nreps_trg=1,
+            k0=k0,
+            p=p,
+            #nreps_DA=2,
+            #nreps_trg=1,
             nreps_DA=20,
-            nreps_trg=5
+            nreps_trg=20
         )
 
 
@@ -598,14 +641,228 @@ def adjoint_test():
 
     else:
         results = load_results_pickle(path, "vpfloats_sweep.pkl")
+
+
     df = results_dict_to_df(results)
+    df = df[df["mbits"] != 2]
     df = plot_metrics_vs_mbits(df, path, kf_opts.dt)
     plot_fit_params_v_m(df, path)
     # Write parameters back into results + re-save (so dataset has the fit params)
-    results = write_fit_params_into_results(results, df)
+    #results = write_fit_params_into_results(results, df)
 
     pkl_path = save_results_pickle(results, path, "vpfloats_sweep.pkl")
     xlsx_path = save_results_excel(results, path, "vpfloats_sweep.xlsx")
+
+
+def make_roundoff_trj(key, ref_trj, p):
+    """
+    Create synthetic roundoff error trajectory.
+
+    Parameters
+    ----------
+    key : jax.random.PRNGKey
+        Random key.
+    ref_trj : jnp.ndarray
+        Reference trajectory (used for shape and dtype).
+        Shape: (T, state_dim), complex.
+    p : int
+        Number of mantissa bits (23 for float32, 52 for float64).
+
+    Returns
+    -------
+    eps_trj : jnp.ndarray
+        Synthetic roundoff error with same shape and dtype as ref_trj.
+    """
+
+    # roundoff amplitude
+    delta = 2.0 ** (-p - 1)
+
+    shape = ref_trj.shape
+    real_dtype = jnp.float32 if ref_trj.dtype == jnp.complex64 else jnp.float64
+
+    key_r, key_i = jax.random.split(key)
+
+    eps_real = jax.random.uniform(
+        key_r,
+        shape,
+        minval=-delta,
+        maxval=delta,
+        dtype=real_dtype,
+    )
+
+    eps_imag = jax.random.uniform(
+        key_i,
+        shape,
+        minval=-delta,
+        maxval=delta,
+        dtype=real_dtype,
+    )
+
+    eps_trj = eps_real + 1j * eps_imag
+    return eps_trj.astype(ref_trj.dtype)
+
+def build_sn_fn(u_0, step, N, eps_key, mbits, char_size, round_off_model):
+    integrator = Omega_Integrator(step)
+    DA_trj = integrator.integrate_scan(u_0, N)
+    if round_off_model == "indep_random":
+        eps_trj = make_roundoff_trj(eps_key, DA_trj, p=mbits)
+        eps_trj *= char_size
+    elif round_off_model == "uniform_rand":
+        eps_trj *= DA_trj
+    def run(lam_N, s_N):
+        @jax.jit
+        def backward_body(k, carry):
+            lam_n, s_n = carry
+
+            # map forward loop index k -> backward i = N-k (so u_{i-1} = DA_trj[N-k-1])
+            u_n = DA_trj[N - k - 1]
+            eps = eps_trj[N-k-1]
+
+            # VJP at base point u_n
+            _, vjp_fun = jax.vjp(step, u_n)
+
+            # VJP at perturbed point u_n + eps
+            _, vjp_eps_fun = jax.vjp(step, u_n + eps)
+
+            v = vjp_eps_fun(lam_n)[0] - vjp_fun(lam_n)[0] + s_n
+
+            # update s_n and lam_n using the *base* vjp_fun
+            s_n = vjp_fun(v)[0]
+            lam_n = vjp_fun(lam_n)[0]
+
+            return (lam_n, s_n)
+
+        # Run N steps (corresponds to i = N, N-1, ..., 1)
+        lam_n, s_n = lax.fori_loop(
+            0, N,
+            backward_body,
+            (lam_N, s_N),
+        )
+        return lam_n, s_n
+    return run
+
+def indep_test():
+    num_ic = 100
+    num_forcing = 1
+    T_mult = 1.0
+    double = True
+    k0 = 8.0
+    p = 4.0
+    #indep_rand, uniform_rand, det
+    round_off_model = "indep_random"
+
+    mbits = 8
+
+    kf_opts = KF_Opts(
+        Re=100,
+        n=4,
+        NDOF=128,
+        dt=1e-2,
+        total_T=int(1e6),
+        min_samp_T=100,
+        t_skip=1e-1,
+    )
+
+    T_LLE = 3.3
+    T = T_LLE * T_mult
+    N = int(T / kf_opts.dt)
+
+    kf_stepper = KF_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, double=double)
+    attractor_snapshots = load_data(kf_opts)
+    snap_shape = (attractor_snapshots.shape[1], attractor_snapshots.shape[2])
+
+    char_size = jnp.mean(jnp.abs(attractor_snapshots), axis=0).reshape(-1) * 10**3
+
+    @jax.jit
+    def step(x):
+        return kf_stepper(x.reshape(snap_shape)).reshape(-1)
+    
+
+    s_N = jnp.zeros((snap_shape[0]*snap_shape[1]), dtype=jnp.complex128)
+
+    # amplitude scale for random field
+    f_norm = jnp.mean(jnp.linalg.norm(attractor_snapshots, axis=(1, 2)))
+
+    dtype = jnp.complex128 if double else jnp.complex64
+
+
+    num_snaps = attractor_snapshots.shape[0]
+
+    s_sum = None
+    lam_sum = None
+    s_sq_sum = None
+    count = 0
+
+    for ic_idx in range(num_ic):
+        key_ic = jax.random.PRNGKey(ic_idx)
+        rand_idx = jax.random.randint(key_ic, (), 0, num_snaps)
+
+        u_0 = attractor_snapshots[rand_idx].reshape(-1)
+        get_sn_fn = build_sn_fn(u_0, step, N, key_ic, mbits, char_size, round_off_model)
+        for lam_N_idx in range(num_forcing):
+            key_lam = jax.random.PRNGKey(lam_N_idx)
+            lam_N = smooth_periodic_field_fft(
+                key_lam,
+                attractor_snapshots.shape[1],
+                f_norm,
+                dtype,
+                p=p,
+                k0=k0,
+            ).reshape(-1)
+
+            lam_0, s_0 = get_sn_fn(lam_N, s_N)
+            if s_sum is None:
+                s_sum = jnp.zeros_like(s_0)
+                lam_sum = jnp.zeros_like(lam_0)
+                s_sq_sum = jnp.zeros_like(s_0)
+
+            s_sum += s_0
+            lam_sum += lam_0
+            s_sq_sum += jnp.abs(s_0) ** 2
+            count += 1
+            print(count)
+
+
+    # mean
+    s_mean = s_sum / count
+    lam_mean = lam_sum / count
+
+    # variance (per component)
+    s_var = s_sq_sum / count - jnp.abs(s_mean) ** 2
+    s_std = jnp.sqrt(jnp.maximum(s_var, 0.0))
+
+    # standard error of the mean
+    sem = s_std / jnp.sqrt(count)
+
+    # 95% confidence bound
+    bound = 1.96 * sem
+
+    # test: is mean within CI?
+    within_ci = jnp.abs(s_mean) < bound
+
+    print("Max |mean|:", jnp.max(jnp.abs(s_mean) / char_size))
+    print("Max CI bound:", jnp.max(bound))
+    print("Max CI bound:", jnp.min(bound))
+    print("Fraction within 95% CI:",
+        jnp.mean(within_ci.astype(jnp.float32)))
+
+    print(jnp.linalg.norm(s_mean)/jnp.linalg.norm(lam_mean))
+
+
+def test():
+    loss_grad_fn_adj_double = jax.jit(
+    get_forced_adj_shooting(
+        kf_stepper,
+        lambda x: x,
+        (attractor_snapshots.shape[1], attractor_snapshots.shape[2]),
+        int(T / kf_opts.dt),
+    )
+)
+    grad_true, adj_trj_double = loss_grad_fn_adj_double(u_0.reshape(snap_shape), lam_N)
+    grad_true = grad_true.reshape(-1)
+    print(jnp.linalg.norm(grad_true - lam_n)/jnp.linalg.norm(grad_true))
+
+
 
 
 if __name__ == "__main__":

@@ -240,7 +240,6 @@ def avg_perf():
         opt_pp_mean = opt_pp_df[metric].mean()
         print(f"{metric}: {optimizer} mean = {opt_mean:.6g}, {optimizer_pp} mean = {opt_pp_mean:.6g}")
 
-
 def optimal_m_plot():
     # parameters
     T = 10
