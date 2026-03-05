@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from SRC.Solver.KF_intergrators import KF_PS_RHS, RK4_Step
+from Solver.KF_intergrators_dec import KF_PS_RHS, RK4_Step
 from SRC.utils import load_data
 from SRC.DA_Comp.configs import KF_Opts
 import random

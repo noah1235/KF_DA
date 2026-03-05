@@ -5,7 +5,7 @@ import math
 import matplotlib.pyplot as plt
 #from Solver.KF_intergrators import KF_PS_RHS, Time_Stepper, make_divergence_monitor, make_incompressible_ic, KF_LPT_PS_RHS, init_particles_vector
 from SRC.Solver.trj_animation import animate_particles_and_flow, animate_vorticity
-from SRC.Solver.KF_intergrators import KF_PS_RHS, Time_Stepper, KF_LPT_PS_RHS, Maxey_Riley_RHS, RK4_Step, Time_Stepper
+from Solver.KF_intergrators_dec import KF_PS_RHS, Time_Stepper, KF_LPT_PS_RHS, Maxey_Riley_RHS, RK4_Step, Time_Stepper
 from SRC.Solver.IC_gen import init_particles_vector, make_incompressible_ic
 from SRC.utils import Specteral_Upsampling, bilinear_sample_periodic
 from create_results_dir import create_results_dir

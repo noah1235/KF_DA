@@ -1,7 +1,7 @@
 # --- Project imports ---
 from SRC.DA_Comp.configs import *  # provides KF_Opts, DA_Opts, etc.
 from SRC.utils import load_data
-from SRC.Solver.KF_intergrators import (
+from Solver.KF_intergrators_dec import (
     KF_PS_RHS,
     KF_LPT_PS_RHS,
     create_trj_generator,

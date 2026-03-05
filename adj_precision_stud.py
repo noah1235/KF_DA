@@ -21,8 +21,97 @@ from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper, create_omega_part_gen_fn, Omega_Integrator
 from SRC.utils import load_data
 from SRC.vp_floats.vp_py_utils import choose_exponent_format, float_pos_range
-
+from scipy.optimize import curve_fit
+from KSE_adj_error import eta_piecewise_linear
 config.update("jax_enable_x64", True)
+
+lyap_Re100 = np.array([
+ 3.39436830e-01,
+ 2.52602822e-01,
+ 2.08957505e-01,
+ 1.71225854e-01,
+ 1.28376072e-01,
+ 1.03627456e-01,
+ 6.49729618e-02,
+ 4.84835512e-02,
+ 2.72289807e-02,
+ 3.56469465e-03,
+-3.25823890e-03,
+-1.94173525e-02,
+-3.38014049e-02,
+-5.27306059e-02,
+-6.91448927e-02,
+-8.36226010e-02,
+-9.54887895e-02,
+-1.24953527e-01,
+-1.50690809e-01,
+-1.70231006e-01,
+-1.88002303e-01,
+-2.05407481e-01,
+-2.20288769e-01,
+-2.47525143e-01,
+-2.60422973e-01,
+-2.78445629e-01,
+-2.98722845e-01,
+-3.13331447e-01,
+-3.36176138e-01,
+-3.56947663e-01,
+-3.65027149e-01,
+-3.83934359e-01,
+-4.01783225e-01,
+-4.16175938e-01,
+-4.35618804e-01,
+-4.47886311e-01,
+-4.55225585e-01,
+-4.72889664e-01,
+-4.95852446e-01,
+-5.05242430e-01,
+-5.16723717e-01,
+-5.32855383e-01,
+-5.43119337e-01,
+-5.56389509e-01,
+-5.77570964e-01,
+-5.83656390e-01,
+-5.95726338e-01,
+-6.10354406e-01,
+-6.24079719e-01,
+-6.37177648e-01,
+-6.49645668e-01,
+-6.64505559e-01,
+-6.70812526e-01,
+-6.87311013e-01,
+-6.98385101e-01,
+-7.07292118e-01,
+-7.23044196e-01,
+-7.29724376e-01,
+-7.50296889e-01,
+-7.58083874e-01,
+-7.70992780e-01,
+-7.85133474e-01,
+-7.96899882e-01,
+-8.10659267e-01,
+-8.22397869e-01,
+-8.33366482e-01,
+-8.39055538e-01,
+-8.57483499e-01,
+-8.74821021e-01,
+-8.81815831e-01,
+-8.90802395e-01,
+-9.05559239e-01,
+-9.12353204e-01,
+-9.28375509e-01,
+-9.38009938e-01,
+-9.49347060e-01,
+-9.60697809e-01,
+-9.75383020e-01,
+-9.82552791e-01,
+-9.91862300e-01,
+-1.00651484e+00,
+-1.01392201e+00,
+-1.02323876e+00,
+-1.03773263e+00,
+-1.05175703e+00,
+-1.06145307e+00,])
 
 
 def smooth_periodic_field_fft(
@@ -129,7 +218,6 @@ def run_test(
 
     f_norm = jnp.linalg.norm(attractor_snapshots, axis=(1, 2))
     f_norm = jnp.mean(f_norm)
-
 
     if double:
         dtype = jnp.complex128
@@ -443,7 +531,7 @@ def plot_metrics_vs_mbits(df, path, dt):
     plt.yscale("log")
     plt.xlabel("mantissa bits (mbits)")
     plt.ylabel("Gradient relative error")
-    plt.ylim(1e-5, 2e-1)
+    plt.ylim(1e-6, 2e-1)
     plt.legend()
     save_svg(plt, fig, os.path.join(path, "grad_v_mbits.svg"))
     plt.close(fig)
@@ -473,41 +561,58 @@ def plot_metrics_vs_mbits(df, path, dt):
         t = np.arange(mean_err.shape[0]) * dt
 
         # keep your original slicing logic (apply to both)
-        skip = -40
+        skip = -int(int(.1/dt))
+        skip = -1
         all_err_plot = all_err[:, :skip][:, ::-1]
         mean_err_plot = mean_err[:skip][::-1]
         t_plot = t[:skip]
 
         # individual curves (lighter grey)
-        for k in range(all_err_plot.shape[0]):
-            plt.plot(t_plot, all_err_plot[k], color="0.75", linewidth=1.0, alpha=0.7)
+        #for k in range(all_err_plot.shape[0]):
+        #    plt.plot(t_plot, all_err_plot[k], color="0.75", linewidth=1.0, alpha=0.7)
 
-        # exponential fit on mean
-        #A, lam, logA, t_fit, mean_fit, npts = fit_exp_on_mean(mean_err, dt, skip=skip)
-        #fit_curve = A * np.exp(lam * t_fit)
         
         # ----- linear fit on mean -----
         # use same slicing logic as plot
-        mean_fit = mean_err[:skip][::-1]
-        t_fit = t[:skip]
+        fit_skip = int(.5/dt)
+        mean_fit = mean_err_plot[fit_skip:]
+        t_fit = t_plot[fit_skip:]
         r = np.corrcoef(t_fit, mean_fit)[0, 1]
 
-        print(f"Correlation coefficient r = {r:.4f}")
+        print(f"Correlation coefficient r = {r:.4f} | mbit={mbit}")
         # fit: mean_fit ≈ a + b*t
         b, a = np.polyfit(t_fit, mean_fit, 1)
-        fit_curve = a + b * t_fit
+        fit_curve = a + b * (t_plot)
+        plt.plot(t_plot, fit_curve, "--", linewidth=2.0,
+                label=f"fit: {a:.3e} + {b:.3e} t")
 
         # mean + fit
         plt.plot(t_plot, mean_err_plot, linewidth=2.0, label="mean")
-        plt.plot(t_fit, fit_curve, "--", linewidth=2.0,
-                label=f"fit: {a:.3e} + {b:.3e} t")
+
 
         plt.xlabel("reverse time")
         plt.ylabel("rel L2 error")
         #plt.yscale("log")
         plt.title(f"m = {mbit}")
-        plt.legend()
 
+
+        #model
+        N = mean_err.shape[0]
+        tau = np.arange(0, N)
+        tau_0 = int(1/dt)
+        w = 8e-3
+        eta = eta_piecewise_linear(
+            tau,
+            w,
+            20,
+            tau_0,
+            mbit,
+            lyap_Re100 * dt,
+            clip_exp=True,
+            clip_val=700.0,
+        )
+        plt.plot(t, eta, "--", label="eta_piecewise_linear")
+        plt.legend()
         save_svg(plt, fig, os.path.join(path, f"rel_error_v_t_m={mbit}.svg"))
         plt.close(fig)
 
@@ -558,6 +663,9 @@ def plot_fit_params_v_m(df, path):
     C2 = 2 ** log2C2
     slope_fit = C2 * 2 ** (alpha2 * mbits)
 
+
+    print(y_int/slope)
+
     fig = plt.figure()
     plt.plot(mbits, slope, "o-", label="measured")
     plt.plot(mbits, slope_fit, "--", label=f"fit: {C2:.2e}·2^({alpha2:.2f} m)")
@@ -565,6 +673,7 @@ def plot_fit_params_v_m(df, path):
     plt.ylabel("slope")
     plt.yscale("log")
     plt.legend()
+    plt.ylim(1e-6, 1e-1)
     save_svg(plt, fig, os.path.join(path, "slope_fit_vs_mbits.svg"))
     plt.close(fig)
 
@@ -587,12 +696,12 @@ def adjoint_test():
     LLE = 1 / (T_LLE)
     IC_param = Fourier_Param(kf_opts.NDOF, 64)
     double = True
-    k0 = 16.0
+    k0 = 4.0
     p = 4.0
 
     T = T_LLE * 1
-    mbits_list = np.arange(2, 16, 2)
-    #mbits_list = [10]
+    #mbits_list = np.arange(2, 16, 2)
+    mbits_list = [6, 8, 10]
     minv, maxv = 1, 5e4
 
     attractor_snapshots = load_data(kf_opts)
@@ -611,7 +720,7 @@ def adjoint_test():
     else:
         path += "_f32"
 
-    RUN_AND_SAVE = True
+    RUN_AND_SAVE = False
 
     if RUN_AND_SAVE:
         results = collect_stats_over_mbits(
@@ -630,8 +739,8 @@ def adjoint_test():
             p=p,
             #nreps_DA=2,
             #nreps_trg=1,
-            nreps_DA=20,
-            nreps_trg=20
+            nreps_DA=40,
+            nreps_trg=40
         )
 
 
@@ -861,8 +970,6 @@ def test():
     grad_true, adj_trj_double = loss_grad_fn_adj_double(u_0.reshape(snap_shape), lam_N)
     grad_true = grad_true.reshape(-1)
     print(jnp.linalg.norm(grad_true - lam_n)/jnp.linalg.norm(grad_true))
-
-
 
 
 if __name__ == "__main__":

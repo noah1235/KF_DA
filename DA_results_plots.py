@@ -51,8 +51,8 @@ def m_dep_fig():
             # loss_record is assumed to be array-like per row with consistent length
             loss_traces = np.vstack(g["loss_record"].to_numpy())
             final_loss = loss_traces[:, -1]
-
-            loss_stand = loss_transformation(final_loss)
+            loss_stand = final_loss
+            #loss_stand = loss_transformation(final_loss)
 
             label = f"NT={NT}, n_part={n_part}, mean={np.mean(perf):.3f}"
             plt.scatter(loss_stand, perf, label=label)
@@ -61,9 +61,12 @@ def m_dep_fig():
 
         plt.legend()
         plt.title(f"m = {m_target} | metric = {metric}")
-        plt.xlabel("loss_transformation(final_loss)")
+        plt.xlabel("loss")
         plt.ylabel(metric)
         plt.tight_layout()
+        plt.xscale("log")
+        plt.ylim(0, 1)
+        #plt.xlim(1e-8, 1e-3)
         save_svg(mpl, fig, os.path.join(save_root, f"m={m_target}.svg"))
         plt.close(fig)
         

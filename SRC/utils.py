@@ -85,20 +85,6 @@ def project_divfree_rfft2(U_hat, KX, KY, K2, M):
 
 
 def bilinear_sample_periodic(F, x, y, Lx, Ly):
-    """
-    Sample a 2D field F(iy, ix) defined on a periodic grid of shape (Ny, Nx)
-    at continuous positions (x, y) in [0, Lx) x [0, Ly) using bilinear interpolation.
-
-    Parameters
-    ----------
-    F : jnp.ndarray, shape (Ny, Nx), real or complex ok (real used here)
-    x, y : jnp.ndarray, shape (P,)  particle positions
-    Lx, Ly : float  domain lengths
-
-    Returns
-    -------
-    vals : jnp.ndarray, shape (P,)
-    """
     Ny, Nx = F.shape
 
     # map positions to fractional grid coordinates
@@ -110,16 +96,14 @@ def bilinear_sample_periodic(F, x, y, Lx, Ly):
     ix1 = (ix0 + 1) % Nx
     iy1 = (iy0 + 1) % Ny
 
-    tx = gx - ix0.astype(gx.dtype)   # in [0,1)
+    tx = gx - ix0.astype(gx.dtype)  
     ty = gy - iy0.astype(gy.dtype)
 
-    # gather four neighbors; note array indexing order is [iy, ix]
     f00 = F[iy0, ix0]
     f10 = F[iy0, ix1]
     f01 = F[iy1, ix0]
     f11 = F[iy1, ix1]
 
-    # bilinear blend
     return ((1 - tx) * (1 - ty) * f00 +
             tx       * (1 - ty) * f10 +
             (1 - tx) * ty       * f01 +
