@@ -1,7 +1,7 @@
 # --- Project imports ---
 from SRC.DA_Comp.configs import *  # provides KF_Opts, DA_Opts, etc.
 from SRC.utils import load_data
-from Solver.KF_intergrators_dec import (
+from SRC.Solver.KF_intergrators_dec import (
     KF_PS_RHS,
     KF_LPT_PS_RHS,
     create_trj_generator,
@@ -71,6 +71,24 @@ def append_to_parquet(df, parquet_path):
     combined = pd.concat([existing_df, df], ignore_index=True)
     combined.to_parquet(parquet_path, index=False)
     print(f"Appended data and updated {parquet_path}")
+
+def get_tmask(T, NT, solver_dt, m_dt):
+    idx = jnp.arange(int(T / solver_dt) + 1)
+
+    if m_dt is None:
+        samp_period = T / (NT - 1)
+        period_idx = int(samp_period / solver_dt)
+        t_mask = (idx % period_idx) == 0
+
+    else:
+        m_T = m_dt * (NT - 1)
+        period = int(m_dt / solver_dt)
+        max_idx = int(m_T / solver_dt)
+
+        t_mask = ((idx % period) == 0) & (idx <= max_idx)
+        t_mask = t_mask[::-1]
+
+    return t_mask
 
 def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
     """
@@ -150,11 +168,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                 stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)             
                 for NT in DA_opts.NT_list:
                     NT_root = os.path.join(npart_root, f"NT={NT}")
-                    #t_mask = jnp.linspace(0, int(T/kf_opts.dt)+1)
-                    samp_period = T/(NT-1)
-                    period_idx = int(samp_period/kf_opts.dt)
-                    idx = jnp.arange(int(T/kf_opts.dt)+1)
-                    t_mask = (idx % period_idx == 0)
+                    t_mask = get_tmask(T, NT, kf_opts.dt, DA_opts.m_dt)
 
                     # Loop over particle initializations
                     PI_root_base = os.path.join(NT_root, "PI")

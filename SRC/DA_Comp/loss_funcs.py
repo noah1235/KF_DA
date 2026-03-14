@@ -5,17 +5,20 @@ from jax import lax
 
 
 
-def create_loss_fn(crit, stepper: KF_TP_Stepper, target_trj, inv_transform):
+def create_loss_fn_dec(crit, stepper: KF_TP_Stepper, target_trj, inv_transform):
     omega_traj, xp_traj, yp_traj, up_traj, vp_traj = target_trj
     def loss_fn(Z0):
         omega0_hat = inv_transform(Z0)
-
+        init_part = False
         def body(X, data):
             omega_DA, xp_DA, yp_DA, up_DA, vp_DA = X
             omega_trg, xp_trg, yp_trg, up_trg, vp_trg, i = data
 
             def have_measurment(_):
-                return xp_trg, yp_trg, up_trg, vp_trg, crit.g(xp_DA, yp_DA, xp_trg, yp_trg, omega_DA, omega_trg, stepper.NS.vort_hat_2_vel_hat, i)
+                if init_part:
+                    return xp_trg, yp_trg, up_trg, vp_trg, crit.g(xp_DA, yp_DA, xp_trg, yp_trg, omega_DA, omega_trg, stepper.NS.vort_hat_2_vel_hat, i)
+                else:
+                    return xp_trg, yp_trg, up_trg, vp_trg, crit.g(xp_trg, yp_trg, xp_trg, yp_trg, omega_DA, omega_trg, stepper.NS.vort_hat_2_vel_hat, i)
                 #return xp_DA, yp_DA, up_DA, vp_DA, crit.g(xp_DA, yp_DA, xp_trg, yp_trg, omega_DA, omega_trg, stepper.NS.vort_hat_2_vel_hat, i)
 
             def no_measurment(_):
@@ -36,6 +39,81 @@ def create_loss_fn(crit, stepper: KF_TP_Stepper, target_trj, inv_transform):
         return jnp.sum(losses)
 
     return loss_fn
+
+def create_loss_fn(crit, stepper: KF_TP_Stepper, target_trj, inv_transform):
+    omega_traj, xp_traj, yp_traj, up_traj, vp_traj = target_trj
+
+    def loss_fn(Z0):
+        omega0_hat = inv_transform(Z0)
+
+        def body(X, data):
+            omega_DA, xp_DA, yp_DA, up_DA, vp_DA, init_part = X
+            omega_trg, xp_trg, yp_trg, up_trg, vp_trg, i = data
+
+            has_meas = crit.t_mask[i]
+
+            def have_measurement(_):
+
+                def use_DA(_):
+                    loss = crit.g(
+                        xp_DA, yp_DA,
+                        xp_trg, yp_trg,
+                        omega_DA, omega_trg,
+                        stepper.NS.vort_hat_2_vel_hat,
+                        i,
+                    )
+                    return loss
+
+                def use_trg(_):
+                    loss = crit.g(
+                        xp_trg, yp_trg,
+                        xp_trg, yp_trg,
+                        omega_DA, omega_trg,
+                        stepper.NS.vort_hat_2_vel_hat,
+                        i,
+                    )
+                    return loss
+
+                loss_t = lax.cond(init_part, use_DA, use_trg, operand=None)
+
+                return xp_trg, yp_trg, up_trg, vp_trg, loss_t, True
+
+            def no_measurement(_):
+                return xp_DA, yp_DA, up_DA, vp_DA, jnp.array(0.0), init_part
+
+            xp_DA, yp_DA, up_DA, vp_DA, loss_t, init_part = lax.cond(
+                has_meas,
+                have_measurement,
+                no_measurement,
+                operand=None,
+            )
+
+            omega_DA, xp_DA, yp_DA, up_DA, vp_DA = stepper(
+                omega_DA, xp_DA, yp_DA, up_DA, vp_DA
+            )
+
+            return (omega_DA, xp_DA, yp_DA, up_DA, vp_DA, init_part), loss_t
+
+        nsteps = omega_traj.shape[0]
+        idxs = jnp.arange(nsteps, dtype=jnp.int32)
+
+        xs = (omega_traj, xp_traj, yp_traj, up_traj, vp_traj, idxs)
+
+        X0 = (
+            omega0_hat,
+            xp_traj[0],
+            yp_traj[0],
+            up_traj[0],
+            vp_traj[0],
+            False,   # init_part
+        )
+
+        _, losses = lax.scan(body, X0, xs)
+
+        return jnp.sum(losses)
+
+    return loss_fn
+
 
 class Loss_fn:
     def init_obj(self, t_mask, L):

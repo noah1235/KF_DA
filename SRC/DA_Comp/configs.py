@@ -19,6 +19,7 @@ class Particle_Opts:
 
 @dataclass
 class DA_Opts:
+    m_dt: any
     n_particles_list: any
     NT_list: any
     part_opts: Particle_Opts
