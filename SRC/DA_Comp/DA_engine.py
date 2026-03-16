@@ -221,6 +221,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
 
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
+                                        else:
+                                            return
 
                                         if not did_IC_guess_count:
                                             IC_guess_count = count_folders(param_dir)

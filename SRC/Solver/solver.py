@@ -275,41 +275,56 @@ class Omega_Integrator:
         u_final, _ = jax.lax.scan(body, u0, xs=None, length=n)
         return u_final
     
-    def integrate_scan_checkpoint(self, u0, nsteps, chunk_size, path, dtype=np.complex128):
+    def integrate_scan_checkpoint(
+        self,
+        u0,
+        nsteps,
+        chunk_size,
+        path,
+        dtype=np.complex128,
+        flush_every_chunk=False,
+    ):
         u0 = jnp.asarray(u0)
-        if nsteps % chunk_size != 0:
-            raise ValueError("nsteps must be divisible by chunk size")
-
         nsteps = int(nsteps)
         chunk_size = int(chunk_size)
 
+        if nsteps <= 0:
+            raise ValueError("nsteps must be positive")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
+        if nsteps % chunk_size != 0:
+            raise ValueError("nsteps must be divisible by chunk_size")
+
+        n_chunks = nsteps // chunk_size
+
         mm = np.lib.format.open_memmap(
-            path, mode="w+", dtype=dtype, shape=(nsteps, *u0.shape)
+            path,
+            mode="w+",
+            dtype=dtype,
+            shape=(nsteps, *u0.shape),
         )
 
         @partial(jax.jit, static_argnums=(1,))
-        def run_checkpoint(U, L):
+        def run_chunk(u, length):
             def body(carry, _):
-                U_next = self.stepper(carry)
-                return U_next, U_next
-            U_end, trj = jax.lax.scan(body, U, xs=None, length=L)  # trj: (L, ndof)
-            return U_end, trj
+                u_next = self.stepper(carry)
+                return u_next, u_next
 
-        remaining = nsteps
-        U = u0
-        write_idx = 0
+            u_end, traj = jax.lax.scan(body, u, xs=None, length=length)
+            return u_end, traj
 
-        while remaining > 0:
-            U, trj = run_checkpoint(U, chunk_size)
+        u = u0
+        for i in range(n_chunks):
+            u, traj = run_chunk(u, chunk_size)
 
-            trj_np = np.asarray(jax.device_get(trj), dtype=dtype)  # shape (L, ndof)
-            mm[write_idx:write_idx + chunk_size] = trj_np
+            start = i * chunk_size
+            end = start + chunk_size
+            mm[start:end] = np.asarray(jax.device_get(traj), dtype=dtype)
 
-            write_idx += chunk_size
-            remaining -= chunk_size
+            if flush_every_chunk:
+                mm.flush()
 
-            mm.flush()
-
+        mm.flush()
         return path
     
     def integrate_scan(self, U0, nsteps):
