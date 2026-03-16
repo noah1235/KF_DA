@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from SRC.vp_floats.vp_py_utils import calc_output_shape
 from jax import ShapeDtypeStruct
 import vpfloat
+import time
+
 #for animation
 def create_vel_part_gen_fn(stepper, T):
     nsteps = int(T/stepper.dt)
@@ -282,7 +284,8 @@ class Omega_Integrator:
         chunk_size,
         path,
         dtype=np.complex128,
-        flush_every_chunk=False,
+        flush_every_chunk=True,
+        verbose=True,
     ):
         u0 = jnp.asarray(u0)
         nsteps = int(nsteps)
@@ -313,8 +316,19 @@ class Omega_Integrator:
             u_end, traj = jax.lax.scan(body, u, xs=None, length=length)
             return u_end, traj
 
+        if verbose:
+            print(f"\nStarting integration")
+            print(f"total steps : {nsteps}")
+            print(f"chunk size  : {chunk_size}")
+            print(f"num chunks  : {n_chunks}")
+            print(f"output file : {path}\n")
+
+        start_time = time.time()
+
         u = u0
         for i in range(n_chunks):
+            chunk_start = time.time()
+
             u, traj = run_chunk(u, chunk_size)
 
             start = i * chunk_size
@@ -324,9 +338,30 @@ class Omega_Integrator:
             if flush_every_chunk:
                 mm.flush()
 
+            if verbose:
+                elapsed = time.time() - start_time
+                chunk_time = time.time() - chunk_start
+
+                completed = i + 1
+                frac = completed / n_chunks
+
+                eta = (elapsed / frac) - elapsed
+
+                print(
+                    f"[{completed}/{n_chunks}] "
+                    f"{100*frac:6.2f}%  "
+                    f"chunk_time={chunk_time:6.2f}s  "
+                    f"elapsed={elapsed:8.2f}s  "
+                    f"eta={eta:8.2f}s"
+                )
+
         mm.flush()
-        return path
-    
+
+        if verbose:
+            total = time.time() - start_time
+            print(f"\nIntegration complete in {total:.2f} seconds")
+
+
     def integrate_scan(self, U0, nsteps):
         """
         Returns (U_final, traj) where
