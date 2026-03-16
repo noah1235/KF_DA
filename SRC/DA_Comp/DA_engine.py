@@ -11,7 +11,7 @@ from SRC.Solver.KF_intergrators_dec import (
 from SRC.DA_Comp.case_post_proc import post_proc_case_main
 from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
-from SRC.DA_Comp.loss_funcs import create_loss_fn
+from SRC.DA_Comp.loss_funcs import create_loss_fn, MSE_Vel
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
@@ -72,20 +72,26 @@ def append_to_parquet(df, parquet_path):
     combined.to_parquet(parquet_path, index=False)
     print(f"Appended data and updated {parquet_path}")
 
-def get_tmask(T, NT, solver_dt, m_dt):
+def get_tmask(T, NT, solver_dt, m_dt, loss_crit):
     idx = jnp.arange(int(T / solver_dt) + 1)
 
     if m_dt is None:
-        samp_period = T / (NT - 1)
-        period_idx = int(samp_period / solver_dt)
-        t_mask = (idx % period_idx) == 0
+        idx_true = jnp.linspace(0, len(idx) - 1, NT + 1).round().astype(int)
+        t_mask = jnp.zeros(len(idx), dtype=bool)
+        t_mask = t_mask.at[idx_true].set(True)
 
+        if isinstance(loss_crit, MSE_Vel):
+            print("skfjdjkfjd")
+            t_mask = t_mask.at[idx_true[0]].set(False)
     else:
-        m_T = m_dt * (NT - 1)
-        period = int(m_dt / solver_dt)
-        max_idx = int(m_T / solver_dt)
+        m_T = m_dt * NT
 
-        t_mask = ((idx % period) == 0) & (idx <= max_idx)
+        idx_true = jnp.linspace(0, int(m_T / solver_dt), NT + 1).round().astype(int)
+        if isinstance(loss_crit, MSE_Vel):
+            idx_true = idx_true.at[-1].set(False)
+
+        t_mask = jnp.zeros(len(idx), dtype=bool)
+        t_mask = t_mask.at[idx_true].set(True)
         t_mask = t_mask[::-1]
 
     return t_mask
@@ -168,7 +174,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                 stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)             
                 for NT in DA_opts.NT_list:
                     NT_root = os.path.join(npart_root, f"NT={NT}")
-                    t_mask = get_tmask(T, NT, kf_opts.dt, DA_opts.m_dt)
 
                     # Loop over particle initializations
                     PI_root_base = os.path.join(NT_root, "PI")
@@ -195,6 +200,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         target_trj = trj_gen_fn(omega0_hat, xp, yp, up, vp)
 
                         for loss_crit in DA_opts.crit_list:
+                            t_mask = get_tmask(T, NT, kf_opts.dt, DA_opts.m_dt, loss_crit)
                             loss_crit.init_obj(t_mask, stepper.NS.L)
                             crit_dir = os.path.join(PI_root, f"{loss_crit}")
 

@@ -376,16 +376,16 @@ def plot_vel_error_vs_time(vel_error, time_axis, t_mask, save_dir):
     os.makedirs(save_dir, exist_ok=True)
     fig, ax = plt.subplots(figsize=(6.5, 4.0))
 
-    ax.plot(time_axis, vel_error, label="Velocity error", marker="o")
+    ax.plot(time_axis, vel_error, label="Velocity error")
     
     for t in time_axis[t_mask == 1]:
-        ax.axvline(x=t, color="k", linestyle="--", alpha=0.3, linewidth=1.0)
+        ax.axvline(x=t, color="k")
 
     ax.set_xlabel("Time")
     ax.set_ylabel("Normalized L2 norm")
     ax.grid(True, alpha=0.3)
     ax.legend()
-    ax.set_ylim(-.05, .2)
+    ax.set_ylim(0, 1)
     fig.tight_layout()
 
     out_path = os.path.join(save_dir, "vel_part_error_vs_time.svg")
