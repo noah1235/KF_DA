@@ -198,13 +198,27 @@ def bilinear_sample_periodic_dec(F: jnp.ndarray,
     return val
 
 
-def load_data(kf_opts: KF_Opts):
-    #Re=100_NDOF=32_dt=0.01_n=4_sampT=500_total_T=2000
+def load_data_dec(kf_opts: KF_Opts):
     path = os.path.join(create_results_dir(), "Trjs", "KF_datasets", f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_n={kf_opts.n}_sampT={kf_opts.min_samp_T}_total_T={kf_opts.total_T}", "dataset.npy")
     skip = int(kf_opts.t_skip / kf_opts.dt)
     trj = np.load(path)[::skip, :]
     return trj
 
+def load_data(kf_opts: KF_Opts):
+    path = os.path.join(
+        create_results_dir(),
+        "Trjs",
+        "KF_datasets",
+        f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_n={kf_opts.n}_sampT={kf_opts.min_samp_T}_total_T={kf_opts.total_T}",
+        "dataset.npy",
+    )
+
+    skip = int(kf_opts.t_skip / kf_opts.dt)
+
+    trj = np.load(path, mmap_mode="r")  # memory-mapped array
+    trj = trj[::skip, :]                # lazy slice (does not load full array)
+
+    return trj
 
 def is_jitted(fn):
     return hasattr(fn, "lower")

@@ -17,6 +17,7 @@ def m_dep_fig():
     NDOF = 128
     St = 0
     beta = 0
+    m_dt = None
 
     m_targets = [640, 320, 160]
     metric = "final_snap_rel_error"
@@ -26,7 +27,7 @@ def m_dep_fig():
         # -----------------------
         root = os.path.join(
             create_results_dir(),
-            f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}-St={St}_beta={beta}_AI",
+            f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt={m_dt}-St={St}_beta={beta}_AI",
         )
         save_root = os.path.join(root, "global_results", "mx_v_mt")
         os.makedirs(save_root, exist_ok=True)
@@ -40,7 +41,7 @@ def m_dep_fig():
         fig = plt.figure()
         for (n_part, NT), g in df.groupby(["n_part", "NT"], sort=True):
             mx = 2 * n_part
-            m = (NT - 1) * mx
+            m = NT * mx
             if m != m_target:
                 continue
 
