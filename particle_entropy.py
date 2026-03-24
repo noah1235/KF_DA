@@ -236,7 +236,7 @@ def main():
         n=4,
         NDOF=128,
         dt=1e-2,
-        total_T=int(1e6),
+        total_T=int(1e3),
         min_samp_T=100,
         t_skip=1e-1,
     )
@@ -244,7 +244,7 @@ def main():
     root = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}")
     os.makedirs(root, exist_ok=True)
 
-    n_ICs = 40
+    n_ICs = 200
     attractor_snapshots = load_data(kf_opts)
 
     St = 0
@@ -281,11 +281,15 @@ def main():
     m_dt_vals = np.array([
         0.10,
         0.15, 0.20, 0.30, 0.40, 0.50,
-        0.75, 1.00
+        0.75, 1.00, 1.25, 1.5
+    ])
+    m_dt_vals = np.array([
+        .1, .3, .5, .7
     ])
 
-    data_path = os.path.join(create_results_dir(), "MI", "data_dict.pkl")
-    recompute = True
+
+    data_path = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}", "data_dict.pkl")
+    recompute = False
     if recompute:
         data_dict = {}
 
@@ -299,54 +303,58 @@ def main():
                 m_dt=float(m_dt),
             )
             data_dict[m_dt] = data
+            print(m_dt)
+
         with open(data_path, "wb") as f:
             pickle.dump(data_dict, f)
 
-
     else:
-        k_mi = 10
         with open(data_path, "rb") as f:
             data_dict = pickle.load(f)
 
-        m_dt_vals = data_dict.keys()
-        mi_disp_vals = []
-        mi_vel_vals = []
-        corr_u_vals = []
-        corr_v_vals = []
-        corr_dx_vals = []
-        corr_dy_vals = []
+    k_mi = 10
 
-        for m_dt in m_dt_vals:
-            data = data_dict[m_dt]
-            #X_vel = np.column_stack([u1, v1])
-            #Y_vel = np.column_stack([u2, v2])
+    m_dt_vals = data_dict.keys()
+    mi_disp_vals = []
+    mi_vel_vals = []
+    corr_u_vals = []
+    corr_v_vals = []
+    corr_dx_vals = []
+    corr_dy_vals = []
 
-            mi_disp = knn_mutual_information(data.X_disp, data.Y_disp, k=k_mi)
-            mi_vel = knn_mutual_information(data.X_vel, data.Y_vel, k=k_mi)
+    for m_dt in m_dt_vals:
+        data = data_dict[m_dt]
+        #X_vel = np.column_stack([u1, v1])
+        #Y_vel = np.column_stack([u2, v2])
 
-            u1 = data.X_vel[:, 0]
-            v1 = data.X_vel[:, 1]
-            u2 = data.Y_vel[:, 0]
-            v2 = data.Y_vel[:, 1]
+        mi_disp = knn_mutual_information(data.X_disp, data.Y_disp, k=k_mi)
+        mi_vel = knn_mutual_information(data.X_vel, data.Y_vel, k=k_mi)
 
-            dx_1 = data.X_disp[:, 0]
-            dy_1 = data.X_disp[:, 1]
+        u1 = data.X_vel[:, 0]
+        v1 = data.X_vel[:, 1]
+        u2 = data.Y_vel[:, 0]
+        v2 = data.Y_vel[:, 1]
 
-            dx_2 = data.Y_disp[:, 0]
-            dy_2 = data.Y_disp[:, 1]
+        dx_1 = data.X_disp[:, 0]
+        dy_1 = data.X_disp[:, 1]
 
-            corr_u = safe_corr(u1, u2)
-            corr_v = safe_corr(v1, v2)
-            corr_dx = safe_corr(dx_1, dx_2)
-            corr_dy = safe_corr(dy_1, dy_2)
+        dx_2 = data.Y_disp[:, 0]
+        dy_2 = data.Y_disp[:, 1]
 
-            mi_disp_vals.append(mi_disp)
-            mi_vel_vals.append(mi_vel)
+        corr_u = safe_corr(u1, u2)
+        corr_v = safe_corr(v1, v2)
+        corr_dx = safe_corr(dx_1, dx_2)
+        corr_dy = safe_corr(dy_1, dy_2)
 
-            corr_u_vals.append(corr_u)
-            corr_v_vals.append(corr_v)
-            corr_dx_vals.append(corr_dx)
-            corr_dy_vals.append(corr_dy)
+        mi_disp_vals.append(mi_disp)
+        mi_vel_vals.append(mi_vel)
+
+        corr_u_vals.append(corr_u)
+        corr_v_vals.append(corr_v)
+        corr_dx_vals.append(corr_dx)
+        corr_dy_vals.append(corr_dy)
+
+        print(m_dt)
 
     # --------------------------------------------------------
     # Plot 1: normalized MI and velocity correlations
@@ -398,7 +406,10 @@ def main():
     ax1.set_xlabel(r"$m_{\Delta t}$")
     ax1.set_ylabel("Displacement MI [nats]", color="tab:blue")
     ax1.tick_params(axis="y", labelcolor="tab:blue")
-    ax1.grid(True)
+    #ax1.grid(True)
+    ax1.set_xlim(.1, .8)
+    plt.show()
+    return
 
     ax2 = ax1.twinx()
     line2 = ax2.plot(
@@ -417,6 +428,7 @@ def main():
 
     plt.title("Mutual information vs time separation")
     plt.tight_layout()
+
 
     # --------------------------------------------------------
     # Plot 3: velocity correlations
@@ -455,19 +467,5 @@ def main():
 
     plt.show()
 
-def calc_stats():
-    kf_opts = KF_Opts(
-        Re=100,
-        n=4,
-        NDOF=128,
-        dt=1e-2,
-        total_T=int(1e6),
-        min_samp_T=100,
-        t_skip=1e-2,
-    )
-    attractor_snapshots = load_data(kf_opts)
-    print(attractor_snapshots.shape)
-    print(int(1e6))
-
 if __name__ == "__main__":
-    calc_stats()
+    main()

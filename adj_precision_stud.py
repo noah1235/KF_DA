@@ -22,7 +22,6 @@ from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper, create_omega_part_gen_f
 from SRC.utils import load_data
 from SRC.vp_floats.vp_py_utils import choose_exponent_format, float_pos_range
 from scipy.optimize import curve_fit
-from KSE_adj_error import eta_piecewise_linear
 config.update("jax_enable_x64", True)
 
 lyap_Re100 = np.array([
@@ -114,83 +113,20 @@ lyap_Re100 = np.array([
 -1.06145307e+00,])
 
 
-def smooth_periodic_field_fft(
-    key: jax.random.PRNGKey,
-    N: int,
-    norm: float,
-    dtype,
-    *,
-    k0: float = 8.0,
-    p: float = 4.0,
-    zero_mean: bool = True,
-):
-    """
-    Generate the rFFT of a smooth, real, square, periodic random field on an (N,N) grid.
+def get_lam_N(key, AS_flat, n_samples):
+    X = AS_flat
+    Xc = X - jnp.mean(X, axis=0, keepdims=True)
 
-    We sample complex Gaussian coefficients on the rFFT half-plane (kx full, ky>=0),
-    apply a smooth low-pass spectral filter
-        filter(k) = exp(-( |k| / k0 )^p),
-    and then scale so the *physical-space* field u = irfft2(u_hat) has L2 norm == norm.
+    n_snap, n_feat = Xc.shape
 
-    Parameters
-    ----------
-    key : jax.random.PRNGKey
-    N : int
-        Grid size (N x N).
-    norm : float
-        Desired L2 norm of the real physical-space field.
-    dtype : jnp.complex64 or jnp.complex128
-        dtype of the returned rFFT coefficients u_hat.
-    k0 : float
-        Spectral cutoff scale (in index-frequency units).
-    p : float
-        Smoothness exponent. Larger => smoother.
-    zero_mean : bool
-        If True, set the (0,0) mode to 0.
+    key, subkey = jax.random.split(key)
+    Z = jax.random.normal(subkey, (n_snap, n_samples))
 
-    Returns
-    -------
-    u_hat : jax.Array, shape (N, N//2 + 1)
-        rFFT coefficients suitable for jnp.fft.irfft2(u_hat, s=(N,N)).
-    """
-    if dtype not in (jnp.complex64, jnp.complex128):
-        raise ValueError("dtype must be complex64 or complex128")
+    # (n_feat, n_snap) @ (n_snap, n_samples) -> (n_feat, n_samples)
+    samples = (Xc.T @ Z) / jnp.sqrt(n_snap - 1)
 
-    real_dtype = jnp.float32 if dtype == jnp.complex64 else jnp.float64
-    nky = N // 2 + 1
-
-    # Frequencies in "index" units (0.., -.. for kx; 0..N/2 for ky)
-    kx = (jnp.fft.fftfreq(N, d=1.0).astype(real_dtype) * N)[:, None]     # (N,1)
-    ky = (jnp.fft.rfftfreq(N, d=1.0).astype(real_dtype) * N)[None, :]    # (1,nky)
-    k_mag = jnp.sqrt(kx**2 + ky**2)
-
-    filt = jnp.exp(-((k_mag / jnp.asarray(k0, real_dtype)) ** jnp.asarray(p, real_dtype)))
-    filt = filt.astype(real_dtype)
-
-    # Sample complex Gaussian on rFFT grid
-    key_r, key_i = jax.random.split(key)
-    real = jax.random.normal(key_r, shape=(N, nky), dtype=real_dtype)
-    imag = jax.random.normal(key_i, shape=(N, nky), dtype=real_dtype)
-    a_hat = (real + 1j * imag) / jnp.sqrt(jnp.asarray(2.0, real_dtype))
-    a_hat = (a_hat * filt).astype(dtype)
-
-    # Enforce the "purely real" constraints on the rFFT boundary modes
-    # ky = 0 and (if N even) ky = N/2 must be real for a real field.
-    a_hat = a_hat.at[:, 0].set(jnp.real(a_hat[:, 0]) + 0j)
-    if N % 2 == 0:
-        a_hat = a_hat.at[:, -1].set(jnp.real(a_hat[:, -1]) + 0j)
-
-    if zero_mean:
-        a_hat = a_hat.at[0, 0].set(0.0 + 0.0j)
-
-    # Normalize in physical space
-    u = jnp.fft.irfft2(a_hat, s=(N, N))
-    u_norm = jnp.linalg.norm(u)
-    u = jnp.where(u_norm > 0, (norm / u_norm) * u, u)
-
-    # Return rFFT of the normalized field (guarantees consistency with real u)
-    u_hat = jnp.fft.rfft2(u).astype(dtype)
-    return u_hat
+    # return shape (n_samples, n_feat)
+    return samples.T
 
 # =========================
 # Core experiment
@@ -207,47 +143,32 @@ def run_test(
     LLE,
     attractor_snapshots,
     double,
-    k0,
-    p,
-    idxs_DA,
-    idxs_trg
+    n_trials,
 ):
     grad_errs = []
     cos_sims = []
-    adj_rel_error_v_time = []  # list of (time,) arrays, one per DA sample (across all trg)
-
-    f_norm = jnp.linalg.norm(attractor_snapshots, axis=(1, 2))
-    f_norm = jnp.mean(f_norm)
+    adj_rel_error_v_time = []
 
     if double:
         dtype = jnp.complex128
     else:
         dtype = jnp.complex64
-    for idx_trg in idxs_trg:
-        key = jax.random.PRNGKey(idx_trg)
-        #trg_snap = attractor_snapshots[10]
-        #u_hat_trg, v_hat_trg = kf_stepper.NS.vort_hat_2_vel_hat(trg_snap)
-        #u_trg, v_trg = jnp.fft.irfft2(u_hat_trg), jnp.fft.irfft2(v_hat_trg)
 
-        #def g(x_hat):
-        #    u_hat, v_hat = kf_stepper.NS.vort_hat_2_vel_hat(x_hat)
-        #    u, v = jnp.fft.irfft2(u_hat), jnp.fft.irfft2(v_hat)
-        #    MSE_u = jnp.mean((u - u_trg)**2)
-        #    MSE_v = jnp.mean((v - v_trg)**2)
-        #    return (MSE_u + MSE_v)/2
-        
-    
-        lam_N = smooth_periodic_field_fft(key, attractor_snapshots.shape[1], f_norm, dtype, p=p, k0=k0).reshape(-1)
-        loss_grad_fn_adj_double = jax.jit(
-            get_forced_adj_shooting(
-                kf_stepper,
-                IC_param.inv_transform,
-                (attractor_snapshots.shape[1], attractor_snapshots.shape[2]),
-                int(T / dt),
-            )
+    AS_flat = attractor_snapshots.reshape((attractor_snapshots.shape[0], -1))
+
+    key = jax.random.PRNGKey(0)
+
+    loss_grad_fn_adj_double = jax.jit(
+        get_forced_adj_shooting(
+            kf_stepper,
+            IC_param.inv_transform,
+            (attractor_snapshots.shape[1], attractor_snapshots.shape[2]),
+            int(T / dt),
         )
+    )
 
-        loss_grad_fn_adj = get_forced_adj_shooting_vp(
+    loss_grad_fn_adj = jax.jit(
+        get_forced_adj_shooting_vp(
             kf_stepper,
             IC_param.inv_transform,
             (attractor_snapshots.shape[1], attractor_snapshots.shape[2]),
@@ -259,33 +180,52 @@ def run_test(
             uniform=uniform,
             LLE=LLE,
         )
-        loss_grad_fn_adj = jax.jit(loss_grad_fn_adj)
+    )
 
-        for idx in idxs_DA:
-            omega0_DA_hat = attractor_snapshots[idx]
-            if not double:
-                omega0_DA_hat = omega0_DA_hat.astype(jnp.complex64)
-            Z = IC_param.transform(omega0_DA_hat)
-            grad_true, adj_trj_double = loss_grad_fn_adj_double(Z, lam_N)
-            grad_adj, adj_trj = loss_grad_fn_adj(Z.astype(jnp.float64), lam_N.astype(jnp.complex128))
-            adj_trj_error = (
-                jnp.linalg.norm(adj_trj_double - adj_trj, axis=1) / jnp.linalg.norm(adj_trj_double, axis=1)
-            )
+    # precompute one lam_N per trial
+    key, subkey = jax.random.split(key)
+    lam_N_list = get_lam_N(subkey, AS_flat, n_trials)
 
-            adj_rel_error_v_time.append(adj_trj_error)
+    n_snapshots = attractor_snapshots.shape[0]
 
-            grad_err = jnp.linalg.norm(grad_adj - grad_true) / jnp.linalg.norm(grad_true)
-            cos_sim = jnp.dot(grad_true, grad_adj) / (
-                jnp.linalg.norm(grad_true) * jnp.linalg.norm(grad_adj)
-            )
-            print(
-                f"[mbits={mbits}] Sample idx={idx}, "
-                f"Grad % err={grad_err:.2e}, Cos sim={cos_sim:.6f}"
-            )
+    for i in range(n_trials):
+        key, subkey = jax.random.split(key)
+        idx = int(jax.random.randint(subkey, shape=(), minval=0, maxval=n_snapshots))
 
-            grad_errs.append(grad_err)
-            cos_sims.append(cos_sim)
+        lam_N = lam_N_list[i].astype(dtype)
 
+        omega0_DA_hat = attractor_snapshots[idx]
+        if not double:
+            omega0_DA_hat = omega0_DA_hat.astype(jnp.complex64)
+
+        Z = IC_param.transform(omega0_DA_hat)
+
+        _, adj_trj_double = loss_grad_fn_adj_double(Z, lam_N)
+        grad_true = adj_trj_double[-1]
+        _, adj_trj = loss_grad_fn_adj(
+            Z.astype(jnp.float64), lam_N.astype(jnp.complex128)
+        )
+        grad_adj = adj_trj[-1]
+
+        adj_trj_error = (
+            jnp.linalg.norm(adj_trj_double - adj_trj, axis=1)
+            / jnp.linalg.norm(adj_trj_double, axis=1)
+        )
+
+        adj_rel_error_v_time.append(adj_trj_error)
+        
+        grad_err = jnp.linalg.norm(grad_adj - grad_true) / jnp.linalg.norm(grad_true)
+        cos_sim = jnp.dot(grad_true, grad_adj) / (
+            jnp.linalg.norm(grad_true) * jnp.linalg.norm(grad_adj)
+        )
+
+        print(
+            f"[mbits={mbits}] Sample idx={idx}, "
+            f"Grad % err={grad_err:.2e}, Cos sim={cos_sim:.6f}"
+        )
+
+        grad_errs.append(grad_err)
+        cos_sims.append(cos_sim)
 
     grad_errs = jnp.array(grad_errs)
     cos_sims = jnp.array(cos_sims)
@@ -326,24 +266,12 @@ def collect_stats_over_mbits(
     LLE,
     attractor_snapshots,
     double,
-    k0,
-    p,
-    nreps_DA=20,
-    nreps_trg=5
+    nsamples
 ):
     IC_trg_seed = 0
     IC_DA_seed = 10
-
-    rng = np.random.default_rng(IC_DA_seed)
-    idxs_DA = rng.integers(0, attractor_snapshots.shape[0] - 1, size=nreps_DA)
-
-    rng = np.random.default_rng(IC_trg_seed)
-    idxs_trg = rng.integers(0, attractor_snapshots.shape[0] - 1, size=nreps_trg)
-
     results = {
         "meta": {
-            "nreps_DA": int(nreps_DA),
-            "nreps_trg": int(nreps_trg),
             "IC_trg_seed": int(IC_trg_seed),
             "IC_DA_seed": int(IC_DA_seed),
             "dt": float(dt),
@@ -352,8 +280,6 @@ def collect_stats_over_mbits(
             "LLE": float(LLE),
             "exp_bits": int(exp_bits),
             "exp_bias": int(exp_bias),
-            "idxs_DA": np.asarray(idxs_DA),
-            "idxs_trg": np.asarray(idxs_trg),
         },
         "by_mbits": {},
     }
@@ -374,10 +300,7 @@ def collect_stats_over_mbits(
             LLE,
             attractor_snapshots,
             double,
-            k0,
-            p,
-            idxs_DA,
-            idxs_trg
+            nsamples
         )
 
         results["by_mbits"][int(mbits)] = {
@@ -595,23 +518,6 @@ def plot_metrics_vs_mbits(df, path, dt):
         #plt.yscale("log")
         plt.title(f"m = {mbit}")
 
-
-        #model
-        N = mean_err.shape[0]
-        tau = np.arange(0, N)
-        tau_0 = int(1/dt)
-        w = 8e-3
-        eta = eta_piecewise_linear(
-            tau,
-            w,
-            20,
-            tau_0,
-            mbit,
-            lyap_Re100 * dt,
-            clip_exp=True,
-            clip_val=700.0,
-        )
-        plt.plot(t, eta, "--", label="eta_piecewise_linear")
         plt.legend()
         save_svg(plt, fig, os.path.join(path, f"rel_error_v_t_m={mbit}.svg"))
         plt.close(fig)
@@ -687,21 +593,19 @@ def adjoint_test():
         n=4,
         NDOF=128,
         dt=1e-2,
-        total_T=int(1e6),
+        total_T=int(1e3),
         min_samp_T=100,
         t_skip=1e-1,
     )
     T_LLE = 3.3
     uniform = True
     LLE = 1 / (T_LLE)
-    IC_param = Fourier_Param(kf_opts.NDOF, 64)
+    IC_param = Fourier_Param(kf_opts.NDOF, 64, beta=0, Re=100)
     double = True
-    k0 = 4.0
-    p = 4.0
 
     T = T_LLE * 1
-    #mbits_list = np.arange(2, 16, 2)
-    mbits_list = [6, 8, 10]
+    mbits_list = np.arange(6, 14, 2)
+    #mbits_list = [6]
     minv, maxv = 1, 5e4
 
     attractor_snapshots = load_data(kf_opts)
@@ -712,7 +616,7 @@ def adjoint_test():
     path = os.path.join(
         create_results_dir(),
         "vpfloats",
-        f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_T={T}_k0={k0}_p={p}_",
+        f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_T={T}_",
     )
     path += "uniform" if uniform else f"optimal_LLE={LLE:.3e}"
     if double:
@@ -720,7 +624,7 @@ def adjoint_test():
     else:
         path += "_f32"
 
-    RUN_AND_SAVE = False
+    RUN_AND_SAVE = True
 
     if RUN_AND_SAVE:
         results = collect_stats_over_mbits(
@@ -735,12 +639,7 @@ def adjoint_test():
             LLE=LLE,
             attractor_snapshots=attractor_snapshots,
             double=double,
-            k0=k0,
-            p=p,
-            #nreps_DA=2,
-            #nreps_trg=1,
-            nreps_DA=40,
-            nreps_trg=40
+            nsamples=100
         )
 
 

@@ -52,11 +52,11 @@ def generate_KF_dataset():
     Re = 100
     n  = 4
     dt = 1e-2
-    T = 1e4
+    T = 1e3
     T_samp = 100
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    chunk_size = 5e4
+    chunk_size = 1e3
 
     omega0_hat = generate_rand_IC(NDOF)
 

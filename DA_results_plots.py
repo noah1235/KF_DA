@@ -7,6 +7,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from SRC.plotting_utils import save_svg
 import matplotlib as mpl
+import re
+
 def m_dep_fig():
     # -----------------------
     # Configuration
@@ -71,4 +73,66 @@ def m_dep_fig():
         save_svg(mpl, fig, os.path.join(save_root, f"m={m_target}.svg"))
         plt.close(fig)
         
-m_dep_fig()
+
+def recon_v_m_dt():
+    Re = 100
+    n = 4
+    dt = 0.01
+    NDOF = 128
+    St = 0
+    beta = 0
+    NT = 4
+    n_part = 80
+
+    metric = "final_snap_rel_error"
+    loss_crit = "PP_MSE"
+
+
+    pattern = re.compile(
+        rf"^DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt=(\d*\.?\d+)-St={St}_beta={beta}_AI$"
+    )
+
+    base_dir = create_results_dir()
+
+    perf_list = []
+    m_dt_list = []
+
+    for name in os.listdir(base_dir):
+        full_path = os.path.join(base_dir, name)
+
+        if os.path.isdir(full_path):
+            match = pattern.match(name)
+            if match:
+                mdt = float(match.group(1))  # extract mdt
+                m_dt_list.append(mdt)
+                df = pd.read_parquet(os.path.join(base_dir, name, "results.parquet")).dropna()
+                df = df[
+                    (df["n_part"] == n_part) &
+                    (df["NT"] == NT) &
+                    (df["loss_crit"] == loss_crit)
+                ]
+
+                loss_traces = np.vstack(df["loss_record"].to_numpy())
+                final_loss = loss_traces[:, -1]
+                mask = final_loss <= 5e-4
+                perf_arr = df[metric].to_numpy()[mask]
+                print(perf_arr.shape)
+                perf = np.mean(perf_arr)
+                perf_list.append(perf)
+
+    m_dt_list = np.array(m_dt_list)
+    perf_list = np.array(perf_list)
+    idx = np.argsort(m_dt_list)
+    m_dt_list = m_dt_list[idx]
+    perf_list = perf_list[idx]
+
+    #m_dt_list = m_dt_list[1:]
+    #perf_list = perf_list[1:]
+    plt.scatter(m_dt_list, perf_list)
+    plt.plot()
+    #plt.ylim(0, 1.05)
+    plt.xlim(.1, .8)
+    plt.show()
+
+
+recon_v_m_dt()
