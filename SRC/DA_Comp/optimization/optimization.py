@@ -13,7 +13,7 @@ from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS
 import numpy as np
 from scipy.optimize import minimize
 from scipy.sparse.linalg import minres, cg
-
+from scipy.sparse.linalg import LinearOperator, minres
 
 def equal_component_Q(g, k, key=None):
     """
@@ -95,6 +95,54 @@ def equal_component_Q(g, k, key=None):
 
     return Q
 
+
+class TN(LS_TR_Opt):
+    def __init__(self, ls, its, psuedo_proj=None, print_loss=False):
+        super().__init__(its, psuedo_proj, print_loss)
+        self.ls = ls
+        self.ls_method = ls.name
+        self.name = "TN"
+
+    def init_opt_params(self, N):
+        pass
+
+    def Hvp_init(self, grad, Hg):
+        pass
+
+    def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
+        loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
+
+        #Hv = loss_fn_and_derivs.HVP_fn(Z0, v)
+        damping = 1e-6
+        def matvec(v):
+            Hv = loss_fn_and_derivs.HVP_fn(Z0, v.reshape(grad.shape))
+            Hv = np.asarray(Hv, dtype=float).ravel()
+            return Hv + damping * v
+        n = Z0.shape[0]
+        A = LinearOperator((n, n), matvec=matvec, dtype=float)
+        maxiter = 20
+        pk, info = minres(A, -grad, maxiter=maxiter)
+        print(info)
+
+        # 2) Line search / step
+        alpha, Z_next, loss_next, grad_next, debug_str = self.ls_choice_logic(
+            iter,
+            loss,
+            Z0,
+            pk,
+            grad,
+            loss_grad_cond_fn,
+            last_iteration,
+        )
+
+        alpha_pk = alpha * pk
+
+
+        return Z_next, loss_next, grad_next, alpha, alpha_pk, debug_str
+
+
+
+
 class BFGS(LS_TR_Opt):
     def __init__(self, ls, its, max_mem, eps_H, limited_memory=True, psuedo_proj=None, print_loss=False):
         super().__init__(its, psuedo_proj, print_loss)
@@ -157,10 +205,11 @@ class BFGS(LS_TR_Opt):
 
         return Z_next, loss_next, grad_next, alpha, alpha_pk, debug_out
 
+
+
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,
                 ls,
-
                 SR1_type="conv",
                 psuedo_proj=None,
                 print_loss=False):

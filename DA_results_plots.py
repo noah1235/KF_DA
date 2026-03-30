@@ -73,6 +73,21 @@ def m_dep_fig():
         save_svg(mpl, fig, os.path.join(save_root, f"m={m_target}.svg"))
         plt.close(fig)
         
+def remove_outliers_by_loss(df, metric):
+    loss_traces = np.vstack(df["loss_record"].to_numpy())
+    final_loss = loss_traces[:, -1]
+
+    median = np.median(final_loss)
+    mad = np.median(np.abs(final_loss - median))
+
+    modified_z = 0.6745 * (final_loss - median) / mad
+
+    mask = np.abs(modified_z) < 3.5
+
+    metric_arr = df.loc[mask, metric].to_numpy()
+    final_loss = final_loss[mask]
+
+    return metric_arr, final_loss
 
 def recon_v_m_dt():
     Re = 100
@@ -84,9 +99,10 @@ def recon_v_m_dt():
     NT = 4
     n_part = 80
 
+
     metric = "final_snap_rel_error"
     loss_crit = "PP_MSE"
-
+    #loss_crit = "Vel_MSE"
 
     pattern = re.compile(
         rf"^DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt=(\d*\.?\d+)-St={St}_beta={beta}_AI$"
@@ -94,45 +110,170 @@ def recon_v_m_dt():
 
     base_dir = create_results_dir()
 
-    perf_list = []
-    m_dt_list = []
+    m_dt_vals = []
+    mean_metric_vals = []
+    mean_final_loss_vals = []
 
     for name in os.listdir(base_dir):
         full_path = os.path.join(base_dir, name)
+        if not os.path.isdir(full_path):
+            continue
 
-        if os.path.isdir(full_path):
-            match = pattern.match(name)
-            if match:
-                mdt = float(match.group(1))  # extract mdt
-                m_dt_list.append(mdt)
-                df = pd.read_parquet(os.path.join(base_dir, name, "results.parquet")).dropna()
-                df = df[
-                    (df["n_part"] == n_part) &
-                    (df["NT"] == NT) &
-                    (df["loss_crit"] == loss_crit)
-                ]
+        match = pattern.match(name)
+        if match is None:
+            continue
 
-                loss_traces = np.vstack(df["loss_record"].to_numpy())
-                final_loss = loss_traces[:, -1]
-                mask = final_loss <= 5e-4
-                perf_arr = df[metric].to_numpy()[mask]
-                print(perf_arr.shape)
-                perf = np.mean(perf_arr)
-                perf_list.append(perf)
+        results_path = os.path.join(full_path, "results.parquet")
+        if not os.path.exists(results_path):
+            continue
 
-    m_dt_list = np.array(m_dt_list)
-    perf_list = np.array(perf_list)
-    idx = np.argsort(m_dt_list)
-    m_dt_list = m_dt_list[idx]
-    perf_list = perf_list[idx]
+        mdt = float(match.group(1))
 
-    #m_dt_list = m_dt_list[1:]
-    #perf_list = perf_list[1:]
-    plt.scatter(m_dt_list, perf_list)
-    plt.plot()
-    #plt.ylim(0, 1.05)
-    plt.xlim(.1, .8)
+        df = pd.read_parquet(results_path).dropna()
+        df = df[
+            (df["n_part"] == n_part)
+            & (df["NT"] == NT)
+            & (df["loss_crit"] == loss_crit)
+        ]
+
+        if df.empty:
+            continue
+
+        metric_arr, final_loss = remove_outliers_by_loss(df, metric)
+
+
+        m_dt_vals.append(mdt)
+        mean_metric_vals.append(np.mean(metric_arr))
+        mean_final_loss_vals.append(np.mean(final_loss))
+
+    if len(m_dt_vals) == 0:
+        print("No matching runs found.")
+        return
+
+    m_dt_vals = np.array(m_dt_vals)
+    mean_metric_vals = np.array(mean_metric_vals)
+    mean_final_loss_vals = np.array(mean_final_loss_vals)
+
+    sort_idx = np.argsort(m_dt_vals)
+    m_dt_vals = m_dt_vals[sort_idx]
+    mean_metric_vals = mean_metric_vals[sort_idx]
+    mean_final_loss_vals = mean_final_loss_vals[sort_idx]
+
+    fig, ax1 = plt.subplots(figsize=(7, 5))
+
+    # ---- Primary axis (metric) ----
+    color1 = "tab:blue"
+    l1 = ax1.plot(
+        m_dt_vals,
+        mean_metric_vals,
+        marker="o",
+        color=color1,
+        label=metric,
+    )
+
+    ax1.set_xlabel(r"$\Delta t_m$", fontsize=12)
+    ax1.set_ylabel(metric, color=color1, fontsize=12)
+    ax1.set_xlim(0.1, 0.8)
+
+
+    # ---- Secondary axis (loss) ----
+    ax2 = ax1.twinx()
+
+    color2 = "tab:red"
+    l2 = ax2.plot(
+        m_dt_vals,
+        mean_final_loss_vals,
+        marker="s",
+        color=color2,
+        label="Mean Final Loss",
+    )
+
+    ax2.set_ylabel("Mean Final Loss", color=color2, fontsize=12)
+
+    # ---- Combined legend ----
+    lines = l1 + l2
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc="best", frameon=False)
+
+    # ---- Title ----
+    plt.title(rf"Loss Criterion: {loss_crit}", fontsize=13)
+
+    plt.tight_layout()
+    save_svg(mpl, fig, os.path.join(base_dir, f"recon_v_m_dt.svg"))
+    plt.close(fig)
+def embedding_fig():
+    # -----------------------
+    # Configuration
+    # -----------------------
+    n = 4
+    dt = 0.01
+    NDOF = 128
+    St = 0
+    beta = 0
+    m_dt = None
+
+    config_list = [
+        (100, 4),
+    ]
+
+    metric = "final_snap_rel_error"
+    loss_crit = "PP_MSE"
+
+    Re_list = []
+    m_list = []
+    metric_list = []
+
+    for Re, NT in config_list:
+        root = os.path.join(
+            create_results_dir(),
+            f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt={m_dt}-St={St}_beta={beta}_AI",
+        )
+
+        df = pd.read_parquet(os.path.join(root, "results.parquet")).dropna()
+
+        df = df[
+            (df["NT"] == NT)
+            & (df["loss_crit"] == loss_crit)
+        ]
+
+        for n_part, df_npart in df.groupby("n_part", sort=True):
+            metric_arr, final_loss = remove_outliers_by_loss(df_npart, metric)
+
+            if len(metric_arr) == 0:
+                continue
+
+            mean_metric = np.mean(metric_arr)
+
+            # compute m
+            m = NT * n_part * 2
+
+            Re_list.append(Re)
+            m_list.append(m)
+            metric_list.append(mean_metric)
+
+    # -----------------------
+    # Plot
+    # -----------------------
+    Re_arr = np.array(Re_list)
+    m_arr = np.array(m_list)
+    metric_arr = np.array(metric_list)
+
+    plt.figure(figsize=(6, 5))
+
+    sc = plt.scatter(
+        Re_arr,
+        m_arr,
+        c=metric_arr,
+        s=80,
+    )
+
+    cbar = plt.colorbar(sc)
+    cbar.set_label("Mean Metric")
+
+    plt.xlabel("Re")
+    plt.ylabel("m = NT * n_part * 2")
+
+    plt.tight_layout()
     plt.show()
 
-
-recon_v_m_dt()
+embedding_fig()

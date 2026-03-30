@@ -219,17 +219,17 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     else:
                                         vfloat_name = f"{vfloat}"
                                     vfloat_dir = os.path.join(opt_method_dir, vfloat_name)
+                                    
                                     for IC_param in DA_opts.IC_param_list:
                                         param_dir = os.path.join(vfloat_dir, f"{IC_param}")
                                         loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, kf_stepper, target_trj, kf_opts.dt, T, vfloat)
                                         if optimizer.psuedo_proj is not None:
                                             optimizer.psuedo_proj.attach_transform(IC_param.transform, IC_param.inv_transform)
-
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
                                         else:
                                             return
-
+                                        
                                         if not did_IC_guess_count:
                                             IC_guess_count = count_folders(param_dir)
                                             did_IC_guess_count = True

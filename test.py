@@ -1,60 +1,36 @@
-import jax
-import jax.numpy as jnp
+import numpy as np
+import matplotlib.pyplot as plt
 
 
-# ------------------------------------------------------------
-# Random orthogonal matrices (Haar via QR)
-# ------------------------------------------------------------
-def random_orthogonal_matrices(key, N, d, dtype=jnp.float32):
-
-    keys = jax.random.split(key, N)
-
-    def single(k):
-        M = jax.random.normal(k, (d, d), dtype=dtype)
-        Q, R = jnp.linalg.qr(M)
-
-        # Fix QR sign ambiguity → Haar distribution
-        s = jnp.sign(jnp.diag(R))
-        s = jnp.where(s == 0, 1.0, s)
-        Q = Q * s[None, :]
-        return Q
-
-    return jax.vmap(jax.jit(single))(keys)
+def displacement_correlation(dt, tau_L):
+    dt = np.asarray(dt, dtype=float)
+    num = tau_L * (1.0 - np.exp(-dt / tau_L))**2
+    den = 2.0 * (dt - tau_L * (1.0 - np.exp(-dt / tau_L)))
+    return num / den
 
 
-# ------------------------------------------------------------
-# Monte-Carlo verification
-# ------------------------------------------------------------
-def verify_expectation(key, N_samples, d):
-
-    Qs = random_orthogonal_matrices(key, N_samples, d)
-
-    # First column of each Q
-    q1 = Qs[:, :, 0]            # shape (N_samples, d)
-
-    # Square entries
-    sq = q1 ** 2
-
-    # empirical E[(Q_{i1})^2] for each i
-    mean_per_i = jnp.mean(sq, axis=0)
-
-    # overall mean (should also be 1/d)
-    mean_all = jnp.mean(sq)
-
-    return mean_per_i, mean_all
+def mutual_information_displacements(dt, tau_L):
+    rho = displacement_correlation(dt, tau_L)
+    rho = np.clip(rho, -1.0 + 1e-15, 1.0 - 1e-15)
+    return -0.5 * np.log(1.0 - rho**2)
 
 
-# ------------------------------------------------------------
-# Run test
-# ------------------------------------------------------------
-key = jax.random.PRNGKey(0)
+# parameters
+tau_L = 2.0
+dt_vals = np.linspace(1e-3, 3.0 * tau_L, 500)
 
-N_samples = 50000
-d = 16
+# compute MI
+mi_vals = mutual_information_displacements(dt_vals, tau_L)
 
-mean_per_i, mean_all = verify_expectation(key, N_samples, d)
+mi_vel_vals = -0.5 * np.log(1.0 - np.exp(-2.0 * dt_vals / tau_L))
 
-print("Expected value 1/d =", 1/d)
-print("Mean over all entries =", mean_all)
-print("Per-coordinate means =", mean_per_i)
-print("d * mean_all =", d * mean_all)
+# plot
+plt.figure(figsize=(6, 4))
+plt.plot(dt_vals, mi_vals, label=r'Displacement MI')
+plt.plot(dt_vals, mi_vel_vals, '--', label=r'Velocity MI')
+plt.xlabel(r'$\Delta t$')
+plt.ylabel(r'$I$')
+plt.title('Mutual Information vs Time Lag')
+plt.legend()
+plt.tight_layout()
+plt.show()

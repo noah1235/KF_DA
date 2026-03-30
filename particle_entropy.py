@@ -2,6 +2,8 @@ from SRC.Solver.solver import KF_TP_Stepper, create_vel_part_gen_fn
 from SRC.DA_Comp.configs import KF_Opts
 from SRC.utils import load_data, bilinear_sample_periodic
 from create_results_dir import create_results_dir
+from SRC.plotting_utils import save_svg
+import matplotlib as mpl
 
 import os
 import jax
@@ -49,7 +51,6 @@ def safe_normalize(x, eps=1e-14):
     if xmax < eps:
         return x
     return x / xmax
-
 
 # ------------------------------------------------------------
 # KSG mutual information estimator
@@ -108,6 +109,89 @@ def knn_mutual_information(X, Y, k=5, eps=1e-15):
 
     mi = digamma(k) + digamma(N) - np.mean(digamma(nx + 1) + digamma(ny + 1))
     return float(mi)
+
+def knn_normalized_mi(X, Y, k=5, eps=1e-15):
+    """
+    KNN-based normalized mutual information (NMI) using
+    KSG estimator + relative entropy normalization.
+
+    Paper: Accurate estimation of the normalized mutual information of multidimensional data
+
+    Parameters
+    ----------
+    X : ndarray, shape (N, dx)
+    Y : ndarray, shape (N, dy)
+    k : int
+    eps : float
+
+    Returns
+    -------
+    nmi : float
+        Normalized mutual information in [0, 1]
+    mi : float
+        Raw mutual information (nats)
+    """
+    X = np.asarray(X, dtype=float)
+    Y = np.asarray(Y, dtype=float)
+
+    if X.ndim == 1:
+        X = X[:, None]
+    if Y.ndim == 1:
+        Y = Y[:, None]
+
+    if X.shape[0] != Y.shape[0]:
+        raise ValueError("X and Y must have the same number of samples.")
+
+    N = X.shape[0]
+    dx = X.shape[1]
+    dy = Y.shape[1]
+
+    if k >= N:
+        raise ValueError(f"k={k} must be smaller than N={N}.")
+
+    XY = np.concatenate([X, Y], axis=1)
+
+    # --- KD trees ---
+    tree_xy = cKDTree(XY)
+    tree_x = cKDTree(X)
+    tree_y = cKDTree(Y)
+
+    # --- joint distances (max norm, KSG style) ---
+    dists, _ = tree_xy.query(XY, k=k + 1, p=np.inf)
+    eps_i = dists[:, -1] - eps  # radius
+
+    # --- neighbor counts ---
+    nx = np.empty(N, dtype=int)
+    ny = np.empty(N, dtype=int)
+
+    for i in range(N):
+        nx[i] = len(tree_x.query_ball_point(X[i], r=eps_i[i], p=np.inf)) - 1
+        ny[i] = len(tree_y.query_ball_point(Y[i], r=eps_i[i], p=np.inf)) - 1
+
+    # --- MI (standard KSG) ---
+    mi = digamma(k) + digamma(N) - np.mean(digamma(nx + 1) + digamma(ny + 1))
+
+    # ============================================================
+    # --- Relative entropy normalization (key addition) ---
+    # ============================================================
+
+    d = dx + dy
+
+    # scale-invariant radius (paper Eq. 31–32)
+    eps_mean_power = np.mean(eps_i ** d)
+    eps_tilde = eps_i / (eps_mean_power ** (1.0 / d) + 1e-30)
+
+    log_eps_tilde = np.log(eps_tilde + 1e-30)
+
+    # marginal entropies (relative entropy estimator)
+    Hx = -np.mean(digamma(nx + 1)) + digamma(N) + dx * np.mean(log_eps_tilde)
+    Hy = -np.mean(digamma(ny + 1)) + digamma(N) + dy * np.mean(log_eps_tilde)
+
+    # --- normalized MI ---
+    denom = np.sqrt(max(Hx, 1e-30) * max(Hy, 1e-30))
+    nmi = mi / denom if denom > 0 else 0.0
+
+    return float(nmi), float(mi)
 
 
 # ------------------------------------------------------------
@@ -284,11 +368,11 @@ def main():
         0.75, 1.00, 1.25, 1.5
     ])
     m_dt_vals = np.array([
-        .1, .3, .5, .7
+        .1, .3, .5, .7, .8
     ])
 
-
-    data_path = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}", "data_dict.pkl")
+    results_root = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}")
+    data_path = os.path.join(results_root, "data_dict.pkl")
     recompute = False
     if recompute:
         data_dict = {}
@@ -312,7 +396,7 @@ def main():
         with open(data_path, "rb") as f:
             data_dict = pickle.load(f)
 
-    k_mi = 10
+    k_mi = 5
 
     m_dt_vals = data_dict.keys()
     mi_disp_vals = []
@@ -327,8 +411,12 @@ def main():
         #X_vel = np.column_stack([u1, v1])
         #Y_vel = np.column_stack([u2, v2])
 
-        mi_disp = knn_mutual_information(data.X_disp, data.Y_disp, k=k_mi)
-        mi_vel = knn_mutual_information(data.X_vel, data.Y_vel, k=k_mi)
+        #mi_disp = knn_mutual_information(data.X_disp, data.Y_disp, k=k_mi)
+        #mi_vel = knn_mutual_information(data.X_vel, data.Y_vel, k=k_mi)
+        
+        nmi_disp, _ = knn_normalized_mi(data.X_disp, data.Y_disp, k=k_mi)
+        nmi_vel, _ = knn_normalized_mi(data.X_vel, data.Y_vel, k=k_mi)
+        #print(mi_disp)
 
         u1 = data.X_vel[:, 0]
         v1 = data.X_vel[:, 1]
@@ -346,8 +434,8 @@ def main():
         corr_dx = safe_corr(dx_1, dx_2)
         corr_dy = safe_corr(dy_1, dy_2)
 
-        mi_disp_vals.append(mi_disp)
-        mi_vel_vals.append(mi_vel)
+        mi_disp_vals.append(nmi_disp)
+        mi_vel_vals.append(nmi_vel)
 
         corr_u_vals.append(corr_u)
         corr_v_vals.append(corr_v)
@@ -359,44 +447,45 @@ def main():
     # --------------------------------------------------------
     # Plot 1: normalized MI and velocity correlations
     # --------------------------------------------------------
-    plt.figure(figsize=(6, 4))
-    plt.plot(
-        m_dt_vals,
-        safe_normalize(mi_disp_vals),
-        marker="o",
-        label="displacement MI",
-    )
-    plt.plot(
-        m_dt_vals,
-        safe_normalize(mi_vel_vals),
-        marker="s",
-        label="velocity MI",
-    )
-    plt.plot(
-        m_dt_vals,
-        corr_u_vals,
-        marker="^",
-        label=r"$\mathrm{Corr}(u_1,u_2)$",
-    )
-    plt.plot(
-        m_dt_vals,
-        corr_v_vals,
-        marker="v",
-        label=r"$\mathrm{Corr}(v_1,v_2)$",
-    )
-    plt.xlabel(r"$m_{\Delta t}$")
-    plt.ylabel("Normalized value / correlation")
-    plt.title("Normalized MI and velocity correlations vs time separation")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
+    if False:
+        plt.figure(figsize=(6, 4))
+        plt.plot(
+            m_dt_vals,
+            safe_normalize(mi_disp_vals),
+            marker="o",
+            label="displacement MI",
+        )
+        plt.plot(
+            m_dt_vals,
+            safe_normalize(mi_vel_vals),
+            marker="s",
+            label="velocity MI",
+        )
+        plt.plot(
+            m_dt_vals,
+            corr_u_vals,
+            marker="^",
+            label=r"$\mathrm{Corr}(u_1,u_2)$",
+        )
+        plt.plot(
+            m_dt_vals,
+            corr_v_vals,
+            marker="v",
+            label=r"$\mathrm{Corr}(v_1,v_2)$",
+        )
+        plt.xlabel(r"$m_{\Delta t}$")
+        plt.ylabel("Normalized value / correlation")
+        plt.title("Normalized MI and velocity correlations vs time separation")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
 
     # --------------------------------------------------------
     # Plot 2: MI with two y-axes
     # --------------------------------------------------------
     fig, ax1 = plt.subplots(figsize=(6, 4))
 
-    line1 = ax1.plot(
+    ax1.plot(
         m_dt_vals,
         mi_disp_vals,
         marker="o",
@@ -404,31 +493,23 @@ def main():
         label=r"$I((dx_1,dy_1);(dx_2,dy_2))$",
     )
     ax1.set_xlabel(r"$m_{\Delta t}$")
-    ax1.set_ylabel("Displacement MI [nats]", color="tab:blue")
-    ax1.tick_params(axis="y", labelcolor="tab:blue")
-    #ax1.grid(True)
-    ax1.set_xlim(.1, .8)
-    plt.show()
-    return
-
-    ax2 = ax1.twinx()
-    line2 = ax2.plot(
-        m_dt_vals,
-        mi_vel_vals,
-        marker="s",
-        color="tab:red",
-        label=r"$I((u_1,v_1);(u_2,v_2))$",
-    )
-    ax2.set_ylabel("Velocity MI [nats]", color="tab:red")
-    ax2.tick_params(axis="y", labelcolor="tab:red")
-
-    lines = line1 + line2
-    labels = [l.get_label() for l in lines]
-    ax1.legend(lines, labels, loc="best")
+    ax1.set_ylabel("Normalized MI")
+    ax1.plot(
+            m_dt_vals,
+            mi_vel_vals,
+            marker="s",
+            color="tab:red",
+            label=r"$I((u_1,v_1);(u_2,v_2))$",
+        )
+    
+    ax1.legend(loc="best")
 
     plt.title("Mutual information vs time separation")
     plt.tight_layout()
-
+    plt.ylim(0, 1)
+    save_svg(mpl, fig, os.path.join(root, "MI_vs_m_dt.svg"))
+    plt.close()
+    return
 
     # --------------------------------------------------------
     # Plot 3: velocity correlations
