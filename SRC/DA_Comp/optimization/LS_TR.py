@@ -30,7 +30,6 @@ class ArmijoLineSearch:
     ) -> float:
         alpha  = self.alpha_init
         g0 = jnp.dot(grad, p)
-        print(g0)
 
         for i in range(self.max_iters):
             max_loss = f0 + self.c*alpha*g0

@@ -589,7 +589,7 @@ def plot_fit_params_v_m(df, path):
 # =========================
 def adjoint_test():
     kf_opts = KF_Opts(
-        Re=100,
+        Re=60,
         n=4,
         NDOF=128,
         dt=1e-2,

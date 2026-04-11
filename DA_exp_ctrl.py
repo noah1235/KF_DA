@@ -125,7 +125,7 @@ def parquet_to_excel(parquet_path, excel_path=None):
 
 def main():
     kf_opts = KF_Opts(
-        Re = 100,   
+        Re = 60,   
         n = 4,
         NDOF = 128,
         dt = 1e-2,
@@ -134,19 +134,23 @@ def main():
         t_skip=1
     )
 
-    BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=10)
+    #Re = 100 | T = 3,3
+    #Re = 60 | T = 4.1
+    #Re = 40 | T = 7.2
+
+    BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=5)
 
     DA_opts = DA_Opts(
         m_dt=None,
-        n_particles_list=[80],
-        NT_list=[4],
+        n_particles_list=[45],
+        NT_list=[6],
         part_opts=Particle_Opts(St=0, beta=0),
         PIC_seed_list=[0],
-        num_opt_inits=5,
-        TIC_seed_list=[0, 1, 2, 3, 4],
+        num_opt_inits=10,
+        TIC_seed_list=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         ic_init=AI(min_norm=.1, max_norm=jnp.inf),
         #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[3.3],
+        T_list=[7.2],
         optimizer_list=[
             BFGS(
                 ls=BT_ls, 

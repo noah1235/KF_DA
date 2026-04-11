@@ -49,7 +49,7 @@ def generate_rand_IC(NDOF, key_num=0, sigma=3, kcut_frac=0.1):
 
 def generate_KF_dataset():
     NDOF = 128
-    Re = 100
+    Re = 60
     n  = 4
     dt = 1e-2
     T = 1e3

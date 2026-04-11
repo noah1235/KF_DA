@@ -13,7 +13,7 @@ def m_dep_fig():
     # -----------------------
     # Configuration
     # -----------------------
-    Re = 100
+    Re = 60
     n = 4
     dt = 0.01
     NDOF = 128
@@ -21,7 +21,7 @@ def m_dep_fig():
     beta = 0
     m_dt = None
 
-    m_targets = [640, 320, 160]
+    m_targets = [480]
     metric = "final_snap_rel_error"
     for m_target in m_targets:
         # -----------------------
@@ -54,8 +54,12 @@ def m_dep_fig():
             # loss_record is assumed to be array-like per row with consistent length
             loss_traces = np.vstack(g["loss_record"].to_numpy())
             final_loss = loss_traces[:, -1]
-            loss_stand = final_loss
+            
             #loss_stand = loss_transformation(final_loss)
+
+            perf, final_loss = remove_outliers_by_loss(g, metric)
+
+            loss_stand = final_loss
 
             label = f"NT={NT}, n_part={n_part}, mean={np.mean(perf):.3f}"
             plt.scatter(loss_stand, perf, label=label)
@@ -201,6 +205,7 @@ def recon_v_m_dt():
     plt.tight_layout()
     save_svg(mpl, fig, os.path.join(base_dir, f"recon_v_m_dt.svg"))
     plt.close(fig)
+
 def embedding_fig():
     # -----------------------
     # Configuration
@@ -214,12 +219,21 @@ def embedding_fig():
 
     config_list = [
         (100, 4),
+        (40, 6),
+        (60, 6)
     ]
+
+    dM_dict = {
+        100: 300,
+        60: 240,
+        40: 160
+    }
 
     metric = "final_snap_rel_error"
     loss_crit = "PP_MSE"
 
     Re_list = []
+    dM_list = []
     m_list = []
     metric_list = []
 
@@ -237,6 +251,7 @@ def embedding_fig():
         ]
 
         for n_part, df_npart in df.groupby("n_part", sort=True):
+            print(n_part)
             metric_arr, final_loss = remove_outliers_by_loss(df_npart, metric)
 
             if len(metric_arr) == 0:
@@ -248,6 +263,7 @@ def embedding_fig():
             m = NT * n_part * 2
 
             Re_list.append(Re)
+            dM_list.append(dM_dict[Re])
             m_list.append(m)
             metric_list.append(mean_metric)
 
@@ -255,25 +271,35 @@ def embedding_fig():
     # Plot
     # -----------------------
     Re_arr = np.array(Re_list)
+    dM_arr = np.array(dM_list)
     m_arr = np.array(m_list)
     metric_arr = np.array(metric_list)
 
-    plt.figure(figsize=(6, 5))
+    dM_x = np.linspace(np.min(dM_arr), np.max(dM_arr), 100)
+    im_line = dM_x
+    emb_line = 2*dM_x+1
+
+    fig = plt.figure(figsize=(6, 5))
 
     sc = plt.scatter(
-        Re_arr,
+        dM_arr,
         m_arr,
         c=metric_arr,
         s=80,
+        vmin=0.0,      # minimum color value
+        vmax=0.5       # maximum color value
     )
+    plt.plot(dM_x, im_line, label="immersion line")
+    plt.plot(dM_x, emb_line, label="embedding line")
 
     cbar = plt.colorbar(sc)
     cbar.set_label("Mean Metric")
 
-    plt.xlabel("Re")
+    plt.xlabel("IM dimension")
     plt.ylabel("m = NT * n_part * 2")
 
     plt.tight_layout()
-    plt.show()
+    plt.legend()
+    save_svg(mpl, fig, os.path.join(create_results_dir(), "embedding_fig.svg"))
 
 embedding_fig()

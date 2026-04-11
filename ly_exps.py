@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from Solver.KF_intergrators_dec import KF_PS_RHS, RK4_Step
 from SRC.utils import load_data
 from SRC.DA_Comp.configs import KF_Opts
 import random
@@ -151,11 +150,11 @@ import jax.numpy as jnp
 
 def ly_exp_main():
     kf_opts = KF_Opts(
-        Re = 100,   
+        Re = 60,   
         n = 4,
         NDOF = 128,
         dt = 1e-2,
-        total_T=int(1e6),
+        total_T=int(1e4),
         min_samp_T=100,
         t_skip=1e-1
     )

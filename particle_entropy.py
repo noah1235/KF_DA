@@ -316,13 +316,13 @@ def compute_ensemble(
 # ------------------------------------------------------------
 def main():
     kf_opts = KF_Opts(
-        Re=100,
+        Re=60,
         n=4,
         NDOF=128,
         dt=1e-2,
-        total_T=int(1e3),
+        total_T=int(1e4),
         min_samp_T=100,
-        t_skip=1e-1,
+        t_skip=10,
     )
 
     root = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}")
@@ -371,9 +371,13 @@ def main():
         .1, .3, .5, .7, .8
     ])
 
+    m_dt_vals = np.array([
+        .2, .3, .5, .7, .9, 1.3, 1.5
+    ])
+
     results_root = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}")
     data_path = os.path.join(results_root, "data_dict.pkl")
-    recompute = False
+    recompute = True
     if recompute:
         data_dict = {}
 
@@ -396,7 +400,7 @@ def main():
         with open(data_path, "rb") as f:
             data_dict = pickle.load(f)
 
-    k_mi = 5
+    k_mi = 10
 
     m_dt_vals = data_dict.keys()
     mi_disp_vals = []
@@ -506,7 +510,7 @@ def main():
 
     plt.title("Mutual information vs time separation")
     plt.tight_layout()
-    plt.ylim(0, 1)
+    plt.ylim(0, 1.2)
     save_svg(mpl, fig, os.path.join(root, "MI_vs_m_dt.svg"))
     plt.close()
     return
