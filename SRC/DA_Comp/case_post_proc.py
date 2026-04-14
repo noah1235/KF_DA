@@ -350,6 +350,7 @@ def plot_vort_comp(
     ax_spec.plot(k_centers, rel_err_k, marker="o", linewidth=1, label="Relative error")
     ax_spec.plot(k_centers, E_true_norm, marker="s", linewidth=1, label=r"True energy / max(true)")
     ax_spec.plot(k_centers, E_pred_norm, marker="^", linewidth=1, label=r"Guess energy / max(true)")
+    ax_spec.set_ylim(0, 1)
 
     ax_spec.set_xlabel(r"$k$")
     ax_spec.set_ylabel("Value")

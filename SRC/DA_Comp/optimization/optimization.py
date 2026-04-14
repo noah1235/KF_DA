@@ -14,6 +14,7 @@ import numpy as np
 from scipy.optimize import minimize
 from scipy.sparse.linalg import minres, cg
 from scipy.sparse.linalg import LinearOperator, minres
+from jax.scipy.sparse.linalg import cg
 
 def equal_component_Q(g, k, key=None):
     """
@@ -95,6 +96,136 @@ def equal_component_Q(g, k, key=None):
 
     return Q
 
+class Joint_Opt:
+    def __init__(self, state_opt, PP_opt_its, opt_loops):
+        self.state_opt = state_opt
+        self.psuedo_proj = state_opt.psuedo_proj
+
+        self.PP_opt_its = PP_opt_its
+        self.opt_loops = opt_loops
+
+    @staticmethod
+    def periodic_diff(a, b):
+        return (a - b + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+    def set_pp_loss_fn(self, gen_loss_fn, PP_opt_default, pp_sigma, spatial_L):
+        sigma_x, sigma_y = pp_sigma
+        n_parts = PP_opt_default.shape[0]//2
+        xp_meas = PP_opt_default[:n_parts]
+        yp_meas = PP_opt_default[n_parts:2*n_parts]
+
+        def PP_opt_loss_fn(Z0, PP_opt):
+            PP_opt = jnp.mod(PP_opt, self.spatial_L)
+            xp_opt = PP_opt[:n_parts]
+            yp_opt = PP_opt[n_parts:2*n_parts]
+
+            dx = self.periodic_diff(xp_opt, xp_meas)
+            dy = self.periodic_diff(yp_opt, yp_meas)
+
+            pp_opt_reg = 0.5 * (
+                jnp.mean(dx**2) / sigma_x**2
+                + jnp.mean(dy**2) / sigma_y**2
+            ) * jnp.sqrt(sigma_x * sigma_y)
+
+
+            return gen_loss_fn(Z0, PP_opt) + pp_opt_reg
+
+
+        self.loss_grad_fn_pp = jax.jit(jax.value_and_grad(PP_opt_loss_fn, argnums=1))
+        self.hess_fn_pp = jax.jit(jax.hessian(PP_opt_loss_fn, argnums=1))
+        self.PP_opt = PP_opt_default.copy()
+        self.state_opt.PP_opt = self.PP_opt
+
+        self.PP_opt_loss_fn = jax.jit(PP_opt_loss_fn)
+
+        self.spatial_L = spatial_L
+
+    def opt_pp_bu(self, Z0):
+        alpha = 1.0
+
+        for i in range(self.PP_opt_its):
+            loss, grad = self.loss_grad_fn_pp(Z0, self.PP_opt)
+            print(loss)
+            H = self.hess_fn_pp(Z0, self.PP_opt)
+            eigvals, eigvecs = jnp.linalg.eigh(H)
+            eigvals = jnp.abs(eigvals)
+            H_inv = eigvecs @ jnp.diag(1/eigvals) @ eigvecs.T
+            pk = -H_inv @ grad
+
+
+            self.PP_opt = jnp.mod(self.PP_opt + alpha * pk, self.spatial_L)
+        self.state_opt.PP_opt = self.PP_opt
+
+    def opt_pp(self, Z0):
+        c1 = 1e-4
+        tau = 0.5
+        alpha_init = 1.0
+        max_bt_its = 5
+        eps = 1e-12
+
+        for i in range(self.PP_opt_its):
+            loss, grad = self.loss_grad_fn_pp(Z0, self.PP_opt)
+            print(loss)
+
+            H = self.hess_fn_pp(Z0, self.PP_opt)
+            eigvals, eigvecs = jnp.linalg.eigh(H)
+
+            eigvals_reg = jnp.abs(eigvals)
+            mask = eigvals_reg > eps
+
+            eigvals_keep = eigvals_reg[mask]
+            Q = eigvecs[:, mask]
+
+            # truncated spectral inverse
+            H_inv = Q @ jnp.diag(1.0 / eigvals_keep) @ Q.T
+            pk = -H_inv @ grad
+
+            alpha = alpha_init
+            gTp = jnp.dot(grad, pk)
+
+            def trial_loss(alpha):
+                PP_trial = jnp.mod(self.PP_opt + alpha * pk, self.spatial_L)
+                return self.PP_opt_loss_fn(Z0, PP_trial)
+
+            loss_trial = trial_loss(alpha)
+
+            bt_it = 0
+            while loss_trial > loss + c1 * alpha * gTp:
+                alpha *= tau
+                bt_it += 1
+
+                if bt_it >= max_bt_its:
+                    alpha = 0.0
+                    break
+
+                loss_trial = trial_loss(alpha)
+
+            if alpha == 0.0:
+                print("Backtracking failed; terminating PP optimization.")
+                break
+
+            self.PP_opt = jnp.mod(self.PP_opt + alpha * pk, self.spatial_L)
+
+        self.state_opt.PP_opt = self.PP_opt
+
+    def opt_loop(self, Z0, loss_fn_and_derivs, get_IC_state_fn, omega0_hat, attractor_rad):
+        opt_data_all = None
+        for i in range(self.opt_loops):
+            do_Hg_int = i==0
+            do_last_it_logic = i==self.opt_loops-1
+            Z0_opt, opt_data = self.state_opt.opt_loop(Z0, loss_fn_and_derivs, get_IC_state_fn, omega0_hat, attractor_rad, do_Hg_int=do_Hg_int, do_last_it_logic=do_last_it_logic)
+            if opt_data_all is None:
+                opt_data_all = opt_data
+            else:
+                opt_data_all += opt_data
+            Z0 = Z0_opt
+            if i < self.opt_loops-1:
+                self.opt_pp(Z0_opt)
+
+        return Z0_opt, opt_data_all
+    
+    def __repr__(self):
+        return f"JO-{self.opt_loops}X-{self.state_opt}"
 
 class TN(LS_TR_Opt):
     def __init__(self, ls, its, psuedo_proj=None, print_loss=False):
@@ -140,9 +271,6 @@ class TN(LS_TR_Opt):
 
         return Z_next, loss_next, grad_next, alpha, alpha_pk, debug_str
 
-
-
-
 class BFGS(LS_TR_Opt):
     def __init__(self, ls, its, max_mem, eps_H, limited_memory=True, psuedo_proj=None, print_loss=False):
         super().__init__(its, psuedo_proj, print_loss)
@@ -175,7 +303,8 @@ class BFGS(LS_TR_Opt):
 
 
     def inner_loop(self, Z0, grad, loss, loss_fn_and_derivs: Loss_and_Deriv_fns, iter, last_iteration):
-        loss_grad_cond_fn = loss_fn_and_derivs.conditional_loss_grad_fn
+        loss_grad_cond_fn_base = loss_fn_and_derivs.conditional_loss_grad_fn
+        loss_grad_cond_fn = lambda x1, x2: loss_grad_cond_fn_base(x1, x2, PP_opt=self.PP_opt)
 
         # 1) Choose search direction
         pk =  self.H.get_step_dir(grad)
@@ -204,8 +333,6 @@ class BFGS(LS_TR_Opt):
         debug_out = f"{debug_str} | Update: {did_update}"
 
         return Z_next, loss_next, grad_next, alpha, alpha_pk, debug_out
-
-
 
 class NCSR1(LS_TR_Opt, L_SR1, HVP_Update):
     def __init__(self, its, eps_H, max_memory,

@@ -1,6 +1,133 @@
 import jax.numpy as jnp
 
 
+import jax.numpy as jnp
+
+
+class Fourier_Param_bu:
+    def __init__(self, Nx: int, K: int, beta, Re, log_scale=1.0):
+        self.Nx = int(Nx)
+        self.K = int(K)
+        self.beta = float(beta)
+        self.log_scale = float(log_scale)
+
+        if self.K < 0:
+            raise ValueError("K must be nonnegative.")
+        if self.K > self.Nx // 2:
+            raise ValueError(f"K={self.K} must be <= Nx//2={self.Nx//2}.")
+        if self.log_scale <= 0:
+            raise ValueError("log_scale must be positive.")
+
+        self.full_shape = (self.Nx, self.Nx // 2 + 1)
+        self.kx_idx = jnp.arange(self.K + 1)
+
+        if (self.Nx % 2 == 0) and (self.K == self.Nx // 2):
+            self.ky_idx = jnp.arange(self.Nx)
+        else:
+            ky_pos = jnp.arange(self.K + 1)
+            ky_neg = jnp.arange(self.Nx - self.K, self.Nx)
+            self.ky_idx = jnp.concatenate([ky_pos, ky_neg], axis=0)
+
+        self.nky = int(self.ky_idx.shape[0])
+        self.nkx = int(self.kx_idx.shape[0])
+        self.small_shape = (self.nky, self.nkx)
+
+        self.nn = self.nky * self.nkx
+        self.out_dim = 2 * self.nn
+
+        self._KY = self.ky_idx[:, None]
+        self._KX = self.kx_idx[None, :]
+
+        self.kx_vals = self.kx_idx
+        self.ky_vals = jnp.where(self.ky_idx <= self.Nx // 2,
+                                 self.ky_idx,
+                                 self.ky_idx - self.Nx)
+
+        kx_grid = self.kx_vals[None, :]
+        ky_grid = self.ky_vals[:, None]
+        self.k2 = kx_grid**2 + ky_grid**2
+
+        self.precond = jnp.exp(-0.5 * (1 / Re) * self.beta * self.k2)
+        self.precond_inv = jnp.exp(0.5 * (1 / Re) * self.beta * self.k2)
+
+    def _signed_log(self, z: jnp.ndarray) -> jnp.ndarray:
+        return jnp.arcsinh(z / self.log_scale)
+
+    def _signed_exp(self, y: jnp.ndarray) -> jnp.ndarray:
+        return self.log_scale * jnp.sinh(y)
+
+    def pack(self, omega_hat: jnp.ndarray) -> jnp.ndarray:
+        if omega_hat.shape != self.full_shape:
+            raise ValueError(
+                f"Expected omega_hat shape {self.full_shape}, got {omega_hat.shape}"
+            )
+        U_small = omega_hat[self._KY, self._KX]
+        flat = U_small.reshape(-1)
+        return jnp.concatenate([flat.real, flat.imag], axis=0)
+
+    def unpack(self, z: jnp.ndarray) -> jnp.ndarray:
+        z = jnp.asarray(z)
+        if z.shape != (self.out_dim,):
+            raise ValueError(f"Expected z shape ({self.out_dim},), got {z.shape}")
+
+        if z.dtype == jnp.float32:
+            c_dtype = jnp.complex64
+        elif z.dtype == jnp.float64:
+            c_dtype = jnp.complex128
+        else:
+            raise TypeError(f"Unsupported dtype: {z.dtype}")
+
+        re = z[:self.nn].reshape(self.small_shape)
+        im = z[self.nn:].reshape(self.small_shape)
+        U_small = re + 1j * im
+
+        omega_hat_full = jnp.zeros(self.full_shape, dtype=c_dtype)
+        omega_hat_full = omega_hat_full.at[self._KY, self._KX].set(U_small)
+        return omega_hat_full
+
+    def transform(self, omega_hat: jnp.ndarray) -> jnp.ndarray:
+        if omega_hat.shape != self.full_shape:
+            raise ValueError(
+                f"Expected omega_hat shape {self.full_shape}, got {omega_hat.shape}"
+            )
+
+        U_small = omega_hat[self._KY, self._KX]
+        S_small = self.precond_inv * U_small
+        flat = S_small.reshape(-1)
+        Z = jnp.concatenate([flat.real, flat.imag], axis=0)
+
+        # signed log compression
+        Y = self._signed_log(Z)
+        return Y
+
+    def inv_transform(self, y: jnp.ndarray) -> jnp.ndarray:
+        y = jnp.asarray(y)
+        if y.shape != (self.out_dim,):
+            raise ValueError(f"Expected y shape ({self.out_dim},), got {y.shape}")
+
+        if y.dtype == jnp.float32:
+            c_dtype = jnp.complex64
+        elif y.dtype == jnp.float64:
+            c_dtype = jnp.complex128
+        else:
+            raise TypeError(f"Unsupported dtype: {y.dtype}")
+
+        # undo signed log compression
+        z = self._signed_exp(y)
+
+        re = z[:self.nn].reshape(self.small_shape)
+        im = z[self.nn:].reshape(self.small_shape)
+        S_small = re + 1j * im
+
+        U_small = self.precond * S_small
+
+        omega_hat_full = jnp.zeros(self.full_shape, dtype=c_dtype)
+        omega_hat_full = omega_hat_full.at[self._KY, self._KX].set(U_small.astype(c_dtype))
+        return omega_hat_full
+
+    def __repr__(self) -> str:
+        return f"Fourier_K={self.K}, beta={self.beta}, log_scale={self.log_scale}"
+
 class Fourier_Param:
     def __init__(self, Nx: int, K: int, beta, Re):
         self.Nx = int(Nx)
@@ -109,7 +236,8 @@ class Fourier_Param:
         U_small = omega_hat[self._KY, self._KX]
         S_small = self.precond_inv * U_small
         flat = S_small.reshape(-1)
-        return jnp.concatenate([flat.real, flat.imag], axis=0)
+        Z = jnp.concatenate([flat.real, flat.imag], axis=0)
+        return Z
 
     def inv_transform(self, z: jnp.ndarray) -> jnp.ndarray:
         """

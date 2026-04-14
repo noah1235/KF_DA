@@ -1,7 +1,7 @@
 from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, NCSR1_and_LBFGS
+from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, NCSR1_and_LBFGS, Joint_Opt
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
 from SRC.DA_Comp.optimization.parent_classes import Psuedo_Projection
 from SRC.utils import load_data
@@ -91,7 +91,6 @@ def write_hierarchical_case_summary(
 
     return out_path
 
-
 def parquet_to_excel(parquet_path, excel_path=None):
     """
     Copy the contents of a Parquet file to an Excel (.xlsx) file.
@@ -125,15 +124,16 @@ def parquet_to_excel(parquet_path, excel_path=None):
 
 def main():
     kf_opts = KF_Opts(
-        Re = 60,   
+        Re = 100,   
         n = 4,
         NDOF = 128,
         dt = 1e-2,
-        total_T=int(1e4),
+        total_T=int(1e3),
         min_samp_T=100,
         t_skip=1
     )
 
+    #Re = 200 | T = 3.2
     #Re = 100 | T = 3,3
     #Re = 60 | T = 4.1
     #Re = 40 | T = 7.2
@@ -141,26 +141,33 @@ def main():
     BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=5)
 
     DA_opts = DA_Opts(
+        sigma_y=1e-1,
+        x__y_sigma=1,
         m_dt=None,
         n_particles_list=[45],
         NT_list=[6],
         part_opts=Particle_Opts(St=0, beta=0),
         PIC_seed_list=[0],
-        num_opt_inits=10,
-        TIC_seed_list=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        num_opt_inits=1,
+        TIC_seed_list=[0],
         ic_init=AI(min_norm=.1, max_norm=jnp.inf),
+        #ic_init=AI(min_norm=.1, max_norm=.5),
         #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[7.2],
+        T_list=[3.3],
         optimizer_list=[
-            BFGS(
-                ls=BT_ls, 
-                #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-                #psuedo_proj=Psuedo_Projection(it_list=[24, 49, 74], T=.25),
-                 its=150, max_mem=20, eps_H=1e-10, print_loss=True),
             #BFGS(
             #    ls=BT_ls, 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
-            #its=200, max_mem=20, eps_H=1e-10, print_loss=True)
+                #psuedo_proj=Psuedo_Projection(it_list=[24, 49, 74], T=.25),
+            #    its=50, max_mem=20, eps_H=1e-10, print_loss=True),
+
+            Joint_Opt(
+                state_opt=BFGS(
+                ls=BT_ls, 
+                its=20, max_mem=20, eps_H=1e-8, print_loss=True),
+                PP_opt_its=2, opt_loops=3
+            )
+
         ],
         vp_list=[None, 
                 #VP_Float_Settings(mbits=4, minv=1e-3, maxv=10),
@@ -171,23 +178,29 @@ def main():
             MSE_PP(),
             #MSE_Vel()
         ],
-        IC_param_list=[Fourier_Param(kf_opts.NDOF, kf_opts.NDOF//2, beta=.1, Re=kf_opts.Re)]
+        IC_param_list=[Fourier_Param(kf_opts.NDOF, kf_opts.NDOF//2, beta=0.1, Re=kf_opts.Re)]
     )
 
-    root = os.path.join(
-        create_results_dir(),
-        (
+    case_name = (
             f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}_NDOF={kf_opts.NDOF}_mdt={DA_opts.m_dt}"
             f"-St={DA_opts.part_opts.St}_beta={DA_opts.part_opts.beta}_{DA_opts.ic_init}"
-        ),
-    )
+        )
+    
+    if DA_opts.sigma_y > 0:
+        root = os.path.join(
+            create_results_dir(), f"DA-sigma_y={DA_opts.sigma_y}--x__y_sigma={DA_opts.x__y_sigma}", case_name
+        )
+    else:
+        root = os.path.join(
+            create_results_dir(), "DA-no_noise", case_name
+        )
 
     DA_exp_main(kf_opts, DA_opts, root)
     parquet_to_excel(os.path.join(root, "results.parquet"), os.path.join(root, "results.xlsx"))
     write_hierarchical_case_summary(root)
     df = pd.read_parquet(os.path.join(root, "results.parquet"))
     df = df.dropna()
-    global_post_main(df, root)
+    #global_post_main(df, root)
 
 def adjoint_test():
     def hvp_many(loss_fn, x, V):

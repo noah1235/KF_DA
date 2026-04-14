@@ -19,6 +19,8 @@ class Particle_Opts:
 
 @dataclass
 class DA_Opts:
+    sigma_y: float
+    x__y_sigma: float
     m_dt: any
     n_particles_list: any
     NT_list: any

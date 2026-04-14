@@ -13,6 +13,7 @@ from SRC.Solver.IC_gen import init_particles_vector
 from SRC.Solver.ploting import plot_particles
 from SRC.DA_Comp.loss_funcs import create_loss_fn, MSE_Vel
 from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
+from SRC.DA_Comp.optimization.optimization import Joint_Opt
 from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
 from SRC.Vel_init.CS_init import CS_init
@@ -183,27 +184,54 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         # ------------------------------------------------
                         PI_root = os.path.join(PI_root_base, f"seed_{PIC_seed}")
                         os.makedirs(PI_root, exist_ok=True)
-                        fig_path = os.path.join(PI_root, "particle_IC.png")
 
                         # Random particle ICs in the periodic domain
                         u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega0_hat)
                         u, v = jnp.fft.irfft2(u_hat), jnp.fft.irfft2(v_hat)
                         xp, yp, up, vp = init_particles_vector(npart, u, v, (0, stepper.NS.L), (0, stepper.NS.L), stepper.NS.L, seed=PIC_seed)
                         particle_IC = (xp, yp, up, vp)
-                        # Quick visualization of particle ICs (only when newly generated)
-                        fig, _ = plot_particles(xp, yp, stepper.NS.L, ax=None, s=20)
-                        fig.savefig(fig_path)
-                        plt.close(fig)
 
                         trj_gen_fn = create_omega_part_gen_fn(jax.jit(stepper), T)
                         #tuple (omega_traj, xp_traj, yp_traj, up_traj, vp_traj)
                         target_trj = trj_gen_fn(omega0_hat, xp, yp, up, vp)
+                        xp_traj, yp_traj = target_trj[1], target_trj[2]
+                        if DA_opts.sigma_y > 0:
+                            sigma_x = DA_opts.x__y_sigma * DA_opts.sigma_y
+                            key = jax.random.PRNGKey(PIC_seed)
+                            x_key, y_key = jax.random.split(key)
+
+                            xp_traj_DA = jnp.mod(
+                                xp_traj + sigma_x * jax.random.normal(x_key, xp_traj.shape),
+                                stepper.NS.L
+                            )
+
+                            yp_traj_DA = jnp.mod(
+                                yp_traj + DA_opts.sigma_y * jax.random.normal(y_key, yp_traj.shape),
+                                stepper.NS.L
+                            )
+                            #xp_traj_DA = xp_traj + sigma_x * jax.random.normal(x_key, xp_traj.shape)
+
+                            #yp_traj_DA = yp_traj + DA_opts.sigma_y * jax.random.normal(y_key, yp_traj.shape)
+
+                            fig, _ = plot_particles(xp, yp, stepper.NS.L, xp_DA=xp_traj_DA[0,:], yp_DA=yp_traj_DA[0,:], ax=None, s=20)
+                            fig.savefig(os.path.join(PI_root, "particle_IC.png"))
+                            plt.close(fig)
+                        else:
+                            fig, _ = plot_particles(xp, yp, stepper.NS.L, ax=None, s=20)
+                            fig.savefig(os.path.join(PI_root, "particle_IC.png"))
+                            plt.close(fig)
+
+                            xp_traj_DA = xp_traj
+                            yp_traj_DA = yp_traj
+
 
                         for loss_crit in DA_opts.crit_list:
                             t_mask = get_tmask(T, NT, kf_opts.dt, DA_opts.m_dt, loss_crit)
                             loss_crit.init_obj(t_mask, stepper.NS.L)
                             crit_dir = os.path.join(PI_root, f"{loss_crit}")
 
+                            DA_part_pos_trj = (xp_traj_DA[t_mask, :], yp_traj_DA[t_mask, :])
+                        
                             # For each optimizer and loss criterion, run a DA case
                             for optimizer in DA_opts.optimizer_list:
                                 if optimizer.psuedo_proj is not None:
@@ -222,9 +250,21 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                     
                                     for IC_param in DA_opts.IC_param_list:
                                         param_dir = os.path.join(vfloat_dir, f"{IC_param}")
-                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, kf_stepper, target_trj, kf_opts.dt, T, vfloat)
+                                        if (DA_opts.sigma_y > 0) and (sigma_x > 0):
+                                            pp_sigma = (sigma_x, DA_opts.sigma_y)
+                                        else:
+                                            pp_sigma = None
+
+                                        checkpoint = kf_opts.Re > 100
+                                        checkpoint = True
+                                        loss_fn_and_derivs = Loss_and_Deriv_fns(loss_crit, IC_param.inv_transform, stepper, kf_stepper, target_trj, pp_sigma, DA_part_pos_trj, kf_opts.dt, T, vfloat, checkpoint=checkpoint)
                                         if optimizer.psuedo_proj is not None:
                                             optimizer.psuedo_proj.attach_transform(IC_param.transform, IC_param.inv_transform)
+                                        
+                                        if isinstance(optimizer, Joint_Opt):
+                                            optimizer.set_pp_loss_fn(loss_fn_and_derivs.gen_loss_fn, loss_fn_and_derivs.PP_opt_default, pp_sigma, stepper.NS.L)
+
+
                                         if isinstance(DA_opts.ic_init, AI):
                                             DA_opts.ic_init.set_unused_mask()
                                         else:
@@ -257,11 +297,10 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                         "optimizer": [f"{optimizer}"],
                                                                         "loss_crit": [f"{loss_crit}"],
                                                                         "floatp": [vfloat_name]
-
-
                                                                     })                    
 
-                                            _run_DA_case(target_trj, omega0_guess_hat, omega0_hat, attractor_rad, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, particle_IC, opt_init_dir, kf_opts.dt,
+                                            _run_DA_case(target_trj, omega0_guess_hat, omega0_hat, attractor_rad, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, particle_IC, 
+                                                         opt_init_dir, kf_opts.dt,
                                                         t_mask, results_df,
                                                         parquet_path)
                                             count += 1
@@ -302,8 +341,11 @@ def _run_DA_case(
     """
     loss_fn_and_derivs.reset_cost_count()
     Z0 = IC_param.transform(omega0_guess_hat)
-    U_0_DA_hat, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs, IC_param.inv_transform, omega0_hat, attractor_rad)
-    omega0_DA_hat = IC_param.inv_transform(U_0_DA_hat)
+    get_IC_state_fn = IC_param.inv_transform
+
+    Z0_opt, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs, get_IC_state_fn, omega0_hat, attractor_rad)
+    omega0_DA_hat = IC_param.inv_transform(Z0_opt)
+    
     DA_trj = trj_gen_fn(omega0_DA_hat, *pIC)
     init_guess_trj = trj_gen_fn(omega0_guess_hat, *pIC)
 

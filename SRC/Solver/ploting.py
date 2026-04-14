@@ -5,26 +5,28 @@ from SRC.utils import Specteral_Upsampling
 import matplotlib.colors as colors
 from SRC.plotting_utils import balanced_cmap
 
-def plot_particles(xs, ys, L, ax=None, s=20):
+def plot_particles(xs, ys, L, ax=None, s=20, 
+                   xp_DA=None, yp_DA=None, s_DA=25):
     """
-    Plot particle positions (black dots) from a packed state vector:
-    z = [x1, y1, u1, v1, x2, y2, u2, v2, ..., xN, yN, uN, vN].
+    Plot particle positions (black dots) and optionally DA particles.
 
     Parameters
     ----------
-    z : array_like, shape (4*N,)
-        Packed particle state vector.
+    xs, ys : array_like
+        Particle positions.
     L : float or tuple(float, float)
-        Domain size. If float, uses (0, L) for both x and y.
-        If tuple, interpreted as (Lx, Ly).
+        Domain size.
     ax : matplotlib.axes.Axes or None
-        Axes to plot on. If None, creates a new figure.
     s : float
-        Marker size for scatter points.
+        Marker size for base particles.
+    xp_DA, yp_DA : array_like or None
+        DA particle positions (optional).
+    s_DA : float
+        Marker size for DA particles.
 
     Returns
     -------
-    fig, ax : matplotlib Figure and Axes
+    fig, ax
     """
 
     # Domain extents
@@ -38,13 +40,30 @@ def plot_particles(xs, ys, L, ax=None, s=20):
     else:
         fig = ax.figure
 
-    ax.scatter(xs, ys, c="black", s=s, marker="o")
+    # Base particles
+    ax.scatter(xs, ys, c="black", s=s, marker="o", label="Particles")
+
+    # DA particles (optional)
+    if xp_DA is not None and yp_DA is not None:
+        ax.scatter(
+            xp_DA, yp_DA,
+            c="red",
+            s=s_DA,
+            marker="x",
+            label="DA Particles"
+        )
+
+    # Formatting
     ax.set_xlim(0.0, Lx)
     ax.set_ylim(0.0, Ly)
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_title("Particle Positions")
     ax.set_aspect("equal", adjustable="box")
+
+    # Only show legend if DA particles are plotted
+    if xp_DA is not None and yp_DA is not None:
+        ax.legend()
 
     return fig, ax
 
