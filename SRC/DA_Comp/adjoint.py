@@ -276,7 +276,7 @@ def split_f64_cb(U, exp_bits, exp_bias, mbits):
     )
     return sign, exp, mant
 
-def integrate_scan_vp_save_dec(stepper, omega0_hat_flat, g, nsteps, exp_bits, exp_bias, mbits):
+def integrate_scan_vp_save(stepper, omega0_hat_flat, g, nsteps, exp_bits, exp_bias, mbits):
     sign_shape, exp_shape, m_shape = calc_output_shape(2*len(omega0_hat_flat), mbits, exp_bits)
 
     # output specs (must match vpfloat output exactly)
@@ -326,7 +326,7 @@ def integrate_scan_vp_save_dec(stepper, omega0_hat_flat, g, nsteps, exp_bits, ex
 
     return sign_trj, exp_trj, mant_trj, loss
 
-def integrate_scan_vp_save(stepper, omega0_hat_flat, g, nsteps_total, exp_bits, exp_bias, mbits_segments):
+def integrate_scan_vp_save_dec(stepper, omega0_hat_flat, g, nsteps_total, exp_bits, exp_bias, mbits_segments):
     def get_callback_shape(mbits):
         sign_shape, exp_shape, m_shape = calc_output_shape(2*len(omega0_hat_flat), mbits, exp_bits)
 
@@ -599,11 +599,11 @@ def get_forced_adj_shooting(stepper, transform_fn, snap_shape, nsteps):
         N = DA_trj.shape[0]
         DA_trj = DA_trj.reshape((N, -1))
 
-        # Backward scan over i = 0..N-2 (reverse=True makes it go N-2 -> 0)
-        xs = (DA_trj[:-1], jnp.arange(N - 1))
+
+        xs = (DA_trj[1:])
         def grad_step(carry, x):
             lam_next = carry
-            U_i, i = x
+            U_i = x
 
             lam_i = adj_step_1.df__du_v_fn(U_i, lam_next)
             return lam_i, lam_i      # collect lam_i
@@ -642,7 +642,7 @@ def get_forced_adj_shooting_vp(stepper, transform_fn, snap_shape,
     )
 
     nsteps_total = int(T / dt)
-    mbits_segments = get_mbits_segments(mbits, nsteps_total, dt, LLE, uniform)
+    #mbits_segments = get_mbits_segments(mbits, nsteps_total, dt, LLE, uniform)
 
     def forced_adj_shooting(Z0, lam_N):
         # 1) Transform IC and get linearization
@@ -650,15 +650,18 @@ def get_forced_adj_shooting_vp(stepper, transform_fn, snap_shape,
         omega0_hat_flat = omega0_hat.reshape(-1)
 
         # 2) Forward trajectory
-        sign_trj, exp_trj, mant_trj, loss, U_N = integrate_scan_vp_save(
+        sign_trj, exp_trj, mant_trj, loss = integrate_scan_vp_save(
             stepper_flat,
             omega0_hat_flat,
             adj_step_1.g,
             nsteps_total,
             exp_bits,
             exp_bias,
-            mbits_segments,
+            mbits,
         )
+        sign_trj = sign_trj[1:]
+        exp_trj = exp_trj[1:]
+        mant_trj = mant_trj[1:]
 
         state_dim = omega0_hat_flat.size  
 
@@ -667,32 +670,28 @@ def get_forced_adj_shooting_vp(stepper, transform_fn, snap_shape,
         lam_trj = lam_trj.at[nsteps_total].set(lam_N)
 
         state_end_idx = nsteps_total
-        idx = len(mbits_segments) - 1
 
-        for mbits, nsteps in reversed(mbits_segments):
-            i_idx = jnp.arange(state_end_idx - nsteps, state_end_idx)  # times for this segment
-            xs = (sign_trj[idx], exp_trj[idx], mant_trj[idx], i_idx)
+        xs = (sign_trj, exp_trj, mant_trj)
 
-            def grad_step(lam_next, x):
-                sign_i, exp_i, mant_i, i = x
-                U_i = join_f64_via_callback(
-                    sign_i, exp_i, mant_i,
-                    state_dim,
-                    exp_bits, exp_bias, mbits
-                )
-                lam_i = adj_step_1.df__du_v_fn(U_i, lam_next)
-                return lam_i, lam_i 
-
-            lam_0, lam_trj = lax.scan(
-                grad_step,
-                lam_N,
-                xs,
-                reverse=True,
+        def grad_step(lam_next, x):
+            sign_i, exp_i, mant_i = x
+            U_i = join_f64_via_callback(
+                sign_i, exp_i, mant_i,
+                state_dim,
+                exp_bits, exp_bias, mbits
             )
+            lam_i = adj_step_1.df__du_v_fn(U_i, lam_next)
+            return lam_i, lam_i 
 
-            lam_N = lam_0
-            state_end_idx -= nsteps
-            idx -= 1
+        lam_0, lam_trj = lax.scan(
+            grad_step,
+            lam_N,
+            xs,
+            reverse=True,
+        )
+
+        lam_N = lam_0
+
 
         # Gradient in transformed coordinates at time 0
         grad_t = lam_0.reshape(snap_shape)

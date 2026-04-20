@@ -18,7 +18,7 @@ from create_results_dir import create_results_dir
 from SRC.Solver.ploting import plot_vorticity
 from SRC.Vel_init.CS_init import CS_init
 from SRC.Vel_init.AI import AI
-from SRC.Solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn, Omega_Integrator
+from SRC.Solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn, Omega_Integrator, create_vel_trj_gen_fn
 
 # --- Stdlib / third-party imports ---
 import os
@@ -172,7 +172,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
             for npart in DA_opts.n_particles_list:
                 npart_root = os.path.join(T_dir, f"np={npart}")
 
-                stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)             
+                stepper = KF_TP_Stepper(kf_opts.Re, kf_opts.n, kf_opts.NDOF, kf_opts.dt, DA_opts.part_opts.St, DA_opts.part_opts.beta, npart)       
                 for NT in DA_opts.NT_list:
                     NT_root = os.path.join(npart_root, f"NT={NT}")
 
@@ -195,6 +195,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                         #tuple (omega_traj, xp_traj, yp_traj, up_traj, vp_traj)
                         target_trj = trj_gen_fn(omega0_hat, xp, yp, up, vp)
                         xp_traj, yp_traj = target_trj[1], target_trj[2]
+
                         if DA_opts.sigma_y > 0:
                             sigma_x = DA_opts.x__y_sigma * DA_opts.sigma_y
                             key = jax.random.PRNGKey(PIC_seed)
@@ -262,7 +263,8 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                             optimizer.psuedo_proj.attach_transform(IC_param.transform, IC_param.inv_transform)
                                         
                                         if isinstance(optimizer, Joint_Opt):
-                                            optimizer.set_pp_loss_fn(loss_fn_and_derivs.gen_loss_fn, loss_fn_and_derivs.PP_opt_default, pp_sigma, stepper.NS.L)
+                                            vel_trj_gen_fn = create_vel_trj_gen_fn(kf_stepper, T)
+                                            optimizer.set_pp_loss_fn(loss_fn_and_derivs.gen_loss_fn, loss_fn_and_derivs.PP_opt_default, pp_sigma, stepper.NS.L, vel_trj_gen_fn, t_mask, DA_part_pos_trj[0].shape, kf_opts.dt)
 
 
                                         if isinstance(DA_opts.ic_init, AI):
@@ -341,9 +343,7 @@ def _run_DA_case(
     """
     loss_fn_and_derivs.reset_cost_count()
     Z0 = IC_param.transform(omega0_guess_hat)
-    get_IC_state_fn = IC_param.inv_transform
-
-    Z0_opt, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs, get_IC_state_fn, omega0_hat, attractor_rad)
+    Z0_opt, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs, IC_param.inv_transform, omega0_hat, attractor_rad)
     omega0_DA_hat = IC_param.inv_transform(Z0_opt)
     
     DA_trj = trj_gen_fn(omega0_DA_hat, *pIC)

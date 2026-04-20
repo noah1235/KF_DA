@@ -27,12 +27,46 @@ def create_vel_part_gen_fn(stepper, T):
         new_carry = (omega_hat, xp, yp, up, vp)
         y = (u, v, xp, yp)  # saved outputs
         return new_carry, y
+    
     def vel_part_trj_gen_fn(omega0_hat, xp, yp, up, vp):
         carry0 = (omega0_hat, xp, yp, up, vp)
         _, (u_traj, v_traj, xp_traj, yp_traj) = jax.lax.scan(
             body, carry0, xs=None, length=nsteps
         )
         return u_traj, v_traj, xp_traj, yp_traj
+    
+    return vel_part_trj_gen_fn
+
+def create_vel_trj_gen_fn(stepper, T):
+    nsteps = int(T/stepper.dt)
+    def body(carry, _):
+        omega_hat = carry
+
+        # advance one step
+        omega_hat = stepper(omega_hat)
+
+        # compute grid velocity from omega_hat
+        u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega_hat)
+        u = jnp.fft.irfft2(u_hat)
+        v = jnp.fft.irfft2(v_hat)
+
+        new_carry = omega_hat
+        y = (u, v)
+        return new_carry, y
+    
+    def vel_part_trj_gen_fn(omega0_hat):
+        carry0 = omega0_hat
+        _, (u_traj, v_traj) = jax.lax.scan(
+            body, carry0, xs=None, length=nsteps
+        )
+        u_hat, v_hat = stepper.NS.vort_hat_2_vel_hat(omega0_hat)
+        u_0 = jnp.fft.irfft2(u_hat)
+        v_0 = jnp.fft.irfft2(v_hat)
+
+        u_traj    = jnp.concatenate([u_0[None, ...],       u_traj],    axis=0)
+        v_traj    = jnp.concatenate([v_0[None, ...],       v_traj],    axis=0)
+
+        return u_traj, v_traj
     
     return vel_part_trj_gen_fn
 

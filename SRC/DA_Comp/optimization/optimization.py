@@ -11,10 +11,11 @@ from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fn
 from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
 from SRC.DA_Comp.optimization.Quasi_Newton import L_SR1, HVP_Update, L_BK, LBFGS_Update, BFGS_Update
 import numpy as np
-from scipy.optimize import minimize
-from scipy.sparse.linalg import minres, cg
+from scipy.sparse.linalg import LinearOperator
+from scipy.sparse.linalg import cg as scipy_cg
 from scipy.sparse.linalg import LinearOperator, minres
-from jax.scipy.sparse.linalg import cg
+from SRC.utils import bilinear_sample_periodic
+
 
 def equal_component_Q(g, k, key=None):
     """
@@ -108,11 +109,17 @@ class Joint_Opt:
     def periodic_diff(a, b):
         return (a - b + jnp.pi) % (2 * jnp.pi) - jnp.pi
 
-    def set_pp_loss_fn(self, gen_loss_fn, PP_opt_default, pp_sigma, spatial_L):
+    def set_pp_loss_fn(self, gen_loss_fn, PP_opt_default, pp_sigma, spatial_L, vel_trj_gen_fn, t_mask, part_arr_shape, dt):
         sigma_x, sigma_y = pp_sigma
         n_parts = PP_opt_default.shape[0]//2
+        self.n_parts = n_parts
         xp_meas = PP_opt_default[:n_parts]
         yp_meas = PP_opt_default[n_parts:2*n_parts]
+        self.xp_meas_flat = xp_meas
+        self.yp_meas_flat = yp_meas
+        self.sigma_x = sigma_x
+        self.sigma_y = sigma_y
+
 
         def PP_opt_loss_fn(Z0, PP_opt):
             PP_opt = jnp.mod(PP_opt, self.spatial_L)
@@ -140,23 +147,361 @@ class Joint_Opt:
 
         self.spatial_L = spatial_L
 
-    def opt_pp_bu(self, Z0):
-        alpha = 1.0
-
-        for i in range(self.PP_opt_its):
-            loss, grad = self.loss_grad_fn_pp(Z0, self.PP_opt)
-            print(loss)
-            H = self.hess_fn_pp(Z0, self.PP_opt)
-            eigvals, eigvecs = jnp.linalg.eigh(H)
-            eigvals = jnp.abs(eigvals)
-            H_inv = eigvecs @ jnp.diag(1/eigvals) @ eigvecs.T
-            pk = -H_inv @ grad
+        self.vel_trj_gen_fn = vel_trj_gen_fn
+        self.t_mask = t_mask
+        self.meas_indices = jnp.where(t_mask == True)[0]
+        self.part_arr_shape = part_arr_shape
+        self.dt = dt
 
 
-            self.PP_opt = jnp.mod(self.PP_opt + alpha * pk, self.spatial_L)
-        self.state_opt.PP_opt = self.PP_opt
+    @staticmethod
+    def integrate_particle(part_IC, u_chunk, v_chunk, dt):
+        L = 2.0 * jnp.pi
+        time_steps = u_chunk.shape[0]
 
-    def opt_pp(self, Z0):
+        def body_fun(i, part_pos):
+            u_grid = u_chunk[i]
+            v_grid = v_chunk[i]
+
+            u = bilinear_sample_periodic(u_grid, part_pos[0], part_pos[1], L, L)
+            v = bilinear_sample_periodic(v_grid, part_pos[0], part_pos[1], L, L)
+
+            part_pos = part_pos + dt * jnp.array([u, v])
+            part_pos = jnp.mod(part_pos, L)
+            return part_pos
+
+        return lax.fori_loop(0, time_steps, body_fun, part_IC)
+
+
+    def _build_all_track_segments(self, xp_all, yp_all, u_traj, v_traj):
+        """
+        xp_all, yp_all have shape (n_states, n_tracks)
+        """
+        idx_start = jnp.asarray(self.meas_indices[:-1])
+        idx_end = jnp.asarray(self.meas_indices[1:])
+
+        seg_len = int(idx_end[0] - idx_start[0] + 1)
+
+        part_ics = jnp.stack([xp_all[:-1, :], yp_all[:-1, :]], axis=-1)  # (n_states-1, n_tracks, 2)
+
+        offsets = jnp.arange(seg_len)[None, :]
+        time_idx = idx_start[:, None] + offsets
+
+        u_chunks = u_traj[time_idx, :, :]  # (n_states-1, seg_len, Nx, Ny)
+        v_chunks = v_traj[time_idx, :, :]  # (n_states-1, seg_len, Nx, Ny)
+
+        return part_ics, u_chunks, v_chunks
+
+
+    def _all_track_model_data(self, xp_all, yp_all, u_traj, v_traj):
+        """
+        Returns arrays of shape (n_states, n_tracks)
+        """
+        part_ics, u_chunks, v_chunks = self._build_all_track_segments(
+            xp_all, yp_all, u_traj, v_traj
+        )
+
+        integrate_one = lambda ic, uc, vc: self.integrate_particle(ic, uc, vc, self.dt)
+        integrate_tracks = jax.vmap(integrate_one, in_axes=(0, None, None))
+        integrate_segments = jax.vmap(integrate_tracks, in_axes=(0, 0, 0))
+
+        jac_one = jax.jacrev(integrate_one, argnums=0)
+        jac_tracks = jax.vmap(jac_one, in_axes=(0, None, None))
+        jac_segments = jax.vmap(jac_tracks, in_axes=(0, 0, 0))
+
+        final_pos = integrate_segments(part_ics, u_chunks, v_chunks)  # (n_states-1, n_tracks, 2)
+        J = jac_segments(part_ics, u_chunks, v_chunks)                # (n_states-1, n_tracks, 2, 2)
+
+        x_pred = final_pos[:, :, 0]
+        y_pred = final_pos[:, :, 1]
+
+        s_x = jnp.zeros_like(xp_all).at[1:, :].set(
+            self.periodic_diff(xp_all[1:, :], x_pred)
+        )
+        s_y = jnp.zeros_like(yp_all).at[1:, :].set(
+            self.periodic_diff(yp_all[1:, :], y_pred)
+        )
+
+        dxt_dxi = jnp.zeros_like(xp_all).at[:-1, :].set(J[:, :, 0, 0])
+        dxt_dyi = jnp.zeros_like(xp_all).at[:-1, :].set(J[:, :, 0, 1])
+        dyt_dxi = jnp.zeros_like(yp_all).at[:-1, :].set(J[:, :, 1, 0])
+        dyt_dyi = jnp.zeros_like(yp_all).at[:-1, :].set(J[:, :, 1, 1])
+
+        return s_x, s_y, dxt_dxi, dxt_dyi, dyt_dxi, dyt_dyi
+
+
+    def _all_track_gradient(
+        self,
+        xp_all,
+        yp_all,
+        xp_meas_all,
+        yp_meas_all,
+        s_x,
+        s_y,
+        dxt_dxi,
+        dxt_dyi,
+        dyt_dxi,
+        dyt_dyi,
+    ):
+        """
+        All arrays shape (n_states, n_tracks)
+        """
+        n_states = xp_all.shape[0]
+        sigx2 = self.sigma_x ** 2
+        sigy2 = self.sigma_y ** 2
+
+        r_x = self.periodic_diff(xp_all, xp_meas_all)
+        r_y = self.periodic_diff(yp_all, yp_meas_all)
+
+        grad_x = r_x / (n_states * sigx2)
+        grad_y = r_y / (n_states * sigy2)
+
+        grad_x = grad_x.at[1:, :].add(s_x[1:, :] / (n_states * sigx2))
+        grad_y = grad_y.at[1:, :].add(s_y[1:, :] / (n_states * sigy2))
+
+        grad_x = grad_x.at[:-1, :].add(
+            -(s_x[1:, :] * dxt_dxi[:-1, :]) / (n_states * sigx2)
+            -(s_y[1:, :] * dyt_dxi[:-1, :]) / (n_states * sigy2)
+        )
+        grad_y = grad_y.at[:-1, :].add(
+            -(s_x[1:, :] * dxt_dyi[:-1, :]) / (n_states * sigx2)
+            -(s_y[1:, :] * dyt_dyi[:-1, :]) / (n_states * sigy2)
+        )
+
+        return grad_x, grad_y, r_x, r_y
+
+
+    def _all_track_hvp(
+        self,
+        v_all,
+        dxt_dxi,
+        dxt_dyi,
+        dyt_dxi,
+        dyt_dyi,
+    ):
+        """
+        v_all has shape (2*n_states, n_tracks)
+        derivative arrays have shape (n_states, n_tracks)
+        """
+        n_states, n_tracks = dxt_dxi.shape
+        sigx2 = self.sigma_x ** 2
+        sigy2 = self.sigma_y ** 2
+
+        vx = v_all[:n_states, :]
+        vy = v_all[n_states:, :]
+
+        a = dxt_dxi
+        b = dxt_dyi
+        c = dyt_dxi
+        d = dyt_dyi
+
+        diag_x = jnp.full((n_states, n_tracks), 2.0 / (n_states * sigx2))
+        diag_y = jnp.full((n_states, n_tracks), 2.0 / (n_states * sigy2))
+
+        diag_x = diag_x.at[:-1, :].add(
+            (a[:-1, :] ** 2) / (n_states * sigx2)
+            + (c[:-1, :] ** 2) / (n_states * sigy2)
+        )
+        diag_y = diag_y.at[:-1, :].add(
+            (b[:-1, :] ** 2) / (n_states * sigx2)
+            + (d[:-1, :] ** 2) / (n_states * sigy2)
+        )
+
+        mixed = jnp.zeros((n_states, n_tracks))
+        mixed = mixed.at[:-1, :].set(
+            (a[:-1, :] * b[:-1, :]) / (n_states * sigx2)
+            + (c[:-1, :] * d[:-1, :]) / (n_states * sigy2)
+        )
+
+        hx = diag_x * vx
+        hx = hx.at[:-1, :].add(-(a[:-1, :] / (n_states * sigx2)) * vx[1:, :])
+        hx = hx.at[1:, :].add(-(a[:-1, :] / (n_states * sigx2)) * vx[:-1, :])
+        hx = hx + mixed * vy
+        hx = hx.at[:-1, :].add(-(c[:-1, :] / (n_states * sigy2)) * vy[1:, :])
+        hx = hx.at[1:, :].add(-(c[:-1, :] / (n_states * sigy2)) * vy[:-1, :])
+
+        hy = diag_y * vy
+        hy = hy.at[:-1, :].add(-(d[:-1, :] / (n_states * sigy2)) * vy[1:, :])
+        hy = hy.at[1:, :].add(-(d[:-1, :] / (n_states * sigy2)) * vy[:-1, :])
+        hy = hy + mixed * vx
+        hy = hy.at[:-1, :].add(-(b[:-1, :] / (n_states * sigx2)) * vx[1:, :])
+        hy = hy.at[1:, :].add(-(b[:-1, :] / (n_states * sigx2)) * vx[:-1, :])
+
+        return jnp.concatenate([hx, hy], axis=0)
+
+
+    def _apply_step_all_tracks(self, xp_all, yp_all, step_all, alpha):
+        L = 2.0 * jnp.pi
+        n_states = xp_all.shape[0]
+
+        step_x = step_all[:n_states, :]
+        step_y = step_all[n_states:, :]
+
+        xp_new = jnp.mod(xp_all + alpha * step_x, L)
+        yp_new = jnp.mod(yp_all + alpha * step_y, L)
+
+        return xp_new, yp_new
+
+
+    def _all_track_loss(self, xp_all, yp_all, xp_meas_all, yp_meas_all, u_traj, v_traj):
+        n_states = xp_all.shape[0]
+        sigx2 = self.sigma_x ** 2
+        sigy2 = self.sigma_y ** 2
+
+        r_x = self.periodic_diff(xp_all, xp_meas_all)
+        r_y = self.periodic_diff(yp_all, yp_meas_all)
+
+        s_x, s_y, _, _, _, _ = self._all_track_model_data(
+            xp_all, yp_all, u_traj, v_traj
+        )
+
+        J_r = 0.5 / n_states * (
+            jnp.sum(r_x ** 2) / sigx2 + jnp.sum(r_y ** 2) / sigy2
+        )
+
+        J_m = 0.5 / n_states * (
+            jnp.sum(s_x[1:, :] ** 2) / sigx2 + jnp.sum(s_y[1:, :] ** 2) / sigy2
+        )
+
+        return J_r + J_m
+
+
+    def opt_pp_bu(self, Z0, get_IC_state_fn):
+        """
+        Batched particle-position optimization using:
+        - manual gradient
+        - manual Hessian-vector product
+        - one global CG solve
+        - one global backtracking line search
+
+        Updates self.PP_opt in place and returns nothing.
+        """
+        n_total = self.n_parts                    # total x entries, same as total y entries
+        n_states, n_tracks = self.part_arr_shape  # e.g. (7, 45)
+
+        c1 = 1e-4
+        tau = 0.5
+        alpha_init = 1.0
+        max_bt_its = 10
+        newton_its = 10
+        damping = 1e-6
+
+        omega0_DA_hat = get_IC_state_fn(Z0)
+        u_traj, v_traj = self.vel_trj_gen_fn(omega0_DA_hat)
+
+        xp_opt = self.PP_opt[:n_total].reshape(self.part_arr_shape)
+        yp_opt = self.PP_opt[n_total:2 * n_total].reshape(self.part_arr_shape)
+        xp_meas = self.xp_meas_flat.reshape(self.part_arr_shape)
+        yp_meas = self.yp_meas_flat.reshape(self.part_arr_shape)
+
+        print("Starting batched particle-position optimization")
+        print(
+            f"n_total={n_total}, n_states={n_states}, "
+            f"n_tracks={n_tracks}, newton_its={newton_its}"
+        )
+
+        for k in range(newton_its):
+            J0 = self._all_track_loss(
+                xp_opt, yp_opt, xp_meas, yp_meas, u_traj, v_traj
+            )
+
+            s_x, s_y, dxt_dxi, dxt_dyi, dyt_dxi, dyt_dyi = self._all_track_model_data(
+                xp_opt, yp_opt, u_traj, v_traj
+            )
+
+            grad_x, grad_y, _, _ = self._all_track_gradient(
+                xp_opt,
+                yp_opt,
+                xp_meas,
+                yp_meas,
+                s_x,
+                s_y,
+                dxt_dxi,
+                dxt_dyi,
+                dyt_dxi,
+                dyt_dyi,
+            )
+
+            grad_all = jnp.concatenate([grad_x, grad_y], axis=0)   # (2*n_states, n_tracks)
+            grad_vec = np.asarray(grad_all.reshape(-1))
+            grad_norm = float(jnp.linalg.norm(grad_all))
+
+            print(f"iter={k:02d}, loss={float(J0):.3e}, grad_norm={grad_norm:.3e}")
+
+            n_dof = grad_vec.size  # should be 2 * n_states * n_tracks
+
+            hvp_fn = jax.jit(
+                lambda v_flat: self._all_track_hvp(
+                    v_flat.reshape(2 * n_states, n_tracks),
+                    dxt_dxi,
+                    dxt_dyi,
+                    dyt_dxi,
+                    dyt_dyi,
+                ).reshape(-1)
+            )
+
+            def matvec(v_np):
+                v_jax = jnp.asarray(v_np).reshape(-1)
+                Hv_jax = hvp_fn(v_jax) + damping * v_jax
+                return np.asarray(Hv_jax)
+
+            H_linop = LinearOperator(
+                shape=(n_dof, n_dof),
+                matvec=matvec,
+                dtype=np.float64,
+            )
+
+            rhs = -grad_vec
+            step_np, info = scipy_cg(
+                H_linop,
+                rhs,
+            )
+
+            step_all = jnp.asarray(step_np).reshape(2 * n_states, n_tracks)
+
+            gTp = float(jnp.dot(grad_all.reshape(-1), step_all.reshape(-1)))
+            if (not np.isfinite(gTp)) or (gTp >= 0.0):
+                print(f"iter={k:02d}: CG step not descent, using steepest descent")
+                step_all = -grad_all
+                gTp = float(jnp.dot(grad_all.reshape(-1), step_all.reshape(-1)))
+
+            alpha = alpha_init
+            accepted = False
+
+            for bt_it in range(max_bt_its):
+                xp_trial, yp_trial = self._apply_step_all_tracks(
+                    xp_opt, yp_opt, step_all, alpha
+                )
+
+                J_trial = self._all_track_loss(
+                    xp_trial, yp_trial, xp_meas, yp_meas, u_traj, v_traj
+                )
+
+                if J_trial <= J0 + c1 * alpha * gTp:
+                    accepted = True
+                    print(
+                        f"iter={k:02d}: cg_info={info}, bt_it={bt_it}, "
+                        f"alpha={alpha:.3e}, new_loss={float(J_trial):.6e}"
+                    )
+                    break
+
+                alpha *= tau
+
+            if not accepted:
+                print(f"iter={k:02d}: line search failed, skipping update")
+                break
+
+            xp_opt = xp_trial
+            yp_opt = yp_trial
+
+        self.PP_opt = jnp.concatenate([
+            xp_opt.reshape(-1),
+            yp_opt.reshape(-1),
+        ])
+
+        print("Finished batched particle-position optimization")
+
+    def opt_pp(self, Z0, get_IC_state_fn):
         c1 = 1e-4
         tau = 0.5
         alpha_init = 1.0
@@ -220,7 +565,7 @@ class Joint_Opt:
                 opt_data_all += opt_data
             Z0 = Z0_opt
             if i < self.opt_loops-1:
-                self.opt_pp(Z0_opt)
+                self.opt_pp(Z0_opt, get_IC_state_fn)
 
         return Z0_opt, opt_data_all
     

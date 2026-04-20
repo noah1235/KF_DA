@@ -589,7 +589,7 @@ def plot_fit_params_v_m(df, path):
 # =========================
 def adjoint_test():
     kf_opts = KF_Opts(
-        Re=60,
+        Re=100,
         n=4,
         NDOF=128,
         dt=1e-2,
@@ -597,13 +597,13 @@ def adjoint_test():
         min_samp_T=100,
         t_skip=1e-1,
     )
-    T_LLE = 3.3 * 4
+    T_LLE = 3.3
     uniform = True
     LLE = 1 / (T_LLE)
     IC_param = Fourier_Param(kf_opts.NDOF, 64, beta=0, Re=100)
     double = True
 
-    T = T_LLE * 1
+    T = T_LLE * 4
     mbits_list = np.arange(6, 14, 2)
     #mbits_list = [6]
     minv, maxv = 1, 5e4
@@ -639,7 +639,7 @@ def adjoint_test():
             LLE=LLE,
             attractor_snapshots=attractor_snapshots,
             double=double,
-            nsamples=100
+            nsamples=2
         )
 
 
