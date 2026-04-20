@@ -13,15 +13,15 @@ def m_dep_fig():
     # -----------------------
     # Configuration
     # -----------------------
-    Re = 60
+    Re = 200
     n = 4
-    dt = 0.01
-    NDOF = 128
+    dt = 2.5e-3
+    NDOF = 256
     St = 0
     beta = 0
     m_dt = None
 
-    m_targets = [480]
+    m_targets = [800]
     metric = "final_snap_rel_error"
     for m_target in m_targets:
         # -----------------------
@@ -29,6 +29,7 @@ def m_dep_fig():
         # -----------------------
         root = os.path.join(
             create_results_dir(),
+            "DA-no_noise",
             f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt={m_dt}-St={St}_beta={beta}_AI",
         )
         save_root = os.path.join(root, "global_results", "mx_v_mt")
@@ -211,19 +212,24 @@ def embedding_fig():
     # Configuration
     # -----------------------
     n = 4
-    dt = 0.01
-    NDOF = 128
+    #dt = 0.01
+    #NDOF = 128
     St = 0
     beta = 0
     m_dt = None
 
+    noise_type = "DA-no_noise"
+
+    #Re, NDOF, dt
     config_list = [
-        (100, 4),
-        (40, 6),
-        (60, 6)
+        (200, 256, 2.5e-3, 8),
+        (100, 128, 0.01, 4),
+        (40, 128, 0.01, 6),
+        (60, 128, 0.01, 6)
     ]
 
     dM_dict = {
+        200: 420,
         100: 300,
         60: 240,
         40: 160
@@ -237,9 +243,11 @@ def embedding_fig():
     m_list = []
     metric_list = []
 
-    for Re, NT in config_list:
+    for Re, NDOF, dt, NT in config_list:
+        print(Re)
         root = os.path.join(
             create_results_dir(),
+            noise_type,
             f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt={m_dt}-St={St}_beta={beta}_AI",
         )
 
@@ -300,6 +308,6 @@ def embedding_fig():
 
     plt.tight_layout()
     plt.legend()
-    save_svg(mpl, fig, os.path.join(create_results_dir(), "embedding_fig.svg"))
+    save_svg(mpl, fig, os.path.join(create_results_dir(), noise_type, "embedding_fig.svg"))
 
 embedding_fig()

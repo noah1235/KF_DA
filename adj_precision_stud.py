@@ -597,7 +597,7 @@ def adjoint_test():
         min_samp_T=100,
         t_skip=1e-1,
     )
-    T_LLE = 3.3
+    T_LLE = 3.3 * 4
     uniform = True
     LLE = 1 / (T_LLE)
     IC_param = Fourier_Param(kf_opts.NDOF, 64, beta=0, Re=100)
