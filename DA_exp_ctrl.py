@@ -1,27 +1,9 @@
-from SRC.DA_Comp.configs import *
-from SRC.DA_Comp.loss_funcs import *
-from SRC.DA_Comp.DA_engine import DA_exp_main
-from SRC.DA_Comp.optimization.optimization import BFGS, NCSR1, NCSR1_and_LBFGS, Joint_Opt
-from SRC.DA_Comp.optimization.LS_TR import ArmijoLineSearch
-from SRC.DA_Comp.optimization.parent_classes import Psuedo_Projection
-from SRC.utils import load_data
-import numpy as np
-from SRC.Solver.IC_gen import init_particles_vector
-from SRC.DA_Comp.loss_funcs import create_loss_fn
-from SRC.DA_Comp.adjoint import Adjoint_Solver
-import jax
-from SRC.function_perf_bench import bench
-from SRC.utils import build_div_free_proj
-import os
-from create_results_dir import create_results_dir
-import pandas as pd
-from jax import config
-from SRC.Vel_init.AI import AI
-from SRC.Vel_init.CS_init import CS_init
-from SRC.global_post.global_post_main import global_post_main
-from SRC.parameterization.Fourier_Param import Fourier_Param
-config.update("jax_enable_x64", True)
-from pathlib import Path
+from kf_da.daComp import KF_Opts, DA_Opts, Particle_Opts
+from kf_da.velInit import AI
+from kf_da.opti import ArmijoLineSearch, Joint_Opt
+
+import jax.numpy as jnp
+
 
 def write_hierarchical_case_summary(
     folder,
