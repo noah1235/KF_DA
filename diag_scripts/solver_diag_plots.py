@@ -1,4 +1,4 @@
-from create_results_dir import create_results_dir
+from ..create_results_dir import..create_results_dir
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,10 +14,10 @@ def diss_v_time_plot():
     dt = 1e-2
     seed_list = [1]
     Re_list = [8, 22, 40, 100]
-    root = os.path.join(create_results_dir(), "Trjs", "Dissipation_Rate")
+    root = os.path.join..create_results_dir(), "Trjs", "Dissipation_Rate")
 
 
-    # --- create figure + axes explicitly ---
+    # ---..create figure + axes explicitly ---
     fig, ax = plt.subplots(figsize=(9, 7), constrained_layout=True)
 
     for seed in seed_list:
@@ -67,7 +67,7 @@ def avg_dist_plot():
         (400, 512, 1e-3)
     ]
 
-    root = os.path.join(create_results_dir(), "Trjs", "Dissipation_Rate")
+    root = os.path.join..create_results_dir(), "Trjs", "Dissipation_Rate")
     data_path = os.path.join(root, f"diss_v_time_IC_seed={seed}")
 
     avg_diss_list = []
@@ -127,7 +127,7 @@ def vp_float_case_sum():
     n_part = 30
 
     data_path = os.path.join(
-        create_results_dir(),
+       ..create_results_dir(),
         f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}-St={St}_beta={beta}_AI_vp",
         "results.parquet",
     )
@@ -203,7 +203,7 @@ def vp_float_case_sum():
 
 
     save_root = os.path.join(
-        create_results_dir(),
+       ..create_results_dir(),
         "vpfloats",
         f"Re={Re}_NDOF={NDOF}_T={T}",
     )
@@ -225,7 +225,7 @@ def avg_perf():
     optimizer_pp = optimizer + "_PP"
 
     data_path = os.path.join(
-        create_results_dir(),
+       ..create_results_dir(),
         f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}-St={St}_beta={beta}_AI_pp",
         "results.parquet",
     )

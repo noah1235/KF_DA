@@ -1,4 +1,4 @@
-from create_results_dir import create_results_dir
+from ..create_results_dir import..create_results_dir
 import os
 import pandas as pd
 from SRC.global_post.global_post_main import loss_transformation
@@ -28,7 +28,7 @@ def m_dep_fig():
         # Load results
         # -----------------------
         root = os.path.join(
-            create_results_dir(),
+           ..create_results_dir(),
             "DA-no_noise",
             f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt={m_dt}-St={St}_beta={beta}_AI",
         )
@@ -113,7 +113,7 @@ def recon_v_m_dt():
         rf"^DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt=(\d*\.?\d+)-St={St}_beta={beta}_AI$"
     )
 
-    base_dir = create_results_dir()
+    base_dir =..create_results_dir()
 
     m_dt_vals = []
     mean_metric_vals = []
@@ -246,7 +246,7 @@ def embedding_fig():
     for Re, NDOF, dt, NT in config_list:
         print(Re)
         root = os.path.join(
-            create_results_dir(),
+           ..create_results_dir(),
             noise_type,
             f"DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt={m_dt}-St={St}_beta={beta}_AI",
         )
@@ -308,6 +308,6 @@ def embedding_fig():
 
     plt.tight_layout()
     plt.legend()
-    save_svg(mpl, fig, os.path.join(create_results_dir(), noise_type, "embedding_fig.svg"))
+    save_svg(mpl, fig, os.path.join..create_results_dir(), noise_type, "embedding_fig.svg"))
 
 embedding_fig()

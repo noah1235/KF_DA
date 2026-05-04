@@ -1,7 +1,7 @@
-from SRC.Solver.solver import KF_TP_Stepper, create_vel_part_gen_fn
+from SRC.Solver.solver import KF_TP_Stepper,..create_vel_part_gen_fn
 from SRC.DA_Comp.configs import KF_Opts
 from SRC.utils import load_data, bilinear_sample_periodic
-from create_results_dir import create_results_dir
+from ..create_results_dir import..create_results_dir
 from SRC.plotting_utils import save_svg
 import matplotlib as mpl
 
@@ -224,7 +224,7 @@ def compute_ensemble(
       corr_dy = Corr(dy_1, dy_2)
     """
     T_f = 2.0 * m_dt
-    trj_gen_fn = create_vel_part_gen_fn(jax.jit(stepper), T_f)
+    trj_gen_fn =..create_vel_part_gen_fn(jax.jit(stepper), T_f)
 
     idx_1 = int(round(m_dt / kf_opts.dt))
 
@@ -325,7 +325,7 @@ def main():
         t_skip=10,
     )
 
-    root = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}")
+    root = os.path.join..create_results_dir(), "MI", f"Re={kf_opts.Re}")
     os.makedirs(root, exist_ok=True)
 
     n_ICs = 200
@@ -375,7 +375,7 @@ def main():
         .2, .3, .5, .7, .9, 1.3, 1.5
     ])
 
-    results_root = os.path.join(create_results_dir(), "MI", f"Re={kf_opts.Re}")
+    results_root = os.path.join..create_results_dir(), "MI", f"Re={kf_opts.Re}")
     data_path = os.path.join(results_root, "data_dict.pkl")
     recompute = True
     if recompute:

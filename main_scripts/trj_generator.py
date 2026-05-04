@@ -8,7 +8,7 @@ import yaml
 from kf_da.solver.trj_animation import animate_particles_and_flow
 from kf_da.solver.IC_gen import init_particles_vector
 from kf_da.utils.utils import Specteral_Upsampling
-from create_results_dir import create_results_dir
+from kf_da.utils.create_results_dir import create_results_dir
 from kf_da.solver.ploting import plot_vorticity, plot_div, plot_D_vs_time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -49,7 +49,7 @@ def generate_rand_IC(NDOF, key_num=0, sigma=3, kcut_frac=0.1):
     return omega0_hat
 
 def generate_KF_dataset():
-    with open("../kf_da_configs/genConfig.yaml") as f:
+    with open("../kf-da-configs/genConfig.yaml") as f:
         config = yaml.safe_load(f)["config"]
         
     NDOF = config["NDOF"]
@@ -70,7 +70,7 @@ def generate_KF_dataset():
         create_results_dir(),
         "Trjs",
         "KF_datasets",
-        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={T_samp}_total_T={int(T)}"
+        f"Re={Re}_NDOF={NDOF}_dt={dt}_n={n}_sampT={int(T_samp)}_total_T={int(T)}"
     )
     os.makedirs(root, exist_ok=True)
 

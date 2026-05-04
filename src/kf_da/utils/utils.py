@@ -1,6 +1,6 @@
 import jax.numpy as jnp
+from kf_da.utils.create_results_dir import create_results_dir 
 #from kf_da.daComp.configs import KF_Opts
-from create_results_dir import create_results_dir
 import os
 import numpy as np
 import jax

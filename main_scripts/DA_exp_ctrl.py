@@ -3,7 +3,7 @@ from kf_da.velInit import AI
 from kf_da.opti import ArmijoLineSearch, Joint_Opt, BFGS
 from kf_da.icParam import Fourier_Param
 import os
-from create_results_dir import create_results_dir
+from kf_da.utils.create_results_dir import create_results_dir
 import yaml
 import jax
 jax.config.update("jax_enable_x64", True)
@@ -125,7 +125,7 @@ def load_config():
          40: 7.2
     }
 
-    yaml_root = "../kf_da_configs/daExpConfig.yaml"
+    yaml_root = "../kf-da-configs/daExpConfig.yaml"
     with open(yaml_root) as f:
         daExpConfig = yaml.safe_load(f)
     da_set = daExpConfig["daSet"]
@@ -202,11 +202,11 @@ def main():
     
     if DA_opts.sigma_y > 0:
         root = os.path.join(
-            create_results_dir(), f"DA-sigma_y={DA_opts.sigma_y}--x__y_sigma={DA_opts.x__y_sigma}", case_name
+           create_results_dir(), f"DA-sigma_y={DA_opts.sigma_y}--x__y_sigma={DA_opts.x__y_sigma}", case_name
         )
     else:
         root = os.path.join(
-            create_results_dir(), "DA-no_noise", case_name
+           create_results_dir(), "DA-no_noise", case_name
         )
 
     DA_exp_main(kf_opts, DA_opts, root)

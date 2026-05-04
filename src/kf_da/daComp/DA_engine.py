@@ -7,7 +7,7 @@ from kf_da.solver.ploting import plot_particles
 from kf_da.daComp.loss_funcs import create_loss_fn, MSE_Vel
 from kf_da.opti.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from kf_da.opti.optimization import Joint_Opt
-from create_results_dir import create_results_dir
+from kf_da.utils.create_results_dir import create_results_dir
 from kf_da.solver.ploting import plot_vorticity
 #from kf_da.velInit.CS_init import CS_init
 from kf_da.velInit.AI import AI
@@ -45,7 +45,7 @@ def count_folders(folder: str) -> int:
 
 def append_to_parquet(df, parquet_path):
     """
-    Append a DataFrame to a Parquet file, or create it if it doesn't exist.
+    Append a DataFrame to a Parquet file, or..create it if it doesn't exist.
 
     Parameters
     ----------
@@ -139,7 +139,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
         seed_root = os.path.join(root, f"IC_seed={seed_idx}")
         os.makedirs(seed_root, exist_ok=True)
 
-        # Load or create the target initial condition omega0_hat for this seed
+        # Load or..create the target initial condition omega0_hat for this seed
         U_0_path = os.path.join(seed_root, "omega0_hat.npy")
         if os.path.exists(U_0_path):
             omega0_hat = np.load(U_0_path)

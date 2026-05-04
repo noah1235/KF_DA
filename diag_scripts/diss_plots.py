@@ -2,10 +2,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
-from create_results_dir import create_results_dir
+from ..create_results_dir import..create_results_dir
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from SRC.Solver.solver import KF_Stepper, Omega_Integrator, KF_TP_Stepper, create_vel_part_gen_fn
+from SRC.Solver.solver import KF_Stepper, Omega_Integrator, KF_TP_Stepper,..create_vel_part_gen_fn
 from jax import config
 from multiprocessing import Pool, cpu_count
 config.update("jax_enable_x64", True)
@@ -105,7 +105,7 @@ def generate_KF_diss_plots():
     results.sort(key=lambda x: x[0])
 
     root = os.path.join(
-        create_results_dir(), "Trjs", "Dissipation_Rate",
+       ..create_results_dir(), "Trjs", "Dissipation_Rate",
         f"diss_v_time_IC_seed={key_num}"
     )
     os.makedirs(root, exist_ok=True)

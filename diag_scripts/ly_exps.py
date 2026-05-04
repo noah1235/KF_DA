@@ -7,7 +7,7 @@ import multiprocessing as mp
 import os 
 jax.config.update("jax_enable_x64", True)
 #jax.config.update("jax_default_device", jax.devices("cpu")[0])
-from create_results_dir import create_results_dir
+from ..create_results_dir import..create_results_dir
 import jax.numpy as jnp
 from SRC.Solver.solver import KF_Stepper
 
@@ -165,7 +165,7 @@ def ly_exp_main():
     T_skip = 1
 
     root = os.path.join(
-        create_results_dir(),
+       ..create_results_dir(),
         "Ly_Exps",
         f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_dt={kf_opts.dt}_T={T}"
     )

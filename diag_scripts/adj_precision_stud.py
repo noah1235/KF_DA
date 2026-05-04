@@ -11,14 +11,14 @@ import numpy as np
 import pandas as pd
 from jax import config
 
-from create_results_dir import create_results_dir
+from ..create_results_dir import..create_results_dir
 from SRC.DA_Comp.configs import *
 from SRC.DA_Comp.loss_funcs import *
 from SRC.DA_Comp.adjoint import get_loss_grad_vp_fn, get_loss_grad_fn, get_forced_adj_shooting_vp, get_forced_adj_shooting
 from SRC.parameterization.Fourier_Param import Fourier_Param
 from SRC.plotting_utils import save_svg
 from SRC.Solver.IC_gen import init_particles_vector
-from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper, create_omega_part_gen_fn, Omega_Integrator
+from SRC.Solver.solver import KF_Stepper, KF_TP_Stepper,..create_omega_part_gen_fn, Omega_Integrator
 from SRC.utils import load_data
 from SRC.vp_floats.vp_py_utils import choose_exponent_format, float_pos_range
 from scipy.optimize import curve_fit
@@ -614,7 +614,7 @@ def adjoint_test():
     exp_bits, exp_bias = choose_exponent_format(minv, maxv, max_E=8)
 
     path = os.path.join(
-        create_results_dir(),
+       ..create_results_dir(),
         "vpfloats",
         f"Re={kf_opts.Re}_NDOF={kf_opts.NDOF}_T={T}_",
     )
