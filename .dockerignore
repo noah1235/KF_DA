@@ -1,13 +1,11 @@
-.venv
-.git
-__pycache__
+.venv/
+.git/
+__pycache__/
 *.pyc
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
-data
-outputs
-figures
-results
+diag-scripts/
+
 *.pkl
 *.npy
 *.npz
