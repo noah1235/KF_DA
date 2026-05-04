@@ -9,7 +9,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build and push the image 
-        run:
+        run: |
           docker login --username nfrank22-gh --password ${{secrets.GH_LOGIN_TOKEN}} ghcr.io
           docker build . --tag ghcr.io/nfrank22-gh/kf-da:latest 
           docker push ghcr.io/nfrank22-gh/kf-da:latest
