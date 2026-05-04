@@ -13,7 +13,7 @@ import numpy as np
 from scipy.sparse.linalg import LinearOperator
 from scipy.sparse.linalg import cg as scipy_cg
 from scipy.sparse.linalg import LinearOperator, minres
-from kf_da.utils import bilinear_sample_periodic
+from kf_da.utils.utils import bilinear_sample_periodic
 
 
 def equal_component_Q(g, k, key=None):

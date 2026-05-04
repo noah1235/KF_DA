@@ -8,10 +8,15 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "fastparquet>=2026.3.0",
     "jax[cuda13]>=0.10.0",
     "matplotlib>=3.10.9",
     "numpy>=2.4.4",
     "optax>=0.2.8",
+    "pandas>=3.0.2",
+    "pyarrow>=24.0.0",
+    "pyyaml>=6.0.3",
+    "vpfloat",
 ]
 
 [project.scripts]
@@ -20,3 +25,11 @@ kf-da = "SRC:main"
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]
 build-backend = "uv_build"
+
+[tool.uv.workspace]
+members = [
+    "src/kf_da/vp_floats",
+]
+
+[tool.uv.sources]
+vpfloat = { workspace = true, editable = true }

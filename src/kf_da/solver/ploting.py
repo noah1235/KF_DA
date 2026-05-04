@@ -1,9 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns
-from SRC.utils import Specteral_Upsampling
+from kf_da.utils.utils import Specteral_Upsampling
 import matplotlib.colors as colors
-from SRC.plotting_utils import balanced_cmap
+from kf_da.utils.plotting_utils import balanced_cmap
 
 def plot_particles(xs, ys, L, ax=None, s=20, 
                    xp_DA=None, yp_DA=None, s_DA=25):

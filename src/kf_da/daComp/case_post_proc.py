@@ -2,9 +2,9 @@ import os
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
-from SRC.plotting_utils import save_svg
+from kf_da.utils.plotting_utils import save_svg
 import matplotlib as mpl
-from SRC.Solver.ploting import plot_vorticity
+from kf_da.solver.ploting import plot_vorticity
 
 def cos_sim(x, y):
     x = x.reshape(-1)

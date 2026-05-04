@@ -34,8 +34,7 @@ class DA_Opts:
     IC_param_list: any
     T_list: any
 
-
-
+        
 @dataclass
 class Opt_Config_2:
     search_method: str

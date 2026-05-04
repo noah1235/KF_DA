@@ -1,5 +1,6 @@
 pyproject.toml
 setup.py
+vp_py_utils.py
 vpfloat.cpp
 vpfloat.egg-info/PKG-INFO
 vpfloat.egg-info/SOURCES.txt

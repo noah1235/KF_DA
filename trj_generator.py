@@ -3,15 +3,16 @@ import jax.numpy as jnp
 import numpy as np
 import math
 import matplotlib.pyplot as plt
+import yaml
 #from Solver.KF_intergrators import KF_PS_RHS, Time_Stepper, make_divergence_monitor, make_incompressible_ic, KF_LPT_PS_RHS, init_particles_vector
-from SRC.Solver.trj_animation import animate_particles_and_flow
-from SRC.Solver.IC_gen import init_particles_vector
-from SRC.utils import Specteral_Upsampling
+from kf_da.solver.trj_animation import animate_particles_and_flow
+from kf_da.solver.IC_gen import init_particles_vector
+from kf_da.utils.utils import Specteral_Upsampling
 from create_results_dir import create_results_dir
-from SRC.Solver.ploting import plot_vorticity, plot_div, plot_D_vs_time
+from kf_da.solver.ploting import plot_vorticity, plot_div, plot_D_vs_time
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from SRC.Solver.solver import KF_Stepper, Omega_Integrator, KF_TP_Stepper, create_vel_part_gen_fn
+from kf_da.solver.solver import KF_Stepper, Omega_Integrator, KF_TP_Stepper, create_vel_part_gen_fn
 from jax import config
 from multiprocessing import Pool, cpu_count
 config.update("jax_enable_x64", True)
@@ -48,16 +49,18 @@ def generate_rand_IC(NDOF, key_num=0, sigma=3, kcut_frac=0.1):
     return omega0_hat
 
 def generate_KF_dataset():
-    NDOF = 128
-    Re = 60
+    with open("../kf_da_configs/genConfig.yaml") as f:
+        config = yaml.safe_load(f)["config"]
+        
+    NDOF = config["NDOF"]
+    Re = config["Re"]
     n  = 4
-    dt = 1e-2
-    T = 1e3
-    T_samp = 100
+    dt = float(config["dt"])
+    T = float(config["T"])
+    T_samp = float(config["T_samp"])
     nsteps = int(T / dt)
     sample_steps = int(T_samp / dt)
-    chunk_size = 1e3
-
+    chunk_size = float(config["chunk_size"])
     omega0_hat = generate_rand_IC(NDOF)
 
     stepper = jax.jit(KF_Stepper(Re, n, NDOF, dt))

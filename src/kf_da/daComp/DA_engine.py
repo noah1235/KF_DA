@@ -1,24 +1,17 @@
 # --- Project imports ---
-from SRC.DA_Comp.configs import *  # provides KF_Opts, DA_Opts, etc.
-from SRC.utils import load_data
-from SRC.Solver.KF_intergrators_dec import (
-    KF_PS_RHS,
-    KF_LPT_PS_RHS,
-    create_trj_generator,
-    Particle_Stepper,
-    RK4_Step,
-)
-from SRC.DA_Comp.case_post_proc import post_proc_case_main
-from SRC.Solver.IC_gen import init_particles_vector
-from SRC.Solver.ploting import plot_particles
-from SRC.DA_Comp.loss_funcs import create_loss_fn, MSE_Vel
-from SRC.DA_Comp.optimization.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
-from SRC.DA_Comp.optimization.optimization import Joint_Opt
+from kf_da.daComp.configs import *  # provides KF_Opts, DA_Opts, etc.
+from kf_da.utils.utils import load_data
+from kf_da.daComp.case_post_proc import post_proc_case_main
+from kf_da.solver.IC_gen import init_particles_vector
+from kf_da.solver.ploting import plot_particles
+from kf_da.daComp.loss_funcs import create_loss_fn, MSE_Vel
+from kf_da.opti.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
+from kf_da.opti.optimization import Joint_Opt
 from create_results_dir import create_results_dir
-from SRC.Solver.ploting import plot_vorticity
-from SRC.Vel_init.CS_init import CS_init
-from SRC.Vel_init.AI import AI
-from SRC.Solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn, Omega_Integrator, create_vel_trj_gen_fn
+from kf_da.solver.ploting import plot_vorticity
+#from kf_da.velInit.CS_init import CS_init
+from kf_da.velInit.AI import AI
+from kf_da.solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn, Omega_Integrator, create_vel_trj_gen_fn
 
 # --- Stdlib / third-party imports ---
 import os

@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from kf_da.daComp.configs import KF_Opts
+#from kf_da.daComp.configs import KF_Opts
 from create_results_dir import create_results_dir
 import os
 import numpy as np

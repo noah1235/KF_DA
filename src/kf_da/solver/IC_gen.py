@@ -1,6 +1,6 @@
 import numpy as np
 import jax.numpy as jnp
-from SRC.utils import bilinear_sample_periodic, Specteral_Upsampling
+from kf_da.utils.utils import bilinear_sample_periodic, Specteral_Upsampling
 
 
 import jax

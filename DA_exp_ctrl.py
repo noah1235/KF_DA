@@ -1,7 +1,12 @@
-from kf_da.daComp import KF_Opts, DA_Opts, Particle_Opts
+from kf_da.daComp import KF_Opts, DA_Opts, Particle_Opts, MSE_PP, DA_exp_main 
 from kf_da.velInit import AI
-from kf_da.opti import ArmijoLineSearch, Joint_Opt
-
+from kf_da.opti import ArmijoLineSearch, Joint_Opt, BFGS
+from kf_da.icParam import Fourier_Param
+import os
+from create_results_dir import create_results_dir
+import yaml
+import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 
@@ -104,53 +109,64 @@ def parquet_to_excel(parquet_path, excel_path=None):
     print(f"Saved Excel file: {excel_path} (rows={len(df)}, cols={len(df.columns)})")
     return excel_path
 
-def main():
-    kf_opts = KF_Opts(
-        Re = 100,   
-        n = 4,
-        NDOF = 128,
-        dt = 1e-2,
-        total_T=int(1e3),
-        min_samp_T=100,
-        t_skip=1
-    )
+def load_config():
+    BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=5)
 
+    
     #Re = 200 | T = 3.2
     #Re = 100 | T = 3,3
     #Re = 60 | T = 4.1
     #Re = 40 | T = 7.2
 
-    BT_ls = ArmijoLineSearch(alpha_init=1.0, rho=0.25, c=1e-4, max_iters=5)
+    T_dict = {
+         200: 3.2,
+         100: 3.3,
+         60: 4.1,
+         40: 7.2
+    }
 
-    DA_opts = DA_Opts(
-        sigma_y=1e-1,
-        x__y_sigma=1,
-        m_dt=None,
-        n_particles_list=[45],
-        NT_list=[6],
-        part_opts=Particle_Opts(St=0, beta=0),
-        PIC_seed_list=[0],
-        num_opt_inits=1,
-        TIC_seed_list=[0],
-        ic_init=AI(min_norm=.1, max_norm=jnp.inf),
-        #ic_init=AI(min_norm=.1, max_norm=.5),
-        #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
-        T_list=[3.3],
-        optimizer_list=[
-            #BFGS(
-            #    ls=BT_ls, 
+    yaml_root = "../kf_da_configs/daExpConfig.yaml"
+    with open(yaml_root) as f:
+        daExpConfig = yaml.safe_load(f)
+    da_set = daExpConfig["daSet"]
+    if da_set["opti"] == "BFGS":
+        opti = BFGS(
+                ls=BT_ls, 
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
                 #psuedo_proj=Psuedo_Projection(it_list=[24, 49, 74], T=.25),
-            #    its=50, max_mem=20, eps_H=1e-10, print_loss=True),
-
-            Joint_Opt(
+                its=150, max_mem=20, eps_H=1e-10, print_loss=True)
+    elif sigma_y != 0 and opti == "Joint":
+        opti =  Joint_Opt(
                 state_opt=BFGS(
                 ls=BT_ls, 
                 its=20, max_mem=20, eps_H=1e-8, print_loss=True),
                 PP_opt_its=2, opt_loops=3
-            )
-
-        ],
+                )
+    sysSet = daExpConfig["sysSet"]
+    kf_opts = KF_Opts(
+        Re = sysSet["Re"], 
+        n = 4,
+        NDOF = sysSet["NDOF"],
+        dt = sysSet["dt"],
+        total_T=int(1e4),
+        min_samp_T=100,
+        t_skip=1
+    )
+    DA_opts = DA_Opts(
+        sigma_y=da_set["sigma_y"],
+        x__y_sigma=da_set["x__y_sigma"],
+        m_dt=da_set["m_dt"],
+        n_particles_list=da_set["n_particles_list"],
+        NT_list=da_set["NT_list"],
+        part_opts=Particle_Opts(St=0, beta=0),
+        PIC_seed_list=[0],
+        num_opt_inits=da_set["num_opt_inits"],
+        TIC_seed_list=[i for i in range(da_set["num_Tic"])],
+        ic_init=AI(min_norm=.1, max_norm=jnp.inf),
+        #ic_init=AI(min_norm=.1, max_norm=.5),
+        #ic_init=CS_init(l1_weight=1e-6, can_modes=jnp.arange(2, 16, 2)),
+        T_list=[T_dict[kf_opts.Re]],
+        optimizer_list=[opti],
         vp_list=[None, 
                 #VP_Float_Settings(mbits=4, minv=1e-3, maxv=10),
                  #VP_Float_Settings(mbits=8, minv=1e-3, maxv=10),
@@ -162,6 +178,22 @@ def main():
         ],
         IC_param_list=[Fourier_Param(kf_opts.NDOF, kf_opts.NDOF//2, beta=0.1, Re=kf_opts.Re)]
     )
+
+    return DA_opts, kf_opts
+
+ 
+
+
+
+
+def main():
+    DA_opts, kf_opts = load_config()
+    
+    #Re = 200 | T = 3.2
+    #Re = 100 | T = 3,3
+    #Re = 60 | T = 4.1
+    #Re = 40 | T = 7.2
+
 
     case_name = (
             f"DA_Re={kf_opts.Re}_n={kf_opts.n}_dt={kf_opts.dt}_NDOF={kf_opts.NDOF}_mdt={DA_opts.m_dt}"
@@ -183,6 +215,7 @@ def main():
     df = pd.read_parquet(os.path.join(root, "results.parquet"))
     df = df.dropna()
     #global_post_main(df, root)
+    
 
 def adjoint_test():
     def hvp_many(loss_fn, x, V):
