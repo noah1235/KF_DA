@@ -1,0 +1,15 @@
+.venv
+.git
+__pycache__
+*.pyc
+.ipynb_checkpoints
+
+data
+outputs
+figures
+results
+*.pkl
+*.npy
+*.npz
+*.h5
+*.hdf5
