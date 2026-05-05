@@ -7,6 +7,7 @@ ext_modules = [
         "vpfloat",
         ["vpfloat.cpp"],
         cxx_std=17,
+        extra_link_args=["-static-libstdc++", "-static-libgcc"],
     ),
 ]
 
