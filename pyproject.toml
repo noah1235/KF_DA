@@ -12,6 +12,7 @@ dependencies = [
     "jax[cuda13]>=0.10.0",
     "matplotlib>=3.10.9",
     "numpy>=2.4.4",
+    "openpyxl>=3.1.5",
     "optax>=0.2.8",
     "pandas>=3.0.2",
     "pyarrow>=24.0.0",
@@ -32,4 +33,4 @@ members = [
 ]
 
 [tool.uv.sources]
-vpfloat = { workspace = true, editable = true }
+vpfloat = { workspace = true, editable = false }
