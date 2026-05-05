@@ -280,7 +280,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.2" },
     { name = "pyarrow", specifier = ">=24.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
-    { name = "vpfloat", directory = "src/kf_da/vp_floats" },
+    { name = "vpfloat", path = "wheels/vpfloat-0.1.0-cp314-cp314-linux_x86_64.whl" },
 ]
 
 [[package]]
@@ -793,4 +793,7 @@ wheels = [
 [[package]]
 name = "vpfloat"
 version = "0.1.0"
-source = { directory = "src/kf_da/vp_floats" }
+source = { path = "wheels/vpfloat-0.1.0-cp314-cp314-linux_x86_64.whl" }
+wheels = [
+    { filename = "vpfloat-0.1.0-cp314-cp314-linux_x86_64.whl", hash = "sha256:34748426e1323e6b525b107c6a382fe3623867580de192b7e8f3fe7f373f532b" },
+]
