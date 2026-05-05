@@ -1,11 +1,15 @@
-[build-system]
-requires = ["setuptools>=64", "wheel", "pybind11>=2.10"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "vpfloat"
 version = "0.1.0"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["setuptools", "wheel", "pybind11"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["vp_py_utils"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vpfloat*"]

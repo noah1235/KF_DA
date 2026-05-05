@@ -3,6 +3,7 @@
 # =========================
 import os
 import pickle
+import yaml
 
 import jax
 import jax.numpy as jnp
@@ -588,11 +589,14 @@ def plot_fit_params_v_m(df, path):
 # Main driver
 # =========================
 def adjoint_test():
+    with open("../kf-da-configs/vpFloatConfig.yaml") as f:
+        config = yaml.safe_load(f)["config"]
+
     kf_opts = KF_Opts(
-        Re=100,
+        Re=int(config["Re"]),
         n=4,
-        NDOF=128,
-        dt=1e-2,
+        NDOF=int(config["NDOF"]),
+        dt=float(config["dt"]),
         total_T=int(1e3),
         min_samp_T=100,
         t_skip=1e-1,
@@ -604,7 +608,8 @@ def adjoint_test():
     double = True
 
     T = T_LLE * 4
-    mbits_list = np.arange(6, 14, 2)
+    #mbits_list = np.arange(6, 14, 2)
+    mbits_list = config["mbit_list"]
     #mbits_list = [6]
     minv, maxv = 1, 5e4
 
@@ -639,7 +644,7 @@ def adjoint_test():
             LLE=LLE,
             attractor_snapshots=attractor_snapshots,
             double=double,
-            nsamples=200
+            nsamples=int(config["ncases"])
         )
 
 
