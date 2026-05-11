@@ -7,7 +7,6 @@ from kf_da.solver.ploting import plot_particles
 from kf_da.daComp.loss_funcs import create_loss_fn, MSE_Vel
 from kf_da.opti.parent_classes import LS_TR_Opt, Loss_and_Deriv_fns
 from kf_da.opti.optimization import Joint_Opt
-from kf_da.utils.create_results_dir import create_results_dir
 from kf_da.solver.ploting import plot_vorticity
 from kf_da.velInit.AI import AI
 from kf_da.solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen_fn, Omega_Integrator, create_vel_trj_gen_fn
@@ -16,7 +15,6 @@ from kf_da.solver.solver import KF_TP_Stepper, KF_Stepper, create_omega_part_gen
 import os
 from pathlib import Path
 import re
-import random
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -130,8 +128,6 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
         * len(DA_opts.crit_list)
     )
     count = 0
-    IC_guess_count =0
-    did_IC_guess_count = False
     # Loop over experiment seeds
     for seed_idx in DA_opts.TIC_seed_list:
         seed_root = os.path.join(root, f"IC_seed={seed_idx}")
@@ -258,9 +254,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                             raise NotImplementedError(f"ic_init type {type(DA_opts.ic_init).__name__} is not supported")
                                         DA_opts.ic_init.set_unused_mask()
                                         
-                                        if not did_IC_guess_count:
-                                            IC_guess_count = count_folders(param_dir)
-                                            did_IC_guess_count = True
+                                        IC_guess_count = count_folders(param_dir)
                                         for opt_init_key_num in range(DA_opts.num_opt_inits):
                                             opt_init_key_num += IC_guess_count
                                             omega0_guess_hat, actual_norm_dist = DA_opts.ic_init(omega0_hat, None, loss_fn_and_derivs.loss_fn_jit, opt_init_key_num)
@@ -287,7 +281,7 @@ def DA_exp_main(kf_opts: KF_Opts, DA_opts: DA_Opts, root) -> None:
                                                                         "floatp": [vfloat_name]
                                                                     })                    
 
-                                            _run_DA_case(target_trj, omega0_guess_hat, omega0_hat, attractor_rad, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, particle_IC, 
+                                            _run_DA_case(target_trj, omega0_guess_hat, omega0_hat, attractor_rad, IC_param, loss_fn_and_derivs, optimizer, trj_gen_fn, particle_IC,
                                                          opt_init_dir, kf_opts.dt,
                                                         t_mask, results_df,
                                                         parquet_path)
@@ -306,7 +300,7 @@ def _run_DA_case(
     loss_fn_and_derivs: Loss_and_Deriv_fns,
     optimizer: LS_TR_Opt,
     trj_gen_fn,
-    pIC,
+    particle_IC,
     save_dir,
     dt,
     t_mask,
@@ -332,8 +326,8 @@ def _run_DA_case(
     Z0_opt, opt_data = optimizer.opt_loop(Z0, loss_fn_and_derivs, IC_param.inv_transform, omega0_hat, attractor_rad)
     omega0_DA_hat = IC_param.inv_transform(Z0_opt)
     
-    DA_trj = trj_gen_fn(omega0_DA_hat, *pIC)
-    init_guess_trj = trj_gen_fn(omega0_guess_hat, *pIC)
+    DA_trj = trj_gen_fn(omega0_DA_hat, *particle_IC)
+    init_guess_trj = trj_gen_fn(omega0_guess_hat, *particle_IC)
 
     
     results_df["loss_record"] = [opt_data.loss_record]

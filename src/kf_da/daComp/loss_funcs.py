@@ -1,5 +1,4 @@
 import jax.numpy as jnp
-from kf_da.solver.solver import KF_TP_Stepper
 from kf_da.utils.utils import bilinear_sample_periodic
 from jax import lax
 import jax
@@ -164,7 +163,7 @@ class MSE_PP(Loss_fn):
         return self.t_mask[i] * ((MSE_x + MSE_y) / 2.0) / self.num_frames
 
     def __repr__(self):
-        return "PP_MSE"
+        return "MSE_PP"
     
 class MSE_Vel(Loss_fn):
     @staticmethod
@@ -193,4 +192,4 @@ class MSE_Vel(Loss_fn):
         return self.t_mask[i] * ((MSE_u + MSE_v)/2) / self.num_frames
 
     def __repr__(self):
-        return "Vel_MSE"
+        return "MSE_Vel"

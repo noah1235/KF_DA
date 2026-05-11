@@ -75,3 +75,17 @@ The solver and adjoint code are JAX-first (JIT-compiled, GPU-capable). Computati
 ### Results Storage
 
 Results are written as **Parquet files** (via pandas + PyArrow/fastparquet), organized hierarchically by seed, Re, and experiment parameters. `case_post_proc.py` and `gPost/global_post_main.py` handle post-processing and Excel export.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`nfrank22-gh/KF_DA`). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.

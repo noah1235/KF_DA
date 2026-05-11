@@ -161,10 +161,13 @@ class Opt_Data:
         self.Hvp_evals_record[n] = Hvp_evals
 
     def early_stop_update(self, iters):
-        raise NotImplementedError("early_stop_update needs update")
         self.loss_record = self.loss_record[:iters]
         self.grad_norm_record = self.grad_norm_record[:iters]
         self.alpha_gTp_record = self.alpha_gTp_record[:iters]
+        self.IC_error_record = self.IC_error_record[:iters]
+        self.loss_evals_record = self.loss_evals_record[:iters]
+        self.loss_grad_evals_record = self.loss_grad_evals_record[:iters]
+        self.Hvp_evals_record = self.Hvp_evals_record[:iters]
 
     def save_data(self, root):
         np.save(os.path.join(root, "loss_record.npy"), np.array(self.loss_record))

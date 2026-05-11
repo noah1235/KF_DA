@@ -7,6 +7,7 @@ import yaml
 
 import jax
 import jax.numpy as jnp
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -451,7 +452,7 @@ def plot_metrics_vs_mbits(df, path, dt):
 
     fig = plt.figure()
     plt.scatter(p, err, label="Measured")
-    plt.plot(p, theory, "--", label=r"$\propto 2^{-p}$")
+    plt.plot(p, theory, label=r"$\propto 2^{-p}$")
     plt.yscale("log")
     plt.xlabel("mantissa bits (mbits)")
     plt.ylabel("Gradient relative error")
@@ -507,7 +508,7 @@ def plot_metrics_vs_mbits(df, path, dt):
         # fit: mean_fit ≈ a + b*t
         b, a = np.polyfit(t_fit, mean_fit, 1)
         fit_curve = a + b * (t_plot)
-        plt.plot(t_plot, fit_curve, "--", linewidth=2.0,
+        plt.plot(t_plot, fit_curve, linewidth=2.0,
                 label=f"fit: {a:.3e} + {b:.3e} t")
 
         # mean + fit
@@ -575,7 +576,7 @@ def plot_fit_params_v_m(df, path):
 
     fig = plt.figure()
     plt.plot(mbits, slope, "o-", label="measured")
-    plt.plot(mbits, slope_fit, "--", label=f"fit: {C2:.2e}·2^({alpha2:.2f} m)")
+    plt.plot(mbits, slope_fit,  label=f"fit: {C2:.2e}·2^({alpha2:.2f} m)")
     plt.xlabel("mbits")
     plt.ylabel("slope")
     plt.yscale("log")
@@ -629,9 +630,8 @@ def adjoint_test():
     else:
         path += "_f32"
 
-    RUN_AND_SAVE = True
-
-    if RUN_AND_SAVE:
+    print(config["run_and_save"])
+    if config["run_and_save"]:
         results = collect_stats_over_mbits(
             mbits_list,
             kf_stepper=kf_stepper,
@@ -666,6 +666,7 @@ def adjoint_test():
     pkl_path = save_results_pickle(results, path, "vpfloats_sweep.pkl")
     xlsx_path = save_results_excel(results, path, "vpfloats_sweep.xlsx")
 
+    mbit_dep_plot(Re=config["Re"], NDOF=config["NDOF"], T=T, dt=config["dt"])
 
 def make_roundoff_trj(key, ref_trj, p):
     """
@@ -875,6 +876,24 @@ def test():
     grad_true = grad_true.reshape(-1)
     print(jnp.linalg.norm(grad_true - lam_n)/jnp.linalg.norm(grad_true))
 
+def mbit_dep_plot(Re=100, NDOF=128, T=13.2, dt=1e-2):
+    mbits_list = [6, 8, 10, 12, 14]
+    root = os.path.join(
+        create_results_dir(),
+        "vpfloats",
+        f"Re={Re}_NDOF={NDOF}_T={T}_uniform_f64",
+    )
+    with open(os.path.join(root, "vpfloats_sweep.pkl"), "rb") as f:
+        data = pickle.load(f)
+    fig = plt.figure()
+    for mbits in mbits_list:
+        adj_rel_error_v_time_mean = data["by_mbits"][mbits]["adj_rel_error_v_time_mean"]
+        adj_rel_error_v_time_mean = adj_rel_error_v_time_mean[:-1][::-1]
+        time = np.arange(1, adj_rel_error_v_time_mean.shape[0] + 1, dtype=float) * dt
+        plt.plot(time, adj_rel_error_v_time_mean/(2**-mbits), label=f"mbits={mbits}")
 
+    plt.legend()
+    save_svg(mpl, fig, os.path.join(root, "mdep_fig.svg"))
 if __name__ == "__main__":
     adjoint_test()
+

@@ -95,7 +95,7 @@ def recon_v_m_dt(cfg: dict):
     NT        = cfg["NT"]
     n_part    = cfg["n_part"]
     metric    = cfg.get("metric", "final_snap_rel_error")
-    loss_crit = cfg.get("loss_crit", "PP_MSE")
+    loss_crit = cfg.get("loss_crit", "MSE_PP")
 
     pattern = re.compile(
         rf"^DA_Re={Re}_n={n}_dt={dt}_NDOF={NDOF}_mdt=(\d*\.?\d+)-St={St}_beta={beta}_AI$"
@@ -164,7 +164,7 @@ def embedding_fig(cfg: dict):
     config_list = cfg["config_list"]   # list of [Re, NDOF, dt, NT]
     dM_dict     = cfg["dM_dict"]       # {Re: dM} — inertial manifold dimension estimate per Re
     metric      = cfg.get("metric", "final_snap_rel_error")
-    loss_crit   = cfg.get("loss_crit", "PP_MSE")
+    loss_crit   = cfg.get("loss_crit", "MSE_PP")
 
     Re_list, dM_list, m_list, metric_list = [], [], [], []
 

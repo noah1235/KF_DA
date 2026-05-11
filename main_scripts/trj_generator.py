@@ -76,8 +76,6 @@ def generate_KF_dataset():
 
     omega0_hat = integrator.fv_integrate(omega0_hat, sample_steps)
     integrator.integrate_scan_checkpoint(omega0_hat, nsteps, chunk_size, os.path.join(root, "dataset.npy"))
-    #trj = integrator.integrate_scan(omega0_hat, nsteps)
-    #np.save(os.path.join(root, "dataset.npy"), np.array(trj))
 
 
 def generate_sample_case_ani():
