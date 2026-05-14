@@ -12,11 +12,12 @@ def create_loss_fn(
     inv_transform,
     checkpoint=False,
     meas_part_vel=None,
+    optimize_velocity=False,
 ):
     omega_traj, _, _, up_traj, vp_traj = target_trj
     xp_meas_traj, yp_meas_traj = meas_part_pos
 
-    if meas_part_vel is not None:
+    if meas_part_vel is not None and not optimize_velocity:
         up_meas_traj, vp_meas_traj = meas_part_vel
 
     num_parts = xp_meas_traj.shape[0] * xp_meas_traj.shape[1]
@@ -29,6 +30,10 @@ def create_loss_fn(
     def loss_fn(Z0, PP_opt):
         xp_opt_traj = PP_opt[:num_parts].reshape(xp_meas_traj.shape)
         yp_opt_traj = PP_opt[num_parts:2 * num_parts].reshape(yp_meas_traj.shape)
+
+        if optimize_velocity:
+            up_opt_traj = PP_opt[2 * num_parts:3 * num_parts].reshape(xp_meas_traj.shape)
+            vp_opt_traj = PP_opt[3 * num_parts:4 * num_parts].reshape(xp_meas_traj.shape)
 
         omega0_hat = inv_transform(Z0)
 
@@ -84,7 +89,14 @@ def create_loss_fn(
 
                 loss_t = lax.cond(init_part, use_DA, use_trg, operand=None)
 
-                if meas_part_vel is not None:
+                if optimize_velocity:
+                    up_reset = lax.dynamic_index_in_dim(
+                        up_opt_traj, meas_idx, axis=0, keepdims=False
+                    )
+                    vp_reset = lax.dynamic_index_in_dim(
+                        vp_opt_traj, meas_idx, axis=0, keepdims=False
+                    )
+                elif meas_part_vel is not None:
                     up_reset = lax.dynamic_index_in_dim(
                         up_meas_traj, meas_idx, axis=0, keepdims=False
                     )
@@ -143,8 +155,8 @@ def create_loss_fn(
             omega0_hat,
             xp_opt_traj[0],
             yp_opt_traj[0],
-            up_traj[0],
-            vp_traj[0],
+            up_opt_traj[0] if optimize_velocity else up_traj[0],
+            vp_opt_traj[0] if optimize_velocity else vp_traj[0],
             False,
             0,
         )

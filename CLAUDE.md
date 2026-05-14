@@ -60,10 +60,10 @@ DA_exp_ctrl.py
 |--------|---------|
 | `src/kf_da/solver/solver.py` | Core physics: `Forced_2D_NS`, `KF_Stepper`, `KF_TP_Stepper` (flow + particles), `Omega_Integrator` |
 | `src/kf_da/daComp/DA_engine.py` | Experiment orchestration; outer loops over seeds, parameters, optimizers |
-| `src/kf_da/daComp/configs.py` | Config dataclasses: `KF_Opts`, `DA_Opts`, `Particle_Opts`, `VP_Float_Settings` |
+| `src/kf_da/daComp/configs.py` | Config dataclasses: `KF_Opts`, `DA_Opts` (incl. `sigma_vy`/`vx__vy_sigma` for inertial velocity noise), `Particle_Opts`, `VP_Float_Settings` |
 | `src/kf_da/daComp/adjoint.py` | Reverse-mode AD for gradients and Hessian-vector products |
-| `src/kf_da/daComp/loss_funcs.py` | `MSE_PP` (particle positions), `MSE_Vel` (velocity); measurement masks `t_mask` |
-| `src/kf_da/opti/optimization.py` | `BFGS`, `Joint_Opt`, `Loss_and_Deriv_fns`; `ArmijoLineSearch` in `LS_TR.py` |
+| `src/kf_da/daComp/loss_funcs.py` | `MSE_PP` (particle positions), `MSE_Vel` (velocity); measurement masks `t_mask`; `optimize_velocity` flag extends `PP_opt` to include inertial particle velocities |
+| `src/kf_da/opti/optimization.py` | `BFGS`, `Joint_Opt` (tracer path: `set_pp_loss_fn`; inertial path: `set_inertial_pp_loss_fn`), `Loss_and_Deriv_fns`; `ArmijoLineSearch` in `LS_TR.py` |
 | `src/kf_da/icParam/Fourier_Param.py` | Fourier mode parametrization with log-sinh preconditioning |
 | `src/kf_da/velInit/AI.py` | Attractor-based IC initialization (random sample from attractor snapshots) |
 | `src/kf_da/vp_floats/` | C++ variable-precision float library (Pybind11); `vp_py_utils.py` for JAX integration |

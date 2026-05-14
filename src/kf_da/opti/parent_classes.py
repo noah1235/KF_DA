@@ -26,6 +26,7 @@ class Loss_and_Deriv_fns:
         allow_dynamic_PP_opt=True,
         checkpoint=False,
         meas_part_vel=None,
+        optimize_velocity=False,
     ):
         xp_meas_traj, yp_meas_traj = meas_part_pos
 
@@ -34,13 +35,23 @@ class Loss_and_Deriv_fns:
         gen_loss_fn = create_loss_fn(
             loss_crit, stepper, target_trj, pp_sigma, meas_part_pos, inv_transform,
             checkpoint=checkpoint, meas_part_vel=meas_part_vel,
+            optimize_velocity=optimize_velocity,
         )
         self.gen_loss_fn = gen_loss_fn
 
-        self.PP_opt_default = jnp.concatenate([
-            xp_meas_traj.reshape(-1),
-            yp_meas_traj.reshape(-1),
-        ])
+        if optimize_velocity and meas_part_vel is not None:
+            up_meas_traj, vp_meas_traj = meas_part_vel
+            self.PP_opt_default = jnp.concatenate([
+                xp_meas_traj.reshape(-1),
+                yp_meas_traj.reshape(-1),
+                up_meas_traj.reshape(-1),
+                vp_meas_traj.reshape(-1),
+            ])
+        else:
+            self.PP_opt_default = jnp.concatenate([
+                xp_meas_traj.reshape(-1),
+                yp_meas_traj.reshape(-1),
+            ])
 
         def loss_fn_base(Z0, PP_opt):
             return gen_loss_fn(Z0, PP_opt)

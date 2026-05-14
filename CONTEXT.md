@@ -109,7 +109,7 @@ The standard optimizer for variational DA in this project — limited-memory BFG
 _Avoid_: BFGS, NCSR1, TN (these are removed or being removed)
 
 **Joint optimization** (`Joint_Opt`):
-Optimizer wrapper that alternates between L-BFGS steps on the vorticity **IC** (in **damped representation** space) and Newton steps on the particle positions directly; used when observations are noisy and particle positions are themselves uncertain variables to be estimated.
+Optimizer wrapper that alternates between L-BFGS steps on the vorticity **IC** (in **damped representation** space) and Newton steps on the particle state directly; used when observations are noisy and particle positions (and optionally velocities, for inertial particles) are themselves uncertain variables to be estimated. The particle state vector `PP_opt` is `[xp, yp]` for tracer particles and `[xp, yp, up, vp]` for inertial particles with velocity optimization.
 
 **Loss function**:
 Scalar objective minimized during variational DA; either **MSE-PP** or **MSE-Vel**.

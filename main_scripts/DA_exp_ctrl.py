@@ -135,7 +135,7 @@ def load_config():
                 #Cubic_TR(rho_trg=1, eta_kp=1.0, eta_ki=0, eta_kd=0, eta_min=1e-14, eta_0=1-4, eta_max=1e0),
                 #psuedo_proj=Psuedo_Projection(it_list=[24, 49, 74], T=.25),
                 its=150, max_mem=20, eps_H=1e-10, print_loss=True)
-    elif sigma_y != 0 and opti == "Joint":
+    elif da_set["sigma_y"] != 0 and da_set["opti"] == "Joint":
         opti =  Joint_Opt(
                 state_opt=BFGS(
                 ls=BT_ls, 
